@@ -42,10 +42,10 @@ namespace zs {
       for (const auto &s : imageAcquiredSemaphores)
         ctx.device.destroySemaphore(s, nullptr, ctx.dispatcher);
       for (auto &garbages : swapchainGarbages) garbages.clear();
-      for (const auto &s : renderCompleteSemaphores) assert(s == VK_NULL_HANDLE);
+      for (const auto &s : renderCompleteSemaphores) assert((VkSemaphore)s == VK_NULL_HANDLE);
       // cleanup present history
       for (PresentOperationInfo &presentInfo : presentHistory) {
-        if (presentInfo.cleanupFence != VK_NULL_HANDLE)
+        if ((VkFence)presentInfo.cleanupFence != VK_NULL_HANDLE)
           ctx.device.waitForFences(1, &presentInfo.cleanupFence, true, UINT64_MAX, ctx.dispatcher);
         cleanupPresentInfo(presentInfo);
       }
