@@ -301,6 +301,7 @@ if(NOT PROJECT_IS_TOP_LEVEL)
   set(ZS_ENABLE_OPENVDB ${ZS_ENABLE_OPENVDB} PARENT_SCOPE)
   set(ZS_ENABLE_PARTIO ${ZS_ENABLE_PARTIO} PARENT_SCOPE)
   set(ZS_ENABLE_MSHIO ${ZS_ENABLE_MSHIO} PARENT_SCOPE)
+  set(ZS_ENABLE_LLHTTP ${ZS_ENABLE_LLHTTP} PARENT_SCOPE)
 
   if(ZS_ENABLE_CUDA)
     # propagate cmake zs variables about cuda
@@ -325,7 +326,7 @@ message("cmake configure summary")
 message("project name: ${project_name}")
 message("package version: ${project_version}")
 message("backend build options: pthreads: ${ZS_ENABLE_PTHREADS}, sycl(adaptivecpp): ${ZS_ENABLE_SYCL_ACPP}, sycl(oneapi): ${ZS_ENABLE_SYCL_ONEAPI}, cuda: ${ZS_ENABLE_CUDA}(${CUDAToolkit_VERSION}), musa: ${ZS_ENABLE_MUSA}(${MUSA_VERSION}), omp: ${ZS_ENABLE_OPENMP}, vulkan: ${ZS_ENABLE_VULKAN}, cl: ${ZS_ENABLE_OPENCL}, jit(llvm): ${ZS_ENABLE_JIT}.")
-message("dependent library options: python: ${ZS_OVERWRITE_PYTHON_EXECUTABLE}, openvdb ${ZS_ENABLE_OPENVDB}, opengl ${ZS_ENABLE_OPENGL}, partio ${ZS_ENABLE_PARTIO}, mshio ${ZS_ENABLE_MSHIO}")
+message("dependent library options: python: ${ZS_OVERWRITE_PYTHON_EXECUTABLE}, openvdb ${ZS_ENABLE_OPENVDB}, opengl ${ZS_ENABLE_OPENGL}, partio ${ZS_ENABLE_PARTIO}, mshio ${ZS_ENABLE_MSHIO}, llhttp ${ZS_ENABLE_LLHTTP}.")
 
 # ----  Docs   ----
 # =================

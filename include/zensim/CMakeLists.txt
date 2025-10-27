@@ -1358,6 +1358,10 @@ if(ZS_ENABLE_MSHIO)
   target_link_libraries(zpctool PRIVATE mshio::mshio)
 endif(ZS_ENABLE_MSHIO)
 
+if(ZS_ENABLE_LLHTTP)
+  target_link_libraries(zpctool PRIVATE llhttp::llhttp)
+endif(ZS_ENABLE_LLHTTP)
+
 # set_property(TARGET zpctool APPEND PROPERTY PUBLIC_HEADER "${ZENSIM_LIBRARY_TOOL_INCLUDE_FILES} ${ZENSIM_LIBRARY_IO_INCLUDE_FILES}")
 if(ZS_ENABLE_OPENVDB)
   if(ZS_ENABLE_PCH)
