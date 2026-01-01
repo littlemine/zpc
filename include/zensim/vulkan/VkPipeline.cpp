@@ -161,7 +161,17 @@ namespace zs {
   Pipeline PipelineBuilder::build() {
     Pipeline ret{ctx};
 
-    if (shaders.size() < 2) throw std::runtime_error("shaders are not fully prepared yet.");
+    if (shaders.size() < 2) {
+      std::string stagesPresent;
+      for (const auto& [stage, _] : shaders) {
+        if (!stagesPresent.empty()) stagesPresent += ", ";
+        stagesPresent += reflect_vk_enum(stage);
+      }
+      throw std::runtime_error(
+          fmt::format("shaders are not fully prepared yet. Expected at least vertex and fragment "
+                      "shaders. Currently {} shader(s) set: [{}]",
+                      shaders.size(), stagesPresent.empty() ? "none" : stagesPresent));
+    }
     if (renderPass == VK_NULL_HANDLE) throw std::runtime_error("renderpass not yet specified.");
 
     // pipeline layout

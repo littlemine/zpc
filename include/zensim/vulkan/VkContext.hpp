@@ -286,6 +286,11 @@ namespace zs {
                                     vk::ShaderStageFlagBits stageFlag);
     ShaderModule createShaderModuleFromGlsl(const char *glslCode, vk::ShaderStageFlagBits stageFlag,
                                             std::string_view moduleName);
+    std::vector<u32> compileHlslToSpirv(const char *hlslCode, vk::ShaderStageFlagBits stage,
+                                        std::string_view moduleName, std::string_view entryPoint);
+    ShaderModule createShaderModuleFromHlsl(const char *hlslCode, vk::ShaderStageFlagBits stageFlag,
+                                            std::string_view moduleName,
+                                            std::string_view entryPoint = "main");
 
     int devid;
     vk::PhysicalDevice physicalDevice;
