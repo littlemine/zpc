@@ -312,6 +312,7 @@ namespace zs {
     vk::PhysicalDeviceProperties2 deviceProperties;
 
     VkPhysicalDeviceVulkan12Features supportedVk12Features, enabledVk12Features;
+    VkPhysicalDeviceVulkan13Features supportedVk13Features, enabledVk13Features;
     VkPhysicalDeviceFeatures2 supportedDeviceFeatures, enabledDeviceFeatures;
     vk::DescriptorPool defaultDescriptorPool;
     VmaAllocator defaultAllocator;

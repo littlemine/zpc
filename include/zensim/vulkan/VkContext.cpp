@@ -13,6 +13,7 @@
 #include "vma/vk_mem_alloc.h"
 //
 #include "zensim/vulkan/VkContext.hpp"
+#include "zensim/vulkan/VkDeviceConfig.hpp"
 //
 #include <iostream>
 #include <map>
@@ -288,13 +289,16 @@ namespace zs {
     this->deviceProperties = devProperties;
 
     // query features 2
+    VkPhysicalDeviceVulkan13Features supportedVk13Features{
+        VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES, nullptr};
     VkPhysicalDeviceVulkan12Features supportedVk12Features{
-        VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES, nullptr};
+        VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES, &supportedVk13Features};
     VkPhysicalDeviceFeatures2 devFeatures2{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2,
                                            &supportedVk12Features};
     dispatcher.vkGetPhysicalDeviceFeatures2(physicalDevice, &devFeatures2);
 
     this->supportedVk12Features = supportedVk12Features;
+    this->supportedVk13Features = supportedVk13Features;
     this->supportedDeviceFeatures = devFeatures2;
 
     vk::PhysicalDeviceFeatures2 features{};
@@ -356,6 +360,13 @@ namespace zs {
     vk12Features.descriptorBindingStorageImageUpdateAfterBind
         = supportedVk12Features.descriptorBindingStorageImageUpdateAfterBind;
     this->enabledVk12Features = vk12Features;
+
+    // Vulkan 1.3 features
+    vk::PhysicalDeviceVulkan13Features vk13Features{};
+    vk13Features.synchronization2 = supportedVk13Features.synchronization2;
+    vk13Features.dynamicRendering = supportedVk13Features.dynamicRendering;
+    vk13Features.maintenance4 = supportedVk13Features.maintenance4;
+    this->enabledVk13Features = vk13Features;
 
 #if 0
     fmt::print(
