@@ -242,39 +242,24 @@ namespace zs {
               : -1);
     }
 
-    /// extensions
-    int rtPreds = 0;
-    constexpr int rtRequiredPreds = 5;
-    /// @note the first 5 extensions are required for rt support
-    std::vector<const char*> expectedExtensions {
-      "VK_KHR_ray_tracing_pipeline", "VK_KHR_acceleration_structure", "VK_EXT_descriptor_indexing",
-          "VK_KHR_buffer_device_address", "VK_KHR_deferred_host_operations", "VK_KHR_swapchain",
-          "VK_KHR_driver_properties",
-#ifdef ZS_PLATFORM_OSX
-          "VK_KHR_portability_subset",
-#endif
+    /// @note Query supported features with full feature chain (Vulkan 1.2 + 1.3)
+    VkPhysicalDeviceVulkan13Features supportedVk13Features{};
+    supportedVk13Features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES;
+    supportedVk13Features.pNext = nullptr;
 
-#if ZS_ENABLE_VULKAN_VALIDATION
-          VK_KHR_SHADER_NON_SEMANTIC_INFO_EXTENSION_NAME,
-#endif
-          VK_EXT_EXTENDED_DYNAMIC_STATE_EXTENSION_NAME,  // "VK_EXT_extended_dynamic_state",
-          VK_EXT_EXTENDED_DYNAMIC_STATE_2_EXTENSION_NAME,
-          VK_EXT_EXTENDED_DYNAMIC_STATE_3_EXTENSION_NAME, VK_KHR_MULTIVIEW_EXTENSION_NAME,
-          VK_KHR_MAINTENANCE2_EXTENSION_NAME, VK_KHR_CREATE_RENDERPASS_2_EXTENSION_NAME,
-          VK_KHR_DEPTH_STENCIL_RESOLVE_EXTENSION_NAME
-    };
-    std::vector<const char*> enabledExtensions(0);
-    // pick up supported extensions
-    for (int i = 0; i != expectedExtensions.size(); ++i) {
-      auto ext = expectedExtensions[i];
-      for (auto& devExt : devExts) {
-        if (strcmp(ext, devExt.extensionName) == 0) {
-          enabledExtensions.push_back(ext);
-          if (i < rtRequiredPreds) rtPreds++;
-          break;
-        }
-      }
-    }
+    VkPhysicalDeviceVulkan12Features supportedVk12Features{};
+    supportedVk12Features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES;
+    supportedVk12Features.pNext = &supportedVk13Features;
+
+    VkPhysicalDeviceFeatures2 devFeatures2{};
+    devFeatures2.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
+    devFeatures2.pNext = &supportedVk12Features;
+
+    dispatcher.vkGetPhysicalDeviceFeatures2(physicalDevice, &devFeatures2);
+
+    this->supportedVk12Features = supportedVk12Features;
+    this->supportedVk13Features = supportedVk13Features;
+    this->supportedDeviceFeatures = devFeatures2;
 
     // query properties 2
     vk::PhysicalDeviceDescriptorIndexingProperties descriptorIndexingProperties;
@@ -288,132 +273,103 @@ namespace zs {
     this->depthStencilResolveProperties = dsResolveProperties;
     this->deviceProperties = devProperties;
 
-    // query features 2
-    VkPhysicalDeviceVulkan13Features supportedVk13Features{
-        VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES, nullptr};
-    VkPhysicalDeviceVulkan12Features supportedVk12Features{
-        VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES, &supportedVk13Features};
-    VkPhysicalDeviceFeatures2 devFeatures2{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2,
-                                           &supportedVk12Features};
-    dispatcher.vkGetPhysicalDeviceFeatures2(physicalDevice, &devFeatures2);
+    /// @note Create device configuration using VkDeviceConfig builder
+    auto configBuilder = VkDeviceConfig::createBuilder(
+        devExts, devFeatures2, supportedVk12Features, supportedVk13Features);
 
-    this->supportedVk12Features = supportedVk12Features;
-    this->supportedVk13Features = supportedVk13Features;
-    this->supportedDeviceFeatures = devFeatures2;
+    // Configure desired features declaratively
+    configBuilder
+        .withSwapchain(true)                // Presentation support
+        .withRayTracing(true)               // Ray tracing (filtered if unsupported)
+        .withDynamicState(true)             // Dynamic pipeline states
+        .withBindless(true)                 // Bindless descriptors
+        .withTimelineSemaphore(true)        // Timeline semaphores
+        .withSynchronization2(true)         // Vulkan 1.3 synchronization
+        .withDynamicRendering(true)         // Vulkan 1.3 dynamic rendering
+        .withMaintenance4(true)             // Vulkan 1.3 maintenance
+        .withGeometryShader(true)           // Geometry shader stage
+        .withTessellation(true)             // Tessellation stages
+        .filterBySupported(devExts, devFeatures2, supportedVk12Features, supportedVk13Features);
 
+    // Get flattened extension list
+    auto enabledExtensions = configBuilder.extensions.flatten();
+
+    // Count ray tracing extensions for backward compatibility
+    int rtPreds = 0;
+    constexpr int rtRequiredPreds = 5;
+    for (const auto& ext : configBuilder.extensions.rayTracing) {
+        if (std::find(enabledExtensions.begin(), enabledExtensions.end(), ext) 
+            != enabledExtensions.end()) {
+            rtPreds++;
+        }
+    }
+
+    /// @note Create feature structures
     vk::PhysicalDeviceFeatures2 features{};
-
-    features.features.fragmentStoresAndAtomics
-        = supportedDeviceFeatures.features.fragmentStoresAndAtomics;
-    features.features.vertexPipelineStoresAndAtomics
-        = supportedDeviceFeatures.features.vertexPipelineStoresAndAtomics;
-    features.features.fillModeNonSolid = supportedDeviceFeatures.features.fillModeNonSolid;
-    features.features.wideLines = supportedDeviceFeatures.features.wideLines;
-    features.features.independentBlend = supportedDeviceFeatures.features.independentBlend;
-    features.features.geometryShader = supportedDeviceFeatures.features.geometryShader;
-    features.features.tessellationShader = supportedDeviceFeatures.features.tessellationShader;
-    this->enabledDeviceFeatures = features;
-
-    vk::DeviceCreateInfo devCI{{},
-                               (u32)dqCIs.size(),
-                               dqCIs.data(),
-                               0,
-                               nullptr,
-                               (u32)enabledExtensions.size(),
-                               enabledExtensions.data()};
-    devCI.setPEnabledFeatures(&features.features);
-
-    /// features
-    // ref: TU Wien Vulkan Tutorial Ep1
-    vk::PhysicalDeviceVulkan12Features vk12Features{};
-    // timeline semaphore
-    vk12Features.timelineSemaphore = supportedVk12Features.timelineSemaphore;
-    //
-    vk12Features.descriptorIndexing = supportedVk12Features.descriptorIndexing;
-    if (!vk12Features.descriptorIndexing
-        && std::find(enabledExtensions.begin(), enabledExtensions.end(),
-                     "VK_EXT_descriptor_indexing")
-               != enabledExtensions.end())
-      vk12Features.descriptorIndexing = VK_TRUE;
-    // fmt::print("\n\n\ndescriptor index support: {}\n\n\n",
-    // supportedVk12Features.descriptorIndexing);
-    vk12Features.bufferDeviceAddress = supportedVk12Features.bufferDeviceAddress;
-    // bindless
-    vk12Features.descriptorBindingPartiallyBound
-        = supportedVk12Features.descriptorBindingPartiallyBound;
-    vk12Features.runtimeDescriptorArray = supportedVk12Features.runtimeDescriptorArray;
-    // ref: https://zhuanlan.zhihu.com/p/136449475
-    vk12Features.descriptorBindingVariableDescriptorCount
-        = supportedVk12Features.descriptorBindingVariableDescriptorCount;
-    vk12Features.shaderSampledImageArrayNonUniformIndexing
-        = supportedVk12Features.shaderSampledImageArrayNonUniformIndexing;
-
-    vk12Features.descriptorBindingUpdateUnusedWhilePending
-        = supportedVk12Features.descriptorBindingUpdateUnusedWhilePending;
-
-    vk12Features.descriptorBindingUniformBufferUpdateAfterBind
-        = supportedVk12Features.descriptorBindingUniformBufferUpdateAfterBind;
-    vk12Features.descriptorBindingSampledImageUpdateAfterBind
-        = supportedVk12Features.descriptorBindingSampledImageUpdateAfterBind;
-    vk12Features.descriptorBindingStorageBufferUpdateAfterBind
-        = supportedVk12Features.descriptorBindingStorageBufferUpdateAfterBind;
-    vk12Features.descriptorBindingStorageImageUpdateAfterBind
-        = supportedVk12Features.descriptorBindingStorageImageUpdateAfterBind;
-    this->enabledVk12Features = vk12Features;
-
-    // Vulkan 1.3 features
     vk::PhysicalDeviceVulkan13Features vk13Features{};
-    vk13Features.synchronization2 = supportedVk13Features.synchronization2;
-    vk13Features.dynamicRendering = supportedVk13Features.dynamicRendering;
-    vk13Features.maintenance4 = supportedVk13Features.maintenance4;
-    this->enabledVk13Features = vk13Features;
+    vk::PhysicalDeviceVulkan12Features vk12Features{};
 
-#if 0
-    fmt::print(
-        "shaderSampledImageArrayNonUniformIndexing: {}, "
-        "descriptorBindingSampledImageUpdateAfterBind: {}, descriptorBindingPartiallyBound: {}, "
-        "descriptorBindingVariableDescriptorCount: {}, descriptorBindingUpdateUnusedWhilePending: "
-        "{}\n",
-        supportedVk12Features.shaderSampledImageArrayNonUniformIndexing,
-        supportedVk12Features.descriptorBindingSampledImageUpdateAfterBind,
-        supportedVk12Features.descriptorBindingPartiallyBound,
-        supportedVk12Features.descriptorBindingVariableDescriptorCount,
-        supportedVk12Features.descriptorBindingUpdateUnusedWhilePending);
-    getchar();
-#endif
-
-    // dynamic states features
     vk::PhysicalDeviceExtendedDynamicStateFeaturesEXT extendedDynamicStateFeaturesEXT{};
-    extendedDynamicStateFeaturesEXT.setExtendedDynamicState(vk::True);
     vk::PhysicalDeviceExtendedDynamicState2FeaturesEXT extendedDynamicState2FeaturesEXT{};
     vk::PhysicalDeviceExtendedDynamicState3FeaturesEXT extendedDynamicState3FeaturesEXT{};
-    extendedDynamicState3FeaturesEXT.setExtendedDynamicState3DepthClampEnable(vk::True);
-    extendedDynamicState3FeaturesEXT.setExtendedDynamicState3DepthClipEnable(vk::True);
-
-    extendedDynamicStateFeaturesEXT.setPNext(&extendedDynamicState2FeaturesEXT);
-    extendedDynamicState2FeaturesEXT.setPNext(&extendedDynamicState3FeaturesEXT);
-    extendedDynamicState3FeaturesEXT.setPNext(&vk12Features);
-    // features.setPNext(&extendedDynamicStateFeaturesEXT);
+    vk::PhysicalDeviceAccelerationStructureFeaturesKHR asFeatures{};
+    vk::PhysicalDeviceRayTracingPipelineFeaturesKHR rtPipeFeatures{};
 
 #ifdef ZS_PLATFORM_OSX
-    // https://www.lunarg.com/wp-content/uploads/2023/08/Vulkan-Development-in-Apple-Environments-08-09-2023.pdf
     VkPhysicalDevicePortabilitySubsetFeaturesKHR portabilityFeatures{};
     portabilityFeatures.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PORTABILITY_SUBSET_FEATURES_KHR;
-    portabilityFeatures.triangleFans = VK_TRUE;
-    portabilityFeatures.pNext = &extendedDynamicStateFeaturesEXT;
+    portabilityFeatures.pNext = nullptr;
+#endif
 
+    // Apply configuration to Vulkan structures
+    configBuilder.features.applyToVkStructures(
+        features, vk12Features, vk13Features,
+        extendedDynamicStateFeaturesEXT, extendedDynamicState2FeaturesEXT, 
+        extendedDynamicState3FeaturesEXT,
+        asFeatures, rtPipeFeatures
+#ifdef ZS_PLATFORM_OSX
+        , portabilityFeatures
+#endif
+    );
+
+    // Store enabled features
+    this->enabledDeviceFeatures = features;
+    this->enabledVk12Features = vk12Features;
+    this->enabledVk13Features = vk13Features;
+
+    /// @note Setup pNext chain
+    // Chain: [portability ->] extDynamicState -> extDynamicState2 -> extDynamicState3 
+    //        -> vk13Features -> vk12Features [-> rtPipeFeatures -> asFeatures]
+    
+    extendedDynamicStateFeaturesEXT.setPNext(&extendedDynamicState2FeaturesEXT);
+    extendedDynamicState2FeaturesEXT.setPNext(&extendedDynamicState3FeaturesEXT);
+    extendedDynamicState3FeaturesEXT.setPNext(&vk13Features);
+    vk13Features.pNext = &vk12Features;
+
+    // Add ray tracing features if fully supported
+    if (rtPreds == rtRequiredPreds) {
+        vk12Features.pNext = &rtPipeFeatures;
+        rtPipeFeatures.pNext = &asFeatures;
+    } else {
+        vk12Features.pNext = nullptr;
+    }
+
+    /// @note Create device
+    vk::DeviceCreateInfo devCI{};
+    devCI.setQueueCreateInfoCount(static_cast<u32>(dqCIs.size()))
+         .setPQueueCreateInfos(dqCIs.data())
+         .setEnabledLayerCount(0)
+         .setPpEnabledLayerNames(nullptr)
+         .setEnabledExtensionCount(static_cast<u32>(enabledExtensions.size()))
+         .setPpEnabledExtensionNames(enabledExtensions.data())
+         .setPEnabledFeatures(&features.features);
+
+#ifdef ZS_PLATFORM_OSX
+    portabilityFeatures.pNext = &extendedDynamicStateFeaturesEXT;
     devCI.setPNext(&portabilityFeatures);
 #else
     devCI.setPNext(&extendedDynamicStateFeaturesEXT);
 #endif
-
-    // ray-tracing feature chaining
-    vk::PhysicalDeviceAccelerationStructureFeaturesKHR asFeatures{};
-    asFeatures.accelerationStructure = VK_TRUE;
-    vk::PhysicalDeviceRayTracingPipelineFeaturesKHR rtPipeFeatures{};
-    rtPipeFeatures.rayTracingPipeline = VK_TRUE;
-    rtPipeFeatures.pNext = &asFeatures;
-    if (rtPreds == rtRequiredPreds) vk12Features.pNext = &rtPipeFeatures;
 
     device = physicalDevice.createDevice(devCI, nullptr, dispatcher);
     dispatcher.init(device);
@@ -443,22 +399,32 @@ namespace zs {
       vmaCreateAllocator(&allocatorCreateInfo, &this->defaultAllocator);
     }
 
-    /// display info
-    fmt::print(
-        "\t[InitInfo -- Dev Property] Vulkan device [{}] name: {}."
-        "\n\t\t(Graphics/Compute/Transfer) queue family index: {}, {}, {}. Ray-tracing support: "
-        "{}. Bindless support: {}. Timeline semaphore support: {}"
-        "\n\tEnabled the following device tensions ({} in total):",
-        devid, devProps.deviceName.data(), queueFamilyIndices[vk_queue_e::graphics],
-        queueFamilyIndices[vk_queue_e::compute], queueFamilyIndices[vk_queue_e::transfer],
-        rtPreds == rtRequiredPreds, supportBindless(), vk12Features.timelineSemaphore,
+    /// @note Display enhanced device info
+    fmt::print(fg(fmt::color::cyan),
+        "\t[Device {}] {}\n"
+        "\t  Queue families: Graphics={}, Compute={}, Transfer={}\n"
+        "\t  Features: RT={}, Bindless={}, Timeline={}\n"
+        "\t  Vulkan 1.3: Sync2={}, DynamicRender={}, Maintenance4={}\n"
+        "\t  Enabled {} extension(s):",
+        devid, devProps.deviceName.data(),
+        queueFamilyIndices[vk_queue_e::graphics],
+        queueFamilyIndices[vk_queue_e::compute],
+        queueFamilyIndices[vk_queue_e::transfer],
+        (rtPreds == rtRequiredPreds ? "Yes" : "No"),
+        (supportBindless() ? "Yes" : "No"),
+        (vk12Features.timelineSemaphore ? "Yes" : "No"),
+        (configBuilder.features.synchronization2 ? "Yes" : "No"),
+        (configBuilder.features.dynamicRendering ? "Yes" : "No"),
+        (configBuilder.features.maintenance4 ? "Yes" : "No"),
         enabledExtensions.size());
+
     u32 accum = 0;
     for (auto ext : enabledExtensions) {
-      if ((accum++) % 2 == 0) fmt::print("\n\t\t");
+      if ((accum++) % 2 == 0) fmt::print("\n\t    ");
       fmt::print("{}\t", ext);
     }
-    fmt::print("\n\tManaging the following [{}] memory type(s) in total:\n",
+
+    fmt::print("\n\t  Managing {} memory type(s) in total:\n",
                memoryProperties.memoryTypeCount);
     for (u32 typeIndex = 0; typeIndex < memoryProperties.memoryTypeCount; ++typeIndex) {
       auto propertyFlags = memoryProperties.memoryTypes[typeIndex].propertyFlags;
@@ -471,25 +437,27 @@ namespace zs {
       if (propertyFlags & vk::MemoryPropertyFlagBits::eProtected) tag += "protected; ";
       if (propertyFlags & vk::MemoryPropertyFlagBits::eLazilyAllocated) tag += "lazily_allocated; ";
       tag += "...";
-      fmt::print("\t\t[{}] flag:\t{:0>10b} ({})\n", typeIndex, static_cast<BitType>(propertyFlags),
-                 tag);
+      fmt::print("\t    [{}] {:0>10b} ({})\n", typeIndex, 
+                 static_cast<BitType>(propertyFlags), tag);
     }
-    fmt::print("[DESCRIPTOR LIMITS]\n");
-    fmt::print("max per-stage samplers: {} (update_after_bind: {})\n",
-               maxPerStageDescriptorSamplers(), maxPerStageDescriptorUpdateAfterBindSamplers());
-    fmt::print("max per-stage sampled images: {} (update_after_bind: {})\n",
+
+    fmt::print("\t  [DESCRIPTOR LIMITS]\n");
+    fmt::print("\t    Samplers: {} (update_after_bind: {})\n",
+               maxPerStageDescriptorSamplers(), 
+               maxPerStageDescriptorUpdateAfterBindSamplers());
+    fmt::print("\t    Sampled images: {} (update_after_bind: {})\n",
                maxPerStageDescriptorSampledImages(),
                maxPerStageDescriptorUpdateAfterBindSampledImages());
-    fmt::print("max per-stage storage images: {} (update_after_bind: {})\n",
+    fmt::print("\t    Storage images: {} (update_after_bind: {})\n",
                maxPerStageDescriptorStorageImages(),
                maxPerStageDescriptorUpdateAfterBindStorageImages());
-    fmt::print("max per-stage storage buffers: {} (update_after_bind: {})\n",
+    fmt::print("\t    Storage buffers: {} (update_after_bind: {})\n",
                maxPerStageDescriptorStorageBuffers(),
                maxPerStageDescriptorUpdateAfterBindStorageBuffers());
-    fmt::print("max per-stage uniform buffers: {} (update_after_bind: {})\n",
+    fmt::print("\t    Uniform buffers: {} (update_after_bind: {})\n",
                maxPerStageDescriptorUniformBuffers(),
                maxPerStageDescriptorUpdateAfterBindUniformBuffers());
-    fmt::print("max per-stage input attachments: {} (update_after_bind: {})\n",
+    fmt::print("\t    Input attachments: {} (update_after_bind: {})\n",
                maxPerStageDescriptorInputAttachments(),
                maxPerStageDescriptorUpdateAfterBindInputAttachments());
   }

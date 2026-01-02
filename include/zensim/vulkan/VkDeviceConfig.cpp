@@ -307,9 +307,6 @@ VkDeviceConfig::Builder VkDeviceConfig::createBuilder(
   builder.features.wideLines = true;
   builder.features.independentBlend = true;
 
-  // Filter by supported features/extensions
-  builder.filterBySupported(supportedExtensions, supportedFeatures, supportedVk12Features, supportedVk13Features);
-
   return builder;
 }
 
