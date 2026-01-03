@@ -49,14 +49,93 @@ namespace zs {
     num_queue_types
   };
   enum vk_cmd_usage_e { reuse = 0, single_use, reset };
+
+  /// @brief Descriptor type enum matching spirv_cross::ShaderResources categories
+  /// @note Maps to corresponding vk::DescriptorType values
   enum vk_descriptor_e {
-    uniform = 0,
-    image_sampler,
-    storage,
-    storage_image,
-    input_attachment,
+    // Buffer descriptors (non-dynamic)
+    uniform = 0,              ///< Uniform buffer - maps to eUniformBuffer
+    storage,                  ///< Storage buffer - maps to eStorageBuffer
+    
+    // Buffer descriptors (dynamic - offset specified at bind time)
+    uniform_dynamic,          ///< Uniform buffer dynamic - maps to eUniformBufferDynamic
+    storage_dynamic,          ///< Storage buffer dynamic - maps to eStorageBufferDynamic
+    
+    // Texel buffer descriptors
+    uniform_texel,            ///< Uniform texel buffer - maps to eUniformTexelBuffer
+    storage_texel,            ///< Storage texel buffer - maps to eStorageTexelBuffer
+    
+    // Image/sampler descriptors
+    image_sampler,            ///< Combined image sampler - maps to eCombinedImageSampler
+    sampled_image,            ///< Sampled image (separate) - maps to eSampledImage
+    storage_image,            ///< Storage image - maps to eStorageImage
+    sampler,                  ///< Sampler (separate) - maps to eSampler
+    
+    // Attachment descriptors
+    input_attachment,         ///< Input attachment - maps to eInputAttachment
+    
+    // Ray tracing descriptors
+    acceleration_structure,   ///< Acceleration structure (KHR) - maps to eAccelerationStructureKHR
+    
+    // Other descriptors
+    inline_uniform_block,     ///< Inline uniform block - maps to eInlineUniformBlock
+    
     num_descriptor_types
   };
+
+  /// @brief Helper to convert vk_descriptor_e to vk::DescriptorType
+  inline vk::DescriptorType to_vk_descriptor_type(vk_descriptor_e e) {
+    switch (e) {
+      case vk_descriptor_e::uniform:
+        return vk::DescriptorType::eUniformBuffer;
+      case vk_descriptor_e::storage:
+        return vk::DescriptorType::eStorageBuffer;
+      case vk_descriptor_e::uniform_dynamic:
+        return vk::DescriptorType::eUniformBufferDynamic;
+      case vk_descriptor_e::storage_dynamic:
+        return vk::DescriptorType::eStorageBufferDynamic;
+      case vk_descriptor_e::uniform_texel:
+        return vk::DescriptorType::eUniformTexelBuffer;
+      case vk_descriptor_e::storage_texel:
+        return vk::DescriptorType::eStorageTexelBuffer;
+      case vk_descriptor_e::image_sampler:
+        return vk::DescriptorType::eCombinedImageSampler;
+      case vk_descriptor_e::sampled_image:
+        return vk::DescriptorType::eSampledImage;
+      case vk_descriptor_e::storage_image:
+        return vk::DescriptorType::eStorageImage;
+      case vk_descriptor_e::sampler:
+        return vk::DescriptorType::eSampler;
+      case vk_descriptor_e::input_attachment:
+        return vk::DescriptorType::eInputAttachment;
+      case vk_descriptor_e::acceleration_structure:
+        return vk::DescriptorType::eAccelerationStructureKHR;
+      case vk_descriptor_e::inline_uniform_block:
+        return vk::DescriptorType::eInlineUniformBlock;
+      default:
+        return vk::DescriptorType::eUniformBuffer;
+    }
+  }
+
+  /// @brief Get descriptor type name string for debugging
+  inline const char* descriptor_type_name(vk_descriptor_e e) {
+    switch (e) {
+      case vk_descriptor_e::uniform: return "uniform";
+      case vk_descriptor_e::storage: return "storage";
+      case vk_descriptor_e::uniform_dynamic: return "uniform_dynamic";
+      case vk_descriptor_e::storage_dynamic: return "storage_dynamic";
+      case vk_descriptor_e::uniform_texel: return "uniform_texel";
+      case vk_descriptor_e::storage_texel: return "storage_texel";
+      case vk_descriptor_e::image_sampler: return "image_sampler";
+      case vk_descriptor_e::sampled_image: return "sampled_image";
+      case vk_descriptor_e::storage_image: return "storage_image";
+      case vk_descriptor_e::sampler: return "sampler";
+      case vk_descriptor_e::input_attachment: return "input_attachment";
+      case vk_descriptor_e::acceleration_structure: return "acceleration_structure";
+      case vk_descriptor_e::inline_uniform_block: return "inline_uniform_block";
+      default: return "unknown";
+    }
+  }
 
   using vk_handle_t = i32;
   using image_handle_t = vk_handle_t;

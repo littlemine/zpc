@@ -177,21 +177,28 @@ namespace zs {
             "---->\tbuilding descriptor set layout [{}] at set [{}], binding [{}], location "
             "[{}], type[{}]\n",
             resource.name.c_str(), set, binding, location, reflect_vk_enum(descriptorType));
-#if 0
-        setLayouts.emplace(
-            set, ctx.setlayout().addBinding(binding, descriptorType, stageFlag, 1).build());
-#endif
+
         if (setLayoutBuilders.find(set) == setLayoutBuilders.end())
           setLayoutBuilders.emplace(set, ctx.setlayout());
         setLayoutBuilders.find(set)->second.addBinding(binding, descriptorType, stageFlag, 1);
       }
     };
+    
+    // Buffer descriptors
     generateDescriptors(resources_.uniform_buffers, vk::DescriptorType::eUniformBufferDynamic);
     generateDescriptors(resources_.storage_buffers, vk::DescriptorType::eStorageBuffer);
+    
+    // Image/sampler descriptors
     generateDescriptors(resources_.storage_images, vk::DescriptorType::eStorageImage);
     generateDescriptors(resources_.sampled_images, vk::DescriptorType::eCombinedImageSampler);
-
+    generateDescriptors(resources_.separate_images, vk::DescriptorType::eSampledImage);
+    generateDescriptors(resources_.separate_samplers, vk::DescriptorType::eSampler);
+    
+    // Attachment descriptors
     generateDescriptors(resources_.subpass_inputs, vk::DescriptorType::eInputAttachment);
+    
+    // Ray tracing descriptors
+    generateDescriptors(resources_.acceleration_structures, vk::DescriptorType::eAccelerationStructureKHR);
 
     for (auto &[setNo, builder] : setLayoutBuilders) {
       setLayouts.emplace(setNo, builder.build());

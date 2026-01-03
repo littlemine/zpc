@@ -484,34 +484,60 @@ namespace zs {
   }
 
   void VulkanContext::setupDescriptorPool() {
-    /// pool
-    std::array<vk::DescriptorPoolSize, vk_descriptor_e::num_descriptor_types> poolSizes;
-    poolSizes[vk_descriptor_e::uniform] = vk::DescriptorPoolSize()
-                                              .setDescriptorCount(num_max_default_resources)
-                                              .setType(vk::DescriptorType::eUniformBufferDynamic);
+    /// @brief Calculate appropriate pool sizes based on device limits
+    auto calcPoolSize = [](u32 deviceLimit, u32 maxDesired = 1000) -> u32 {
+      // Use at most half of device limit, capped at maxDesired
+      return std::min(maxDesired, std::max(1u, deviceLimit / 2));
+    };
 
-    poolSizes[vk_descriptor_e::image_sampler]
-        = vk::DescriptorPoolSize()
-              .setDescriptorCount(num_max_default_resources)
-              .setType(vk::DescriptorType::eCombinedImageSampler);
+    // Calculate sizes based on device limits
+    const u32 uniformPoolSize = calcPoolSize(maxPerStageDescriptorUniformBuffers(), 1000);
+    const u32 storagePoolSize = calcPoolSize(maxPerStageDescriptorStorageBuffers(), 1000);
+    const u32 samplerPoolSize = calcPoolSize(maxPerStageDescriptorSamplers(), 500);
+    const u32 sampledImagePoolSize = calcPoolSize(maxPerStageDescriptorSampledImages(), 1000);
+    const u32 storageImagePoolSize = calcPoolSize(maxPerStageDescriptorStorageImages(), 500);
+    const u32 inputAttachmentPoolSize = calcPoolSize(maxPerStageDescriptorInputAttachments(), 256);
 
-    poolSizes[vk_descriptor_e::storage] = vk::DescriptorPoolSize()
-                                              .setDescriptorCount(num_max_default_resources)
-                                              .setType(vk::DescriptorType::eStorageBuffer);
+    /// Default pool - supports common descriptor types
+    std::vector<vk::DescriptorPoolSize> defaultPoolSizes;
+    defaultPoolSizes.push_back(vk::DescriptorPoolSize()
+        .setDescriptorCount(uniformPoolSize)
+        .setType(vk::DescriptorType::eUniformBufferDynamic));
+    defaultPoolSizes.push_back(vk::DescriptorPoolSize()
+        .setDescriptorCount(uniformPoolSize)
+        .setType(vk::DescriptorType::eUniformBuffer));
+    defaultPoolSizes.push_back(vk::DescriptorPoolSize()
+        .setDescriptorCount(sampledImagePoolSize)
+        .setType(vk::DescriptorType::eCombinedImageSampler));
+    defaultPoolSizes.push_back(vk::DescriptorPoolSize()
+        .setDescriptorCount(storagePoolSize)
+        .setType(vk::DescriptorType::eStorageBuffer));
+    defaultPoolSizes.push_back(vk::DescriptorPoolSize()
+        .setDescriptorCount(storagePoolSize)
+        .setType(vk::DescriptorType::eStorageBufferDynamic));
+    defaultPoolSizes.push_back(vk::DescriptorPoolSize()
+        .setDescriptorCount(storageImagePoolSize)
+        .setType(vk::DescriptorType::eStorageImage));
+    defaultPoolSizes.push_back(vk::DescriptorPoolSize()
+        .setDescriptorCount(inputAttachmentPoolSize)
+        .setType(vk::DescriptorType::eInputAttachment));
+    defaultPoolSizes.push_back(vk::DescriptorPoolSize()
+        .setDescriptorCount(samplerPoolSize)
+        .setType(vk::DescriptorType::eSampler));
+    defaultPoolSizes.push_back(vk::DescriptorPoolSize()
+        .setDescriptorCount(sampledImagePoolSize)
+        .setType(vk::DescriptorType::eSampledImage));
 
-    poolSizes[vk_descriptor_e::storage_image] = vk::DescriptorPoolSize()
-                                                    .setDescriptorCount(num_max_default_resources)
-                                                    .setType(vk::DescriptorType::eStorageImage);
-    poolSizes[vk_descriptor_e::input_attachment]
-        = vk::DescriptorPoolSize()
-              .setDescriptorCount(num_max_default_resources)
-              .setType(vk::DescriptorType::eInputAttachment);
-    vk::DescriptorPoolCreateFlags flag = vk::DescriptorPoolCreateFlagBits::eFreeDescriptorSet;
+    const u32 defaultMaxSets = uniformPoolSize + sampledImagePoolSize + storagePoolSize 
+                               + storageImagePoolSize + inputAttachmentPoolSize;
+
+    // vk::DescriptorPoolCreateFlags flag = vk::DescriptorPoolCreateFlagBits::eFreeDescriptorSet;
+    vk::DescriptorPoolCreateFlags flag{};
     defaultDescriptorPool
         = device.createDescriptorPool(vk::DescriptorPoolCreateInfo{}
-                                          .setPoolSizeCount(poolSizes.size())
-                                          .setPPoolSizes(poolSizes.data())
-                                          .setMaxSets(num_max_default_resources * poolSizes.size())
+                                          .setPoolSizeCount(static_cast<u32>(defaultPoolSizes.size()))
+                                          .setPPoolSizes(defaultPoolSizes.data())
+                                          .setMaxSets(defaultMaxSets)
                                           .setFlags(flag),
                                       nullptr, dispatcher);
 
@@ -522,112 +548,122 @@ namespace zs {
     if (!supportBindless()) return;
     flag |= vk::DescriptorPoolCreateFlagBits::eUpdateAfterBindEXT;
 
-    {
-      std::array<vk::DescriptorPoolSize, vk_descriptor_e::num_descriptor_types> bindlessPoolSizes;
-      bindlessPoolSizes[vk_descriptor_e::uniform]
-          = vk::DescriptorPoolSize()
-                .setDescriptorCount(num_max_bindless_resources)
-                .setType(vk::DescriptorType::eUniformBuffer);
-      bindlessPoolSizes[vk_descriptor_e::image_sampler]
-          = vk::DescriptorPoolSize()
-                .setDescriptorCount(num_max_bindless_resources)
-                .setType(vk::DescriptorType::eCombinedImageSampler);
+    /// Bindless pool - uses update-after-bind limits
+    auto calcBindlessSize = [](u32 deviceLimit, u32 maxDesired = 1000) -> u32 {
+      return std::min(maxDesired, std::max(1u, deviceLimit / 4));
+    };
 
-      bindlessPoolSizes[vk_descriptor_e::storage]
-          = vk::DescriptorPoolSize()
-                .setDescriptorCount(num_max_bindless_resources)
-                .setType(vk::DescriptorType::eStorageBuffer);
+    const u32 bindlessUniformSize = calcBindlessSize(
+        maxPerStageDescriptorUpdateAfterBindUniformBuffers(), 1000);
+    const u32 bindlessStorageSize = calcBindlessSize(
+        maxPerStageDescriptorUpdateAfterBindStorageBuffers(), 1000);
+    const u32 bindlessSamplerSize = calcBindlessSize(
+        std::min(maxDescriptorSetUpdateAfterBindSamplers(),
+                 maxPerStageDescriptorUpdateAfterBindSamplers()), 500);
+    const u32 bindlessSampledImageSize = calcBindlessSize(
+        maxPerStageDescriptorUpdateAfterBindSampledImages(), 1000);
+    const u32 bindlessStorageImageSize = calcBindlessSize(
+        maxPerStageDescriptorUpdateAfterBindStorageImages(), 500);
+    const u32 bindlessInputAttachmentSize = calcBindlessSize(
+        maxPerStageDescriptorUpdateAfterBindInputAttachments(), 256);
 
-      bindlessPoolSizes[vk_descriptor_e::storage_image]
-          = vk::DescriptorPoolSize()
-                .setDescriptorCount(num_max_bindless_resources)
-                .setType(vk::DescriptorType::eStorageImage);
+    std::vector<vk::DescriptorPoolSize> bindlessPoolSizes;
+    bindlessPoolSizes.push_back(vk::DescriptorPoolSize()
+        .setDescriptorCount(bindlessUniformSize)
+        .setType(vk::DescriptorType::eUniformBuffer));
+    bindlessPoolSizes.push_back(vk::DescriptorPoolSize()
+        .setDescriptorCount(bindlessSampledImageSize)
+        .setType(vk::DescriptorType::eCombinedImageSampler));
+    bindlessPoolSizes.push_back(vk::DescriptorPoolSize()
+        .setDescriptorCount(bindlessStorageSize)
+        .setType(vk::DescriptorType::eStorageBuffer));
+    bindlessPoolSizes.push_back(vk::DescriptorPoolSize()
+        .setDescriptorCount(bindlessStorageImageSize)
+        .setType(vk::DescriptorType::eStorageImage));
+    bindlessPoolSizes.push_back(vk::DescriptorPoolSize()
+        .setDescriptorCount(bindlessInputAttachmentSize)
+        .setType(vk::DescriptorType::eInputAttachment));
+    bindlessPoolSizes.push_back(vk::DescriptorPoolSize()
+        .setDescriptorCount(bindlessSamplerSize)
+        .setType(vk::DescriptorType::eSampler));
+    bindlessPoolSizes.push_back(vk::DescriptorPoolSize()
+        .setDescriptorCount(bindlessSampledImageSize)
+        .setType(vk::DescriptorType::eSampledImage));
 
-      bindlessPoolSizes[vk_descriptor_e::input_attachment]
-          = vk::DescriptorPoolSize()
-                .setDescriptorCount(num_max_bindless_resources)
-                .setType(vk::DescriptorType::eInputAttachment);
-      bindlessDescriptorPool = device.createDescriptorPool(
-          vk::DescriptorPoolCreateInfo{}
-              .setPoolSizeCount(bindlessPoolSizes.size())
-              .setPPoolSizes(bindlessPoolSizes.data())
-              .setMaxSets(num_max_bindless_resources * bindlessPoolSizes.size())
-              .setFlags(flag),
-          nullptr, dispatcher);
-    }
+    const u32 bindlessMaxSets = bindlessUniformSize + bindlessSampledImageSize + bindlessStorageSize
+                                + bindlessStorageImageSize + bindlessInputAttachmentSize;
 
-    /// set layout
-    std::array<vk::DescriptorSetLayoutBinding, vk_descriptor_e::num_descriptor_types> bindings;
-    auto& uniformBinding = bindings[vk_descriptor_e::uniform];
-    uniformBinding
-        = vk::DescriptorSetLayoutBinding{}
-              .setBinding(bindless_texture_binding)
-              .setDescriptorType(vk::DescriptorType::eUniformBuffer)
-              .setDescriptorCount(std::min(
-                  num_max_bindless_resources,
-                  std::max(1u, maxPerStageDescriptorUpdateAfterBindUniformBuffers() / 2 - 2)))
-              .setStageFlags(vk::ShaderStageFlagBits::eAll);
-    auto& imageSamplerBinding = bindings[vk_descriptor_e::image_sampler];
-    imageSamplerBinding
-        = vk::DescriptorSetLayoutBinding{}
-              .setBinding(bindless_texture_binding + 1)
-              .setDescriptorType(vk::DescriptorType::eCombinedImageSampler)
-              .setDescriptorCount(
-                  std::min(num_max_bindless_resources,
-                           std::min(maxDescriptorSetUpdateAfterBindSamplers(),
-                                    std::min(maxPerStageDescriptorUpdateAfterBindSamplers(),
-                                             maxPerStageDescriptorUpdateAfterBindSampledImages()))))
-              .setStageFlags(vk::ShaderStageFlagBits::eAll);
-    auto& storageBinding = bindings[vk_descriptor_e::storage];
-    storageBinding
-        = vk::DescriptorSetLayoutBinding{}
-              .setBinding(bindless_texture_binding + 2)
-              .setDescriptorType(vk::DescriptorType::eStorageBuffer)
-              .setDescriptorCount(std::min(
-                  num_max_bindless_resources,
-                  std::max(1u, maxPerStageDescriptorUpdateAfterBindStorageBuffers() / 2 - 2)))
-              .setStageFlags(vk::ShaderStageFlagBits::eAll);
-    auto& storageImageBinding = bindings[vk_descriptor_e::storage_image];
-    storageImageBinding
-        = vk::DescriptorSetLayoutBinding{}
-              .setBinding(bindless_texture_binding + 3)
-              .setDescriptorType(vk::DescriptorType::eStorageImage)
-              .setDescriptorCount(std::min(num_max_bindless_resources,
-                                           maxPerStageDescriptorUpdateAfterBindStorageImages()))
-              .setStageFlags(vk::ShaderStageFlagBits::eAll);
-    auto& inputAttachmentBinding = bindings[vk_descriptor_e::input_attachment];
-    inputAttachmentBinding
-        = vk::DescriptorSetLayoutBinding{}
-              .setBinding(bindless_texture_binding + 4)
-              .setDescriptorType(vk::DescriptorType::eInputAttachment)
-              .setDescriptorCount(std::min(num_max_bindless_resources,
-                                           maxPerStageDescriptorUpdateAfterBindInputAttachments()))
-              .setStageFlags(vk::ShaderStageFlagBits::eFragment);
+    bindlessDescriptorPool = device.createDescriptorPool(
+        vk::DescriptorPoolCreateInfo{}
+            .setPoolSizeCount(static_cast<u32>(bindlessPoolSizes.size()))
+            .setPPoolSizes(bindlessPoolSizes.data())
+            .setMaxSets(bindlessMaxSets)
+            .setFlags(flag),
+        nullptr, dispatcher);
+
+    /// Bindless set layout
+    std::vector<vk::DescriptorSetLayoutBinding> bindings;
+    u32 bindingIndex = bindless_texture_binding;
+
+    bindings.push_back(vk::DescriptorSetLayoutBinding{}
+        .setBinding(bindingIndex++)
+        .setDescriptorType(vk::DescriptorType::eUniformBuffer)
+        .setDescriptorCount(bindlessUniformSize)
+        .setStageFlags(vk::ShaderStageFlagBits::eAll));
+
+    bindings.push_back(vk::DescriptorSetLayoutBinding{}
+        .setBinding(bindingIndex++)
+        .setDescriptorType(vk::DescriptorType::eCombinedImageSampler)
+        .setDescriptorCount(std::min(bindlessSampledImageSize, bindlessSamplerSize))
+        .setStageFlags(vk::ShaderStageFlagBits::eAll));
+
+    bindings.push_back(vk::DescriptorSetLayoutBinding{}
+        .setBinding(bindingIndex++)
+        .setDescriptorType(vk::DescriptorType::eStorageBuffer)
+        .setDescriptorCount(bindlessStorageSize)
+        .setStageFlags(vk::ShaderStageFlagBits::eAll));
+
+    bindings.push_back(vk::DescriptorSetLayoutBinding{}
+        .setBinding(bindingIndex++)
+        .setDescriptorType(vk::DescriptorType::eStorageImage)
+        .setDescriptorCount(bindlessStorageImageSize)
+        .setStageFlags(vk::ShaderStageFlagBits::eAll));
+
+    bindings.push_back(vk::DescriptorSetLayoutBinding{}
+        .setBinding(bindingIndex++)
+        .setDescriptorType(vk::DescriptorType::eInputAttachment)
+        .setDescriptorCount(bindlessInputAttachmentSize)
+        .setStageFlags(vk::ShaderStageFlagBits::eFragment));
 
     vk::DescriptorBindingFlags bindlessFlag = vk::DescriptorBindingFlagBits::ePartiallyBound
                                               | vk::DescriptorBindingFlagBits::eUpdateAfterBind;
-    // | vk::DescriptorBindingFlagBits::eVariableDescriptorCount
-    std::array<vk::DescriptorBindingFlags, vk_descriptor_e::num_descriptor_types> bindingFlags;
-    for (auto& flag : bindingFlags) flag = bindlessFlag;
-    bindingFlags[vk_descriptor_e::input_attachment]
-        = vk::DescriptorBindingFlagBits::ePartiallyBound;
-    auto extendedInfo
-        = vk::DescriptorSetLayoutBindingFlagsCreateInfo{}.setBindingFlags(bindingFlags);
+    std::vector<vk::DescriptorBindingFlags> bindingFlags(bindings.size(), bindlessFlag);
+    bindingFlags.back() = vk::DescriptorBindingFlagBits::ePartiallyBound;
+
+    auto extendedInfo = vk::DescriptorSetLayoutBindingFlagsCreateInfo{}
+        .setBindingCount(static_cast<u32>(bindingFlags.size()))
+        .setPBindingFlags(bindingFlags.data());
 
     bindlessDescriptorSetLayout = device.createDescriptorSetLayout(
         vk::DescriptorSetLayoutCreateInfo{}
             .setFlags(vk::DescriptorSetLayoutCreateFlagBits::eUpdateAfterBindPoolEXT)
-            .setBindingCount(bindings.size())
+            .setBindingCount(static_cast<u32>(bindings.size()))
             .setPBindings(bindings.data())
             .setPNext(&extendedInfo),
         nullptr, dispatcher);
 
-    /// set
     bindlessDescriptorSet
         = device.allocateDescriptorSets(vk::DescriptorSetAllocateInfo{}
                                             .setDescriptorPool(bindlessDescriptorPool)
                                             .setPSetLayouts(&bindlessDescriptorSetLayout)
                                             .setDescriptorSetCount(1))[0];
+
+    fmt::print("\t  [DESCRIPTOR POOL ALLOCATION]\n");
+    fmt::print("\t    Default pool - maxSets: {}\n", defaultMaxSets);
+    fmt::print("\t    Bindless pool - maxSets: {}\n", bindlessMaxSets);
+    fmt::print("\t    Bindless bindings: uniform={}, sampler={}, storage={}, storageImg={}, input={}\n",
+               bindlessUniformSize, std::min(bindlessSampledImageSize, bindlessSamplerSize),
+               bindlessStorageSize, bindlessStorageImageSize, bindlessInputAttachmentSize);
   }
 
   ExecutionContext& VulkanContext::env() {
@@ -686,16 +722,21 @@ namespace zs {
     write.pImageInfo = &imageInfo;
 
     std::vector<vk::WriteDescriptorSet> writes{};
+    // Bindless layout bindings (from setupDescriptorPool):
+    // 0: uniform, 1: combined_image_sampler, 2: storage, 3: storage_image, 4: input_attachment
+    constexpr u32 bindlessCombinedImageSamplerBinding = bindless_texture_binding + 1;
+    constexpr u32 bindlessStorageImageBinding = bindless_texture_binding + 3;
+    
     if ((img.image.get().usage & vk::ImageUsageFlagBits::eSampled)
         == vk::ImageUsageFlagBits::eSampled) {
       write.descriptorType = vk::DescriptorType::eCombinedImageSampler;
-      write.dstBinding = (u32)vk_descriptor_e::image_sampler;
+      write.dstBinding = bindlessCombinedImageSamplerBinding;
       writes.push_back(write);
     }
     if ((img.image.get().usage & vk::ImageUsageFlagBits::eStorage)
         == vk::ImageUsageFlagBits::eStorage) {
       write.descriptorType = vk::DescriptorType::eStorageImage;
-      write.dstBinding = (u32)vk_descriptor_e::storage_image;
+      write.dstBinding = bindlessStorageImageBinding;
       writes.push_back(write);
     }
 
@@ -704,6 +745,7 @@ namespace zs {
   }
 
   buffer_handle_t VulkanContext::registerBuffer(const Buffer& buffer) {
+    if (!supportBindless()) return (buffer_handle_t)-1;
     buffer_handle_t ret = registeredBuffers.size();
     registeredBuffers.push_back(&buffer);
 
@@ -719,16 +761,22 @@ namespace zs {
     write.pBufferInfo = &bufferInfo;
 
     std::vector<vk::WriteDescriptorSet> writes{};
+    
+    // Bindless layout bindings (from setupDescriptorPool):
+    // 0: uniform, 1: combined_image_sampler, 2: storage, 3: storage_image, 4: input_attachment
+    constexpr u32 bindlessUniformBinding = bindless_texture_binding;
+    constexpr u32 bindlessStorageBinding = bindless_texture_binding + 2;
+    
     if ((buffer.usageFlags & vk::BufferUsageFlagBits::eUniformBuffer)
         == vk::BufferUsageFlagBits::eUniformBuffer) {
       write.descriptorType = vk::DescriptorType::eUniformBuffer;
-      write.dstBinding = (u32)vk_descriptor_e::uniform;
+      write.dstBinding = bindlessUniformBinding;
       writes.push_back(write);
     }
     if ((buffer.usageFlags & vk::BufferUsageFlagBits::eStorageBuffer)
         == vk::BufferUsageFlagBits::eStorageBuffer) {
       write.descriptorType = vk::DescriptorType::eStorageBuffer;
-      write.dstBinding = (u32)vk_descriptor_e::storage;
+      write.dstBinding = bindlessStorageBinding;
       writes.push_back(write);
     }
 
@@ -1081,7 +1129,7 @@ namespace zs {
     auto poolCreateInfo = vk::DescriptorPoolCreateInfo()
                               .setMaxSets(maxSets)
                               .setPoolSizeCount((u32)poolSizes.size())
-                              .setFlags(vk::DescriptorPoolCreateFlagBits::eFreeDescriptorSet)
+                              // .setFlags(vk::DescriptorPoolCreateFlagBits::eFreeDescriptorSet)
                               .setPPoolSizes(poolSizes.data());
     DescriptorPool ret{*this};
     ret.descriptorPool = device.createDescriptorPool(poolCreateInfo, nullptr, dispatcher);

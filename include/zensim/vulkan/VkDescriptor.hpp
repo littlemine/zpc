@@ -1,5 +1,8 @@
 #pragma once
 #include <map>
+#include <vector>
+#include <mutex>
+#include <array>
 
 #include "zensim/vulkan/VkContext.hpp"
 
@@ -188,6 +191,45 @@ namespace zs {
       write.dstArrayElement = i;
       write.pImageInfo = imageInfo;
       write.descriptorCount = 1;
+
+      writes.push_back(write);
+      return *this;
+    }
+
+    /// @note Write acceleration structure descriptor (for ray tracing)
+    DescriptorWriter& writeAccelerationStructure(u32 binding, 
+                                                  vk::WriteDescriptorSetAccelerationStructureKHR* asInfo) {
+      vk::WriteDescriptorSet write{};
+      write.descriptorType = vk::DescriptorType::eAccelerationStructureKHR;
+      write.dstBinding = binding;
+      write.descriptorCount = asInfo->accelerationStructureCount;
+      write.pNext = asInfo;
+
+      writes.push_back(write);
+      return *this;
+    }
+
+    /// @note Write texel buffer descriptor
+    DescriptorWriter& writeTexelBuffer(u32 binding, vk::DescriptorType type,
+                                       vk::BufferView* texelBufferView) {
+      vk::WriteDescriptorSet write{};
+      write.descriptorType = type;
+      write.dstBinding = binding;
+      write.pTexelBufferView = texelBufferView;
+      write.descriptorCount = 1;
+
+      writes.push_back(write);
+      return *this;
+    }
+
+    /// @note Write inline uniform block
+    DescriptorWriter& writeInlineUniformBlock(u32 binding, 
+                                               vk::WriteDescriptorSetInlineUniformBlock* inlineInfo) {
+      vk::WriteDescriptorSet write{};
+      write.descriptorType = vk::DescriptorType::eInlineUniformBlock;
+      write.dstBinding = binding;
+      write.descriptorCount = inlineInfo->dataSize;
+      write.pNext = inlineInfo;
 
       writes.push_back(write);
       return *this;
