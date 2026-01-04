@@ -667,6 +667,16 @@ namespace zs {
   }
 
   ExecutionContext& VulkanContext::env() {
+    // Thread-local cache to avoid mutex contention on repeated calls
+    // Key: device id, Value: pointer to ExecutionContext for this thread
+    thread_local std::map<int, ExecutionContext*> cachedContexts;
+    
+    // Fast path: check thread-local cache first (no mutex needed)
+    if (auto it = cachedContexts.find(devid); it != cachedContexts.end()) {
+      return *it->second;
+    }
+    
+    // Slow path: first access from this thread for this device
     WorkerEnvs::iterator workerIter;
     ContextEnvs::iterator iter;
     auto& g_mtx = Vulkan::instance().mutex<Mutex>();
@@ -676,6 +686,10 @@ namespace zs {
         std::this_thread::get_id(), ContextEnvs{});
     std::tie(iter, tag) = workerIter->second.try_emplace(devid, *this);
     g_mtx.unlock();
+    
+    // Cache the result for future calls from this thread
+    cachedContexts[devid] = &iter->second;
+    
     return iter->second;
   }
   u32 check_current_working_contexts() {
