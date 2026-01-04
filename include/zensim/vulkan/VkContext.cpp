@@ -1104,6 +1104,46 @@ namespace zs {
     return q;
   }
 
+  BinarySemaphore VulkanContext::createBinarySemaphore(const source_location& loc) {
+    BinarySemaphore ret{*this};
+    ret.semaphore = device.createSemaphore(vk::SemaphoreCreateInfo{}, nullptr, dispatcher);
+
+#if ZS_ENABLE_VULKAN_VALIDATION
+    vk::DebugUtilsObjectNameInfoEXT objNameInfo{};
+    objNameInfo.objectType = vk::ObjectType::eSemaphore;
+    objNameInfo.objectHandle = reinterpret_cast<u64>((VkSemaphore)ret.semaphore);
+    auto name = fmt::format("[[ zs::BinarySemaphore (File: {}, Ln {}, Col {}, Device: {}) ]]",
+                            loc.file_name(), loc.line(), loc.column(), devid);
+    objNameInfo.pObjectName = name.c_str();
+    device.setDebugUtilsObjectNameEXT(objNameInfo, dispatcher);
+#endif
+    return ret;
+  }
+
+  TimelineSemaphore VulkanContext::createTimelineSemaphore(u64 initialValue,
+                                                           const source_location& loc) {
+    TimelineSemaphore ret{*this, VK_NULL_HANDLE, initialValue};
+
+    vk::SemaphoreTypeCreateInfo timelineCI{};
+    timelineCI.setSemaphoreType(vk::SemaphoreType::eTimeline).setInitialValue(initialValue);
+
+    vk::SemaphoreCreateInfo semaphoreCI{};
+    semaphoreCI.setPNext(&timelineCI);
+
+    ret.semaphore = device.createSemaphore(semaphoreCI, nullptr, dispatcher);
+
+#if ZS_ENABLE_VULKAN_VALIDATION
+    vk::DebugUtilsObjectNameInfoEXT objNameInfo{};
+    objNameInfo.objectType = vk::ObjectType::eSemaphore;
+    objNameInfo.objectHandle = reinterpret_cast<u64>((VkSemaphore)ret.semaphore);
+    auto name = fmt::format("[[ zs::TimelineSemaphore (File: {}, Ln {}, Col {}, Device: {}) ]]",
+                            loc.file_name(), loc.line(), loc.column(), devid);
+    objNameInfo.pObjectName = name.c_str();
+    device.setDebugUtilsObjectNameEXT(objNameInfo, dispatcher);
+#endif
+    return ret;
+  }
+
   VkCommand VulkanContext::createCommandBuffer(vk_cmd_usage_e usage, vk_queue_e queueFamily,
                                                bool begin, const source_location& loc) {
     auto& pool = env().pools(queueFamily);

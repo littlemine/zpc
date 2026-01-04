@@ -23,6 +23,9 @@ namespace zs {
   struct Buffer;
   struct VkCommand;
   struct Fence;
+  struct BinarySemaphore;
+  struct TimelineSemaphore;
+  struct SingleUseCommandBuffer;
   struct Framebuffer;
   struct RenderPass;
   struct RenderPassBuilder;
@@ -349,6 +352,11 @@ namespace zs {
     /// @note query pool
     QueryPool createQueryPool(vk::QueryType queryType, u32 queryCount);
 
+    /// @note synchronization primitives
+    BinarySemaphore createBinarySemaphore(const source_location &loc = source_location::current());
+    TimelineSemaphore createTimelineSemaphore(
+        u64 initialValue = 0, const source_location &loc = source_location::current());
+
     /// @note descriptor
     DescriptorPool createDescriptorPool(const std::vector<vk::DescriptorPoolSize> &poolSizes,
                                         u32 maxSets = 1000,
@@ -377,8 +385,10 @@ namespace zs {
     ZS_VK_DISPATCH_LOADER_DYNAMIC dispatcher;  // store device-specific calls
     // graphics queue family should also be used for presentation if swapchain required
 
+    // maps to physicalDevice's queue family properties
     int queueFamilyIndices[num_queue_types];  // graphicsQueueFamilyIndex, computeQueueFamilyIndex,
                                               // transferQueueFamilyIndex;
+    // maps to vk::Device's (distinct) queue families created
     int queueFamilyMaps[num_queue_types];     // graphicsQueueFamilyMap, computeQueueFamilyMap,
                                               // transferQueueFamilyMap;
 
