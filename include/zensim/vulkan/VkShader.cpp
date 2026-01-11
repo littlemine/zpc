@@ -172,6 +172,9 @@ namespace zs {
         u32 set = glsl.get_decoration(resource.id, spv::DecorationDescriptorSet);
         u32 binding = glsl.get_decoration(resource.id, spv::DecorationBinding);
         u32 location = glsl.get_decoration(resource.id, spv::DecorationLocation);
+        const spirv_cross::SPIRType &type = glsl.get_type(resource.type_id);
+        u32 typeArraySize = type.array.size();
+        u32 count = typeArraySize == 0 ? 1 : type.array[0];
 
         fmt::print(
             "---->\tbuilding descriptor set layout [{}] at set [{}], binding [{}], location "
@@ -180,7 +183,8 @@ namespace zs {
 
         if (setLayoutBuilders.find(set) == setLayoutBuilders.end())
           setLayoutBuilders.emplace(set, ctx.setlayout());
-        setLayoutBuilders.find(set)->second.addBinding(binding, descriptorType, stageFlag, 1);
+        // setLayoutBuilders.find(set)->second.addBinding(binding, descriptorType, stageFlag, 1);
+        setLayoutBuilders.find(set)->second.addBinding(binding, descriptorType, stageFlag, count);
       }
     };
     
