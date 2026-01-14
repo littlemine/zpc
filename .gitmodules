@@ -1,0 +1,6 @@
+[submodule "include/zensim/zpc_tpls"]
+	path = include/zensim/zpc_tpls
+	url = https://github.com/littlemine/tpls
+[submodule "zpc_assets"]
+	path = zpc_assets
+	url = https://github.com/littlemine/assets
