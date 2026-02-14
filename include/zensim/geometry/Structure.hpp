@@ -195,8 +195,9 @@ namespace zs {
       return gridApply(_primaryGrid, [](auto &&grid) -> decltype(grid.get_allocator()) {
         return grid.get_allocator();
       });
-      throw std::runtime_error(
-          fmt::format("primary grid \"{}\" not known", magic_enum::enum_name(_primaryGrid)));
+      std::ostringstream oss;
+      oss << "primary grid \"" << magic_enum::enum_name(_primaryGrid) << "\" not known";
+      throw std::runtime_error(oss.str());
     }
     constexpr size_type numBlocks() const noexcept {
       return gridApply(_primaryGrid, [](auto &&grid) -> size_type { return grid.numTiles(); });

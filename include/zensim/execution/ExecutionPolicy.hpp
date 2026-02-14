@@ -1,7 +1,8 @@
 #pragma once
 
 #include <cassert>
-#include <numeric>
+#include <sstream>
+#include <algorithm>
 
 #include "zensim/TypeAlias.hpp"
 #include "zensim/ZpcFunction.hpp"
@@ -14,7 +15,6 @@
 #include "zensim/types/Property.h"
 #include "zensim/types/SourceLocation.hpp"
 #include "zensim/types/Tuple.h"
-#include "zensim/zpc_tpls/fmt/format.h"
 #include "zensim/zpc_tpls/magic_enum/magic_enum.hpp"
 namespace zs {
 
@@ -26,7 +26,7 @@ namespace zs {
     return execution_space_tag[magic_enum::enum_integer(execpol)];
   }
 
-  constexpr exec_tags suggest_exec_space(const MemoryLocation &mloc) {
+  inline exec_tags suggest_exec_space(const MemoryLocation &mloc) {
     switch (mloc.memspace()) {
       case memsrc_e::host:
 #if ZS_ENABLE_OPENMP
@@ -45,11 +45,13 @@ namespace zs {
 #elif ZS_ENABLE_SYCL && defined(SYCL_LANGUAGE_VERSION)
         return sycl_c;
 #endif
-      default:
-        throw std::runtime_error(
-            fmt::format("no valid execution space suggestions for the memory handle [{}, {}]\n",
-                        get_memory_tag_name(mloc.memspace()), (int)mloc.devid()));
+      default: {
+        std::ostringstream oss;
+        oss << "no valid execution space suggestions for the memory handle ["
+            << get_memory_tag_name(mloc.memspace()) << ", " << (int)mloc.devid() << "]\n";
+        throw std::runtime_error(oss.str());
         return seq_c;
+      }
     }
   }
 
@@ -171,9 +173,12 @@ namespace zs {
             static_assert(always_false<F>, "unable to handle this callable and the range.");
         }
       }
-      if (shouldProfile())
-        timer.tock(fmt::format("[Seq Exec | File {}, Ln {}, Col {}]", loc.file_name(), loc.line(),
-                               loc.column()));
+      if (shouldProfile()) {
+        std::ostringstream oss;
+        oss << "[Seq Exec | File " << loc.file_name() << ", Ln " << loc.line() << ", Col "
+            << loc.column() << "]";
+        timer.tock(oss.str());
+      }
     }
     template <typename Range, typename ParamTuple, typename F,
               enable_if_t<is_tuple_v<remove_cvref_t<ParamTuple>>> = 0>
@@ -210,9 +215,12 @@ namespace zs {
             static_assert(always_false<F>, "unable to handle this callable and the range.");
         }
       }
-      if (shouldProfile())
-        timer.tock(fmt::format("[Seq Exec | File {}, Ln {}, Col {}]", loc.file_name(), loc.line(),
-                               loc.column()));
+      if (shouldProfile()) {
+        std::ostringstream oss;
+        oss << "[Seq Exec | File " << loc.file_name() << ", Ln " << loc.line() << ", Col "
+            << loc.column() << "]";
+        timer.tock(oss.str());
+      }
     }
 
     template <zs::size_t I, size_t... Is, typename... Iters, typename... Policies,
@@ -432,9 +440,12 @@ namespace zs {
         }
       }
 
-      if (shouldProfile())
-        timer.tock(fmt::format("[Seq merge_sort_pair | File {}, Ln {}, Col {}]", loc.file_name(),
-                               loc.line(), loc.column()));
+      if (shouldProfile()) {
+        std::ostringstream oss;
+        oss << "[Seq merge_sort_pair | File " << loc.file_name() << ", Ln " << loc.line()
+            << ", Col " << loc.column() << "]";
+        timer.tock(oss.str());
+      }
     }
     template <typename KeyIter, typename ValueIter,
               typename CompareOpT

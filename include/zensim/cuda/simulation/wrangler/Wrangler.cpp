@@ -8,7 +8,8 @@
 #include "zensim/cuda/Cuda.h"
 #include "zensim/io/Filesystem.hpp"
 #include "zensim/types/Tuple.h"
-#include "zensim/zpc_tpls/fmt/format.h"
+#include <iostream>
+#include <sstream>
 #include "zensim/zpc_tpls/jitify/jitify2.hpp"
 
 namespace fs = std::filesystem;
@@ -24,13 +25,15 @@ namespace zs::cudri {
 #endif
     std::vector<std::string> res;
 
-    if (!std::filesystem::exists(dirpath))
-      throw std::runtime_error(
-          fmt::format("cannot find directory [{}] for loading ptx files.\n", dirpath));
+    if (!std::filesystem::exists(dirpath)) {
+      std::ostringstream oss;
+      oss << "cannot find directory [" << dirpath << "] for loading ptx files.\n";
+      throw std::runtime_error(oss.str());
+    }
     for (auto const &entry : fs::directory_iterator(dirpath)) {
       auto path = entry.path();
       if (fs::path(path).extension() == ".ptx") {
-        fmt::print("reading ptx file: {}\n", path.string());
+        std::cout << "reading ptx file: " << path.string() << "\n";
         std::ifstream fin(path, std::ios::in | std::ios::binary | std::ios::ate);
         if (!fin.is_open()) {
           std::cerr << "\nerror: unable to open " << path << " for reading!\n";
@@ -58,8 +61,8 @@ namespace zs::cudri {
     cuDeviceGetAttribute(&minor, CU_DEVICE_ATTRIBUTE_COMPUTE_CAPABILITY_MINOR, 0);
 
     std::vector<std::string> fixedOpts{
-        fmt::format("--include-path={}", ZS_INCLUDE_DIR), "--device-as-default-execution-space",
-        fmt::format("--gpu-architecture=sm_{}{}", major, minor), "-dc", "-std=c++17"};
+        std::string("--include-path=") + ZS_INCLUDE_DIR, "--device-as-default-execution-space",
+        std::string("--gpu-architecture=sm_") + std::to_string(major) + std::to_string(minor), "-dc", "-std=c++17"};
     std::vector<const char *> opts(fixedOpts.size() + additionalOptions.size());
     size_t loc = 0;
     for (auto &&opt : fixedOpts) opts[loc++] = opt.data();
@@ -82,7 +85,7 @@ namespace zs::cudri {
     str.resize(strSize + 1);
     nvrtcGetProgramLog(prog, str.data());
     str[strSize] = '\0';
-    if (str.size() >= 3) fmt::print("\n compilation log ---\n{}\n end log ---\n", str);
+    if (str.size() >= 3) std::cout << "\n compilation log ---\n" << str << "\n end log ---\n";
 
     nvrtcGetPTXSize(prog, &strSize);
     str.resize(strSize + 1);

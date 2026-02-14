@@ -610,8 +610,8 @@ namespace zs {
       if constexpr (false) {
         Vector<size_type> numOn{allocator, 1};
         reduce(pol, numActiveChildren.begin(), numActiveChildren.end() - 1, numOn.begin());
-        fmt::print("computed [{}] num active children, in reality [{}] children\n", numOn.getVal(),
-                   nchbs);
+        std::cout << "computed [" << numOn.getVal() << "] num active children, in reality ["
+                  << nchbs << "] children\n";
       }
       /// DEBUG
       /// compute children reorder mapping
@@ -1672,8 +1672,11 @@ namespace zs {
                                               AllocatorT> &ag) {
     for (auto &&tag : tagNames)
       if (!ag.hasProperty(tag))
-        throw std::runtime_error(
-            fmt::format("adaptive grid property [\"{}\"] does not exist", (std::string)tag));
+      {
+        std::ostringstream oss;
+        oss << "adaptive grid property [\"" << (std::string)tag << "\"] does not exist";
+        throw std::runtime_error(oss.str());
+      }
     return view<space>(tagNames, ag, false_c);
   }
   template <execspace_e space, int dim, typename ValueT, size_t... TileBits, size_t... ScalingBits,
@@ -1683,9 +1686,11 @@ namespace zs {
       AdaptiveGridImpl<dim, ValueT, index_sequence<TileBits...>, index_sequence<ScalingBits...>,
                        index_sequence<Is...>, AllocatorT> &ag) {
     for (auto &&tag : tagNames)
-      if (!ag.hasProperty(tag))
-        throw std::runtime_error(
-            fmt::format("adaptive grid property [\"{}\"] does not exist", (std::string)tag));
+      if (!ag.hasProperty(tag)) {
+        std::ostringstream oss;
+        oss << "adaptive grid property [\"" << (std::string)tag << "\"] does not exist";
+        throw std::runtime_error(oss.str());
+      }
     return view<space>(tagNames, ag, false_c);
   }
 
@@ -1697,9 +1702,11 @@ namespace zs {
                              index_sequence<ScalingBits...>, index_sequence<Is...>, AllocatorT> &ag,
       const SmallString &tagName) {
     for (auto &&tag : tagNames)
-      if (!ag.hasProperty(tag))
-        throw std::runtime_error(
-            fmt::format("adaptive grid property [\"{}\"] does not exist", (std::string)tag));
+      if (!ag.hasProperty(tag)) {
+        std::ostringstream oss;
+        oss << "adaptive grid property [\"" << (std::string)tag << "\"] does not exist";
+        throw std::runtime_error(oss.str());
+      }
     return view<space>(tagNames, ag, false_c, tagName);
   }
   template <execspace_e space, int dim, typename ValueT, size_t... TileBits, size_t... ScalingBits,
@@ -1710,9 +1717,11 @@ namespace zs {
                        index_sequence<Is...>, AllocatorT> &ag,
       const SmallString &tagName) {
     for (auto &&tag : tagNames)
-      if (!ag.hasProperty(tag))
-        throw std::runtime_error(
-            fmt::format("adaptive grid property [\"{}\"] does not exist", (std::string)tag));
+      if (!ag.hasProperty(tag)) {
+        std::ostringstream oss;
+        oss << "adaptive grid property [\"" << (std::string)tag << "\"] does not exist";
+        throw std::runtime_error(oss.str());
+      }
     return view<space>(tagNames, ag, false_c, tagName);
   }
 
@@ -1759,10 +1768,10 @@ namespace zs {
       static_assert(cell_bits >= AgDstT::template Level<dst_level_no>::sbit, "???");
 
 #if 0
-      fmt::print(fg(fmt::color::light_blue), "hashing level-{} [{}, {}) to dst-level-{} [{}, {})\n",
-                 level_no, cell_bits, Level<level_no>::ebit, dst_level_no,
-                 AgDstT::template Level<dst_level_no>::sbit,
-                 AgDstT::template Level<dst_level_no>::ebit);
+      std::cout << "hashing level-" << level_no << " [" << cell_bits << ", " << Level<level_no>::ebit
+                << ") to dst-level-" << dst_level_no << " ["
+                << AgDstT::template Level<dst_level_no>::sbit << ", "
+                << AgDstT::template Level<dst_level_no>::ebit << ")\n";
 #endif
 
       auto &l = level(lNo);
@@ -1820,7 +1829,7 @@ namespace zs {
       auto tup = zs::make_tuple(agv, agvDst);
       pol(enumerate(coords), tup, _restructure_1{});
     }
-    fmt::print(fg(fmt::color::red), "done dst ag value check\n");
+    std::cout << "done dst ag value check\n";
 #endif
     /// DEBUG
 
@@ -1873,8 +1882,8 @@ namespace zs {
               _reorder_count_on{});
           Vector<size_type> numOn{allocator, 1};
           reduce(pol, numActiveChildren.begin(), numActiveChildren.end(), numOn.begin());
-          fmt::print("upon topo complementation level [{}]: initial [{}] num active children\n",
-                     level_no + 1, numOn.getVal());
+          std::cout << "upon topo complementation level [" << level_no + 1
+                    << "]: initial [" << numOn.getVal() << "] num active children\n";
         }
         /// DEBUG
 
@@ -1914,8 +1923,8 @@ namespace zs {
               _reorder_count_on{});
           Vector<size_type> numOn{allocator, 1};
           reduce(pol, numActiveChildren.begin(), numActiveChildren.end(), numOn.begin());
-          fmt::print("upon topo complementation level [{}]: after init, [{}] num active children\n",
-                     level_no + 1, numOn.getVal());
+          std::cout << "upon topo complementation level [" << level_no + 1
+                    << "]: after init, [" << numOn.getVal() << "] num active children\n";
         }
         /// DEBUG
         {
@@ -1939,11 +1948,9 @@ namespace zs {
               _reorder_count_on{});
           Vector<size_type> numOn{allocator, 1};
           reduce(pol, numActiveChildren.begin(), numActiveChildren.end(), numOn.begin());
-          fmt::print(
-              "upon topo complementation level [{}]: in the end [{}] num active children, in "
-              "reality [{}] "
-              "children\n",
-              level_no + 1, numOn.getVal(), nbs);
+          std::cout << "upon topo complementation level [" << level_no + 1
+                    << "]: in the end [" << numOn.getVal() << "] num active children, in "
+                    << "reality [" << nbs << "] children\n";
         }
         /// DEBUG
       }

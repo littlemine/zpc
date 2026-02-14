@@ -174,8 +174,8 @@ namespace zs {
           if (o.memspace() == memsrc_e::host) {
             for (auto &[dst, src] : zip(*this, o)) dst = src;
           } else
-            throw std::runtime_error(fmt::format(
-                "unable to perform Vector::copy-ctor when the memory space is not the host."));
+            throw std::runtime_error(
+                "unable to perform Vector::copy-ctor when the memory space is not the host.");
         }
       }
     }
@@ -362,8 +362,8 @@ namespace zs {
             for (size_type i = 0; i != count; ++i) (*this)[oldSize + i] = other[i];
           }
         } else
-          throw std::runtime_error(fmt::format(
-              "unable to perform Vector::append when the memory space is not the host."));
+          throw std::runtime_error(
+              "unable to perform Vector::append when the memory space is not the host.");
       }
     }
 

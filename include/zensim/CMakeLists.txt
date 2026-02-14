@@ -416,7 +416,7 @@ target_link_libraries(zpccore PRIVATE zswhereami)
 #   target_link_libraries(zpccore PUBLIC synchronization)
 # endif(WIN32)
 target_compile_options(zpccore
-  PUBLIC $<$<COMPILE_LANGUAGE:CXX>: $<IF:$<CXX_COMPILER_ID:MSVC,Intel>, /Zc:__cplusplus /utf-8 /bigobj $<IF:$<CONFIG:Debug>, , /O2> /EHsc, $<IF:$<CXX_COMPILER_ID:Clang>, -Xclang -O3, -O3> >> # -fuse-ld=lld -fvisibility=hidden># -flto=thin -fsanitize=cfi
+  PUBLIC $<$<COMPILE_LANGUAGE:CXX>: $<IF:$<CXX_COMPILER_ID:MSVC,Intel>, /Zc:preprocessor /Zc:__cplusplus /utf-8 /bigobj $<IF:$<CONFIG:Debug>, , /O2> /EHsc, $<IF:$<CXX_COMPILER_ID:Clang>, -Xclang -O3, -O3> >> # -fuse-ld=lld -fvisibility=hidden># -flto=thin -fsanitize=cfi
 )
 target_link_options(zpccore
   PUBLIC $<HOST_LINK:
@@ -580,7 +580,7 @@ if(ZS_ENABLE_CUDA)
 
     # https://stackoverflow.com/questions/64523302/cuda-missing-return-statement-at-end-of-non-void-function-in-constexpr-if-fun
     # https://docs.nvidia.com/cuda/cuda-driver-api/stream-sync-behavior.html#stream-sync-behavior
-    PUBLIC $<$<COMPILE_LANGUAGE:CUDA>: --extended-lambda --expt-relaxed-constexpr --default-stream=per-thread $<IF:$<CXX_COMPILER_ID:MSVC>, -Xcompiler="/bigobj", > -Xcudafe "--display_error_number --diag_suppress=implicit_return_from_non_void_function --diag_suppress=loop_not_reachable --diag_suppress=69 --diag_suppress=2642 --diag_suppress=1394" > # -dlto -Xptxas -dlcm=cg
+    PUBLIC $<$<COMPILE_LANGUAGE:CUDA>: --extended-lambda --expt-relaxed-constexpr --default-stream=per-thread $<IF:$<CXX_COMPILER_ID:MSVC>, -Xcompiler="/utf-8" -Xcompiler="/bigobj", > -Xcudafe "--display_error_number --diag_suppress=implicit_return_from_non_void_function --diag_suppress=loop_not_reachable --diag_suppress=69 --diag_suppress=2642 --diag_suppress=1394" > # -dlto -Xptxas -dlcm=cg
     # lto issue: https://forums.developer.nvidia.com/t/using-dlink-time-opt-together-with-gencode-in-cmake/165224
   )
 
@@ -1404,7 +1404,7 @@ if(ZS_ENABLE_CUDA AND ZS_ENABLE_ZENO_CU_WRANGLE)
     PRIVATE ${ZENSIM_LIBRARY_CUDA_WRANGLER_SOURCE_FILES}
   )
   target_compile_options(zs_cu_wrangler
-    PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:-ptx -lineinfo --ptxas-options=-allow-expensive-optimizations=true> # -ptx --keep
+    PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:-ptx -lineinfo --ptxas-options=-allow-expensive-optimizations=true $<IF:$<CXX_COMPILER_ID:MSVC>, -Xcompiler="/utf-8" -Xcompiler="/bigobj", >> # -ptx --keep
   )
   set_source_files_properties(${ZENSIM_LIBRARY_CUDA_WRANGLER_INCLUDE_FILES} ${ZENSIM_LIBRARY_CUDA_WRANGLER_SOURCE_FILES} PROPERTIES LANGUAGE CUDA)
 

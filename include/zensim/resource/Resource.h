@@ -2,6 +2,7 @@
 
 #include <atomic>
 #include <iostream>
+#include <sstream>
 #include <stdexcept>
 #include <vector>
 
@@ -13,6 +14,7 @@
 #include "zensim/memory/Allocator.h"
 #include "zensim/types/SmallVector.hpp"
 #include "zensim/types/Tuple.h"
+#include "zensim/types/Property.h"
 #if ZS_ENABLE_CUDA
 #  include "zensim/cuda/memory/Allocator.h"
 #elif ZS_ENABLE_MUSA
@@ -108,7 +110,7 @@ namespace zs {
             return ret;
           };
         } else
-          std::cerr << fmt::format("memory resource \"{}\" not available", get_var_type_str(t))
+          std::cerr << "memory resource \"" << get_var_type_str(t) << "\" not available"
                     << std::endl;
       })(tag);
     }
@@ -132,7 +134,7 @@ namespace zs {
             return ret;
           };
         } else
-          std::cerr << fmt::format("memory resource \"{}\" not available", get_var_type_str(tag))
+          std::cerr << "memory resource \"" << get_var_type_str(tag) << "\" not available"
                     << std::endl;
       }
     }
@@ -203,9 +205,8 @@ namespace zs {
             if constexpr (is_memory_source_available(tag) || is_same_v<RM_CVREF_T(tag), mem_tags>)
               ret.setOwningUpstream<advisor_memory_resource>(tag, devid, "READ_MOSTLY");
             else
-              std::cerr << fmt::format(
-                  "invalid allocations of memory resource \"{}\" with advice \"READ_MOSTLY\"",
-                  get_var_type_str(tag))
+              std::cerr << "invalid allocations of memory resource \""
+                        << get_var_type_str(tag) << "\" with advice \"READ_MOSTLY\""
                         << std::endl;
           })(tag);
         else
@@ -213,10 +214,8 @@ namespace zs {
             if constexpr (is_memory_source_available(tag) || is_same_v<RM_CVREF_T(tag), mem_tags>)
               ret.setOwningUpstream<advisor_memory_resource>(tag, devid, "PREFERRED_LOCATION");
             else
-              std::cerr << fmt::format(
-                  "invalid allocations of memory resource \"{}\" with advice "
-                  "\"PREFERRED_LOCATION\"",
-                  get_var_type_str(tag))
+              std::cerr << "invalid allocations of memory resource \""
+                        << get_var_type_str(tag) << "\" with advice \"PREFERRED_LOCATION\""
                         << std::endl;
           })(tag);
       } else {
@@ -225,9 +224,8 @@ namespace zs {
           if constexpr (is_memory_source_available(tag) || is_same_v<RM_CVREF_T(tag), mem_tags>)
             ret.setOwningUpstream<default_memory_resource>(tag, devid);
           else
-            std::cerr << fmt::format("invalid default allocations of memory resource \"{}\"",
-                                     get_var_type_str(tag))
-                      << std::endl;
+            std::cerr << "invalid default allocations of memory resource \""
+                      << get_var_type_str(tag) << "\"" << std::endl;
         })(tag);
         // ret.setNonOwningUpstream<raw_memory_resource>(tag);
       }
@@ -236,10 +234,8 @@ namespace zs {
         if constexpr (is_memory_source_available(tag) || is_same_v<RM_CVREF_T(tag), mem_tags>)
           ret.setOwningUpstream<advisor_memory_resource>(tag, devid, advice);
         else
-          std::cerr << fmt::format(
-              "invalid advice \"{}\" for allocations of memory resource \"{}\"", advice,
-              get_var_type_str(tag))
-                    << std::endl;
+          std::cerr << "invalid advice \"" << advice << "\" for allocations of memory resource \""
+                    << get_var_type_str(tag) << "\"" << std::endl;
       })(tag);
     return ret;
   }
@@ -258,14 +254,16 @@ namespace zs {
             ret.setOwningUpstream<arena_virtual_memory_resource>(tag, devid, bytes);
           else if (option == "STACK" || option.empty())
             ret.setOwningUpstream<stack_virtual_memory_resource>(tag, devid, bytes);
-          else
-            throw std::runtime_error(fmt::format("unkonwn vmr option [{}]\n", option));
+          else {
+            std::ostringstream oss;
+            oss << "unkonwn vmr option [" << option << "]\n";
+            throw std::runtime_error(oss.str());
+          }
           return;
         }
-      std::cerr << fmt::format(
-          "invalid option \"{}\" for allocations of virtual memory resource \"{}\".", option,
-          get_var_type_str(tag).asChars())
-                << std::endl;
+      std::cerr << "invalid option \"" << option
+                << "\" for allocations of virtual memory resource \""
+                << get_var_type_str(tag).asChars() << "\"." << std::endl;
     })(tag);
     return ret;
   }

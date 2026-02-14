@@ -11,6 +11,7 @@
 #  error "ZS_ENABLE_OPENMP defined but the compiler is not defining the _OPENMP macro as expected"
 #endif
 
+#include <sstream>
 #include <thread>
 
 #include "zensim/ZpcFunction.hpp"
@@ -51,12 +52,13 @@ namespace zs {
           for (Ti j = 0; j < dims.get(1_th); ++j)
             for (Ti k = 0; k < dims.get(2_th); ++k) zs::invoke(f, i, j, k);
       } else {
-        throw std::runtime_error(
-            fmt::format("execution of {}-layers of loops not supported!", dim));
+        std::ostringstream oss;
+        oss << "execution of " << dim << "-layers of loops not supported!";
+        throw std::runtime_error(oss.str());
       }
       if (shouldProfile())
-        timer.tock(fmt::format("[Omp Exec | File {}, Ln {}, Col {}]", loc.file_name(), loc.line(),
-                               loc.column()));
+        timer.tock(std::string("[Omp Exec | File ") + loc.file_name() + ", Ln "
+                   + std::to_string(loc.line()) + ", Col " + std::to_string(loc.column()) + "]");
     }
     template <typename Range, typename F>
     void operator()(Range &&range, F &&f,
@@ -129,8 +131,8 @@ namespace zs {
         }
       }
       if (shouldProfile())
-        timer.tock(fmt::format("[Omp Exec | File {}, Ln {}, Col {}]", loc.file_name(), loc.line(),
-                               loc.column()));
+        timer.tock(std::string("[Omp Exec | File ") + loc.file_name() + ", Ln "
+                   + std::to_string(loc.line()) + ", Col " + std::to_string(loc.column()) + "]");
     }
     template <typename Range, typename ParamTuple, typename F,
               enable_if_t<is_tuple_v<remove_cvref_t<ParamTuple>>> = 0>
@@ -206,8 +208,8 @@ namespace zs {
         }
       }
       if (shouldProfile())
-        timer.tock(fmt::format("[Omp Exec | File {}, Ln {}, Col {}]", loc.file_name(), loc.line(),
-                               loc.column()));
+        timer.tock(std::string("[Omp Exec | File ") + loc.file_name() + ", Ln "
+                   + std::to_string(loc.line()) + ", Col " + std::to_string(loc.column()) + "]");
     }
 
     template <zs::size_t I, size_t... Is, typename... Iters, typename... Policies,
@@ -321,8 +323,8 @@ namespace zs {
         }
       }
       if (shouldProfile())
-        timer.tock(fmt::format("[Omp InclScan | File {}, Ln {}, Col {}]", loc.file_name(),
-                               loc.line(), loc.column()));
+        timer.tock(std::string("[Omp InclScan | File ") + loc.file_name() + ", Ln "
+                   + std::to_string(loc.line()) + ", Col " + std::to_string(loc.column()) + "]");
     }
     template <class InputIt, class OutputIt,
               class BinaryOperation = plus<remove_cvref_t<decltype(*declval<InputIt>())>>>
@@ -397,8 +399,8 @@ namespace zs {
         }
       }
       if (shouldProfile())
-        timer.tock(fmt::format("[Omp ExclScan | File {}, Ln {}, Col {}]", loc.file_name(),
-                               loc.line(), loc.column()));
+        timer.tock(std::string("[Omp ExclScan | File ") + loc.file_name() + ", Ln "
+                   + std::to_string(loc.line()) + ", Col " + std::to_string(loc.column()) + "]");
     }
     template <class InputIt, class OutputIt,
               class BinaryOperation
@@ -468,8 +470,8 @@ namespace zs {
         if (tid == 0) *d_first = tmp;
       }
       if (shouldProfile())
-        timer.tock(fmt::format("[Omp Reduce | File {}, Ln {}, Col {}]", loc.file_name(), loc.line(),
-                               loc.column()));
+        timer.tock(std::string("[Omp Reduce | File ") + loc.file_name() + ", Ln "
+                   + std::to_string(loc.line()) + ", Col " + std::to_string(loc.column()) + "]");
     }
     template <class InputIt, class OutputIt,
               class BinaryOp
@@ -695,8 +697,8 @@ namespace zs {
       }
 
       if (shouldProfile())
-        timer.tock(fmt::format("[Omp merge_sort_pair | File {}, Ln {}, Col {}]", loc.file_name(),
-                               loc.line(), loc.column()));
+        timer.tock(std::string("[Omp merge_sort_pair | File ") + loc.file_name() + ", Ln "
+                   + std::to_string(loc.line()) + ", Col " + std::to_string(loc.column()) + "]");
     }
     template <typename KeyIter, typename ValueIter,
               typename CompareOpT
@@ -867,8 +869,8 @@ namespace zs {
       }
 
       if (shouldProfile())
-        timer.tock(fmt::format("[Omp merge_sort | File {}, Ln {}, Col {}]", loc.file_name(),
-                               loc.line(), loc.column()));
+        timer.tock(std::string("[Omp merge_sort | File ") + loc.file_name() + ", Ln "
+                   + std::to_string(loc.line()) + ", Col " + std::to_string(loc.column()) + "]");
     }
 
     template <class KeyIter,
@@ -1012,8 +1014,8 @@ namespace zs {
           *(d_first + i) = cur[i];
       }
       if (shouldProfile())
-        timer.tock(fmt::format("[Omp Exec | File {}, Ln {}, Col {}]", loc.file_name(), loc.line(),
-                               loc.column()));
+        timer.tock(std::string("[Omp Exec | File ") + loc.file_name() + ", Ln "
+                   + std::to_string(loc.line()) + ", Col " + std::to_string(loc.column()) + "]");
     }
     template <class InputIt, class OutputIt> void radix_sort(
         InputIt &&first, InputIt &&last, OutputIt &&d_first, int sbit = 0,
@@ -1155,8 +1157,8 @@ namespace zs {
         *(valsOut + i) = curVals[i];
       }
       if (shouldProfile())
-        timer.tock(fmt::format("[Omp Exec | File {}, Ln {}, Col {}]", loc.file_name(), loc.line(),
-                               loc.column()));
+        timer.tock(std::string("[Omp Exec | File ") + loc.file_name() + ", Ln "
+                   + std::to_string(loc.line()) + ", Col " + std::to_string(loc.column()) + "]");
     }
     template <class KeyIter, class ValueIter,
               typename Tn

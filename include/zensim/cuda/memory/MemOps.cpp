@@ -3,6 +3,7 @@
 #include <cuda.h>
 
 #include <iostream>
+#include <sstream>
 
 #include "zensim/Logger.hpp"
 #include "zensim/cuda/Cuda.h"
@@ -31,15 +32,21 @@ namespace zs {
       }  // otherwise, no context has been initialized yet.
 
       if (ctx == NULL || devid != did) {
-        ZS_WARN(fmt::format("context switching during (de)allocation of [tag [{}] @ device [{}]]",
-                            get_memory_tag_name(device_mem_tag{}), (int)did));
+        {
+          std::ostringstream oss;
+          oss << "context switching during (de)allocation of [tag ["
+              << get_memory_tag_name(device_mem_tag{}) << "] @ device [" << (int)did << "]]";
+          ZS_WARN(oss.str());
+        }
         if (did < Cuda::device_count() && did >= 0)
           Cuda::context(did).setContext();
-        else
-          throw std::runtime_error(
-              fmt::format("current binding device [{}] does not match the expected [{}] and failed "
-                          "to switch context.",
-                          devid, (int)did));
+        else {
+          std::ostringstream oss;
+          oss << "current binding device [" << devid
+              << "] does not match the expected [" << (int)did
+              << "] and failed to switch context.";
+          throw std::runtime_error(oss.str());
+        }
       }
     }
     return true;
@@ -53,16 +60,16 @@ namespace zs {
     if (ec != CUDA_SUCCESS) {
       const char *errString = nullptr;
       cuGetErrorString(ec, &errString);
-      const auto fileInfo = fmt::format("# File: \"{:<50}\"", loc.file_name());
-      const auto locInfo = fmt::format("# Ln {}, Col {}", loc.line(), loc.column());
-      const auto funcInfo = fmt::format("# Func: \"{}\"", loc.function_name());
       int devid;
       cuCtxGetDevice(&devid);
-      std::cerr << fmt::format(
-          "\nCuda Error on Device {}: cuMemAlloc failed: {} (size: {} bytes, alignment: {} "
-          "bytes)\n{:=^60}\n{}\n{}\n{}\n{:=^60}\n\n",
-          devid, errString, size, alignment, " cuda driver api error location ", fileInfo, locInfo,
-          funcInfo, "=");
+      std::cerr << "\nCuda Error on Device " << devid
+                << ": cuMemAlloc failed: " << errString
+                << " (size: " << size << " bytes, alignment: " << alignment << " bytes)"
+                << "\n============================================================\n"
+                << "# File: \"" << loc.file_name() << "\"\n"
+                << "# Ln " << loc.line() << ", Col " << loc.column() << "\n"
+                << "# Func: \"" << loc.function_name() << "\"\n"
+                << "============================================================\n\n";
     }
 #endif
     return ret;
@@ -119,15 +126,21 @@ namespace zs {
       }  // otherwise, no context has been initialized yet.
 
       if (ctx == NULL || devid != did) {
-        ZS_WARN(fmt::format("context switching during (de)allocation of [tag [{}] @ device [{}]]",
-                            get_memory_tag_name(um_mem_tag{}), (int)did));
+        {
+          std::ostringstream oss;
+          oss << "context switching during (de)allocation of [tag ["
+              << get_memory_tag_name(um_mem_tag{}) << "] @ device [" << (int)did << "]]";
+          ZS_WARN(oss.str());
+        }
         if (did < Cuda::device_count() && did >= 0)
           Cuda::context(did).setContext();
-        else
-          throw std::runtime_error(
-              fmt::format("current binding device [{}] does not match the expected [{}] and failed "
-                          "to switch context.",
-                          devid, (int)did));
+        else {
+          std::ostringstream oss;
+          oss << "current binding device [" << devid
+              << "] does not match the expected [" << (int)did
+              << "] and failed to switch context.";
+          throw std::runtime_error(oss.str());
+        }
       }
     }
     return true;
@@ -141,16 +154,16 @@ namespace zs {
     if (ec != CUDA_SUCCESS) {
       const char *errString = nullptr;
       cuGetErrorString(ec, &errString);
-      const auto fileInfo = fmt::format("# File: \"{:<50}\"", loc.file_name());
-      const auto locInfo = fmt::format("# Ln {}, Col {}", loc.line(), loc.column());
-      const auto funcInfo = fmt::format("# Func: \"{}\"", loc.function_name());
       int devid;
       cuCtxGetDevice(&devid);
-      std::cerr << fmt::format(
-          "\nCuda Error on Device {}: cuMemAllocManaged failed: {} (size: {} bytes, alignment: {} "
-          "bytes)\n{:=^60}\n{}\n{}\n{}\n{:=^60}\n\n",
-          devid, errString, size, alignment, " cuda driver api error location ", fileInfo, locInfo,
-          funcInfo, "=");
+      std::cerr << "\nCuda Error on Device " << devid
+                << ": cuMemAllocManaged failed: " << errString
+                << " (size: " << size << " bytes, alignment: " << alignment << " bytes)"
+                << "\n============================================================\n"
+                << "# File: \"" << loc.file_name() << "\"\n"
+                << "# Ln " << loc.line() << ", Col " << loc.column() << "\n"
+                << "# Func: \"" << loc.function_name() << "\"\n"
+                << "============================================================\n\n";
     }
 #endif
     return ret;
@@ -183,14 +196,23 @@ namespace zs {
       option = 3;  // CU_MEM_ADVISE_SET_PREFERRED_LOCATION;
     else if (advice == "READ_MOSTLY")
       option = 1;  // CU_MEM_ADVISE_SET_READ_MOSTLY;
-    else
-      throw std::runtime_error(
-          fmt::format("advise(tag um_mem_tag, advice {}, addr {}, bytes {}, devid {})\n", advice,
-                      addr, bytes, (int)did));
+    else {
+      std::ostringstream oss;
+      oss << "advise(tag um_mem_tag, advice " << advice << ", addr " << addr << ", bytes " << bytes << ", devid " << (int)did << ")\n";
+      throw std::runtime_error(oss.str());
+    }
     if (Cuda::context(did).supportConcurrentUmAccess)
-      if (bytes > 0)
-        // cudri::memAdvise(addr, bytes, (unsigned int)option, (int)did);
-        cuMemAdvise((CUdeviceptr)addr, bytes, (CUmem_advise)option, (CUdevice)did);
+      if (bytes > 0) {
+#if CUDA_VERSION >= 12020
+        // CUDA 12.2+ uses cuMemAdvise_v2 with CUmemLocation
+        CUmemLocation location = {};
+        location.type = CU_MEM_LOCATION_TYPE_DEVICE;
+        location.id = (int)did;
+        cuMemAdvise_v2((CUdeviceptr)addr, bytes, (CUmem_advise)option, location);
+#else
+        cuMemAdvise((CUdeviceptr)addr, bytes, (CUmem_advise)option, (int)did);
+#endif
+      }
   }
 
 }  // namespace zs

@@ -13,7 +13,6 @@
 #include <thread>
 
 #include "zensim/math/bit/Bits.h"
-#include "zensim/zpc_tpls/fmt/format.h"
 #if defined(_WIN32)
 #  include <intrin.h>
 #  include <stdlib.h>

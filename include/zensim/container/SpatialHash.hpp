@@ -170,10 +170,12 @@ namespace zs {
 
       if (auto buildSuccess = _table._buildSuccess.getVal(); buildSuccess) break;
       if (++numTrialIters > 4)
-        throw std::runtime_error(
-            fmt::format("using dx[{}] as the cell side_length results in excessive ({}) spatial "
-                        "hashing table size!",
-                        dx, expectedNumEntries));
+      {
+        std::ostringstream oss;
+        oss << "using dx[" << dx << "] as the cell side_length results in excessive ("
+            << expectedNumEntries << ") spatial hashing table size!";
+        throw std::runtime_error(oss.str());
+      }
       expectedNumEntries *= 4;
       _table.resize(policy, expectedNumEntries);
     } while (true);

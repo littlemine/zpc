@@ -1,9 +1,9 @@
 #include "Allocator.h"
 
+#include <iostream>
+#include <sstream>
+
 #include "zensim/Logger.hpp"
-#include "zensim/zpc_tpls/fmt/color.h"
-#include "zensim/zpc_tpls/fmt/core.h"
-#include "zensim/zpc_tpls/fmt/format.h"
 
 #if defined(ZS_PLATFORM_UNIX)
 #  include <sys/mman.h>
@@ -31,10 +31,10 @@ namespace zs {
         _did{did} {
     if (did >= 0)
       throw std::runtime_error(
-          fmt::format("hostvm target device index [{}] is not negative", (int)did));
+          std::string("hostvm target device index [") + std::to_string((int)did) + "] is not negative");
     if (type != "HOST_VIRTUAL")
       throw std::runtime_error(
-          fmt::format("currently hostvm does not support allocation type {}", type));
+          std::string("currently hostvm does not support allocation type ") + std::string(type));
 
     _granularity = (size_t)getpagesize();
   }
@@ -103,12 +103,12 @@ namespace zs {
       : _did{did}, _reservedSpace{round_up(space, s_chunk_granularity)} {
     if (did >= 0)
       throw std::runtime_error(
-          fmt::format("hostvm target device index [{}] is not negative", (int)did));
+          std::string("hostvm target device index [") + std::to_string((int)did) + "] is not negative");
     _granularity = (size_t)getpagesize();
     auto ret = mmap(nullptr, _reservedSpace, PROT_NONE, MAP_ANONYMOUS | MAP_PRIVATE, 0, 0);
     if (ret == MAP_FAILED)
       throw std::runtime_error(
-          fmt::format("failed to reserve a virtual address range of size {}", _reservedSpace));
+          std::string("failed to reserve a virtual address range of size ") + std::to_string(_reservedSpace));
     _addr = ret;
     _activeChunkMasks.resize((_reservedSpace / s_chunk_granularity + 63) / 64, (u64)0);
   }
@@ -160,7 +160,7 @@ namespace zs {
       : _allocatedSpace{0}, _did{did} {
     if (did >= 0)
       throw std::runtime_error(
-          fmt::format("hostvm target device index [{}] is not negative", (int)did));
+          std::string("hostvm target device index [") + std::to_string((int)did) + "] is not negative");
 
 #if defined(ZS_PLATFORM_WINDOWS)
     {
@@ -254,16 +254,14 @@ namespace zs {
       : handle_resource{&raw_memory_resource<host_mem_tag>::instance()} {}
   handle_resource::~handle_resource() {
     _upstream->deallocate(_handle, _bufSize, _align);
-    fmt::print(fmt::emphasis::bold | fmt::fg(fmt::color::dark_sea_green),
-               "deallocate {} bytes in handle_resource\n", _bufSize);
+    std::cout << "deallocate " << _bufSize << " bytes in handle_resource\n";
   }
 
   void *handle_resource::do_allocate(size_t bytes, size_t alignment) {
     if (_handle == nullptr) {
       _handle = _head = (char *)(_upstream->allocate(_bufSize, alignment));
       _align = alignment;
-      fmt::print(fmt::emphasis::bold | fmt::fg(fmt::color::dark_sea_green),
-                 "initially allocate {} bytes in handle_resource\n", _bufSize);
+      std::cout << "initially allocate " << _bufSize << " bytes in handle_resource\n";
     }
     char *ret = _head + alignment - 1 - ((size_t)_head + alignment - 1) % alignment;
     _head = ret + bytes;
@@ -275,8 +273,7 @@ namespace zs {
     _bufSize = (size_t)(_head - _handle) << 1;
     _align = alignment;
     _handle = (char *)(_upstream->allocate(_bufSize, alignment));
-    fmt::print(fmt::emphasis::bold | fmt::fg(fmt::color::dark_sea_green),
-               "reallocate {} bytes in handle_resource\n", _bufSize);
+    std::cout << "reallocate " << _bufSize << " bytes in handle_resource\n";
     ret = _handle + offset;
     _head = ret + bytes;
     return ret;

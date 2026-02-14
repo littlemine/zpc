@@ -3,7 +3,7 @@
 
 #include "Platform.hpp"
 #include "plog/Initializers/RollingFileInitializer.h"
-#include "zensim/zpc_tpls/fmt/format.h"
+#include <sstream>
 #include "zensim/zpc_tpls/plog/Log.h"
 
 namespace zs {
@@ -14,8 +14,9 @@ namespace zs {
   struct Logger {
     void log(const int level, const char* fileName, const char* funcName, int line,
              std::string_view msg) {
-      PLOG(static_cast<plog::Severity>(level))
-          << fmt::format("{}:{}{} {}\n", fileName, funcName, line, msg);
+      std::ostringstream oss;
+      oss << fileName << ":" << funcName << line << " " << msg << "\n";
+      PLOG(static_cast<plog::Severity>(level)) << oss.str();
     }
     ZPC_BACKEND_API static Logger& instance();
 

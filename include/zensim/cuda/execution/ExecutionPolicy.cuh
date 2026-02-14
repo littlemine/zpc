@@ -442,7 +442,11 @@ namespace zs {
         if (ec == 0) ec = Cuda::get_last_cuda_rt_error();
 #endif
       }
-      checkCuKernelLaunchError(ec, context, fmt::format("Spare [{}]", streamid), loc);
+      {
+        std::ostringstream oss;
+        oss << "Spare [" << streamid << "]";
+        checkCuKernelLaunchError(ec, context, oss.str(), loc);
+      }
       context.recordEventSpare(streamid, loc);
     }
     template <typename Range, typename F>
@@ -486,7 +490,11 @@ namespace zs {
         if (ec == 0) ec = Cuda::get_last_cuda_rt_error();
 #endif
       }
-      checkCuKernelLaunchError(ec, context, fmt::format("Spare [{}]", streamid), loc);
+      {
+        std::ostringstream oss;
+        oss << "Spare [" << streamid << "]";
+        checkCuKernelLaunchError(ec, context, oss.str(), loc);
+      }
       context.recordEventSpare(streamid, loc);
     }
     template <typename Range, typename... Args, typename F>
@@ -530,7 +538,11 @@ namespace zs {
         if (ec == 0) ec = Cuda::get_last_cuda_rt_error();
 #endif
       }
-      checkCuKernelLaunchError(ec, context, fmt::format("Spare [{}]", streamid), loc);
+      {
+        std::ostringstream oss;
+        oss << "Spare [" << streamid << "]";
+        checkCuKernelLaunchError(ec, context, oss.str(), loc);
+      }
       context.recordEventSpare(streamid, loc);
     }
 

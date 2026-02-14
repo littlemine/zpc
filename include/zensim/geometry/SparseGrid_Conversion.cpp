@@ -7,6 +7,9 @@
 #include <openvdb/tools/LevelSetUtil.h>
 #include <openvdb/tools/VolumeToMesh.h>
 
+#include <iostream>
+#include <sstream>
+
 #include "VdbLevelSet.h"
 #include "zensim/Logger.hpp"
 #include "zensim/execution/Concurrency.h"
@@ -51,8 +54,8 @@ namespace zs {
 
     {
       auto [mi, ma] = proxy<execspace_e::host>(ret).getBoundingBox();
-      fmt::print("leaf count: {}. background value: {}. dx: {}\n", leafCount, ret._background,
-                 ret.voxelSize()[0]);
+      std::cout << "leaf count: " << leafCount << ". background value: " << ret._background
+                << ". dx: " << ret.voxelSize()[0] << "\n";
     }
 
 #ifdef ZS_PLATFORM_WINDOWS
@@ -77,8 +80,8 @@ namespace zs {
                 for (int d = 0; d != 3; ++d) coord[d] = cell.getCoord()[d];
                 auto blockid = coord - (coord & (ret.side_length - 1));
                 if (table.query(blockid) >= 0) {
-                  fmt::print("what is this??? block ({}, {}, {}) already registered!\n", blockid[0],
-                             blockid[1], blockid[2]);
+                  std::cout << "what is this??? block (" << blockid[0] << ", " << blockid[1]
+                            << ", " << blockid[2] << ") already registered!\n";
                 }
                 auto blockno = table.insert(blockid);
                 auto block = ls.block(blockno);
@@ -95,8 +98,8 @@ namespace zs {
       ompExec(gridPtr->cbeginValueOff(), [&valueOffCount](GridType::ValueOffCIter &iter) {
         if (iter.getValue() < 0) valueOffCount.fetch_add(1, std::memory_order_relaxed);
       });
-      fmt::print("{} more off-value voxels to be appended to {} blocks.\n", valueOffCount.load(),
-                 nbs);
+      std::cout << valueOffCount.load() << " more off-value voxels to be appended to " << nbs
+                << " blocks.\n";
       auto newNbs = nbs + valueOffCount.load();  // worst-case scenario
       if (newNbs != nbs) {
         ret.resize(ompExec, newNbs);
@@ -143,8 +146,8 @@ namespace zs {
         for (int d = 0; d != SparseLevelSet<3>::table_t::dim; ++d) coord[d] = cell.getCoord()[d];
         auto blockid = coord - (coord & (ret.side_length - 1));
         if (table.query(blockid) >= 0) {
-          fmt::print("what is this??? block ({}, {}, {}) already taken!\n", blockid[0], blockid[1],
-                     blockid[2]);
+          std::cout << "what is this??? block (" << blockid[0] << ", " << blockid[1]
+                    << ", " << blockid[2] << ") already taken!\n";
         }
         auto blockno = table.insert(blockid);
         auto block = spgv.block(blockno);
@@ -159,7 +162,8 @@ namespace zs {
       seqExec(gridPtr->cbeginValueOff(), [&valueOffCount](GridType::ValueOffCIter &iter) {
         if (iter.getValue() < 0) valueOffCount++;
       });
-      fmt::print("{} more off-value voxels to be appended to {} blocks.\n", valueOffCount, nbs);
+      std::cout << valueOffCount << " more off-value voxels to be appended to " << nbs
+                << " blocks.\n";
       auto newNbs = nbs + valueOffCount;  // worst-case scenario
       if (newNbs == nbs) return ret;
       ret.resize(seqExec, newNbs);
@@ -280,8 +284,11 @@ namespace zs {
       // GRID_LEVEL_SET: 1
       // GRID_FOG_VOLUME: 2
       // GRID_STAGGERED: 3
-      if (gridClass >= 3)
-        throw std::runtime_error(fmt::format("Unknown gridclass [{}]!", gridClass));
+      if (gridClass >= 3) {
+        std::ostringstream oss;
+        oss << "Unknown gridclass [" << gridClass << "]!";
+        throw std::runtime_error(oss.str());
+      }
       grid->setGridClass(static_cast<openvdb::GridClass>(gridClass));
       return OpenVDBStruct{grid};
     }
@@ -302,7 +309,11 @@ namespace zs {
     // GRID_LEVEL_SET: 1
     // GRID_FOG_VOLUME: 2
     // GRID_STAGGERED: 3
-    if (gridClass >= 3) throw std::runtime_error(fmt::format("Unknown gridclass [{}]!", gridClass));
+    if (gridClass >= 3) {
+      std::ostringstream oss;
+      oss << "Unknown gridclass [" << gridClass << "]!";
+      throw std::runtime_error(oss.str());
+    }
     grid->setGridClass(static_cast<openvdb::GridClass>(gridClass));
     return OpenVDBStruct{grid};
   }
@@ -416,8 +427,8 @@ namespace zs {
 
     {
       auto [mi, ma] = proxy<execspace_e::host>(ret).getBoundingBox();
-      fmt::print("leaf count: {}. background value: {}. dx: {}\n", leafCount, ret._background,
-                 ret.voxelSize()[0]);
+      std::cout << "leaf count: " << leafCount << ". background value: " << ret._background
+                << ". dx: " << ret.voxelSize()[0] << "\n";
     }
 
 #ifdef ZS_PLATFORM_WINDOWS
@@ -441,8 +452,8 @@ namespace zs {
                 for (int d = 0; d != 3; ++d) coord[d] = cell.getCoord()[d];
                 auto blockid = coord - (coord & (ret.side_length - 1));
                 if (table.query(blockid) >= 0) {
-                  fmt::print("what is this??? block ({}, {}, {}) already registered!\n", blockid[0],
-                             blockid[1], blockid[2]);
+                  std::cout << "what is this??? block (" << blockid[0] << ", " << blockid[1]
+                            << ", " << blockid[2] << ") already registered!\n";
                 }
                 auto blockno = table.insert(blockid);
                 auto block = ls.block(blockno);
@@ -460,8 +471,8 @@ namespace zs {
       ompExec(gridPtr->cbeginValueOff(), [&valueOffCount](GridType::ValueOffCIter &iter) {
         if (!iter.getValue().isZero()) valueOffCount.fetch_add(1, std::memory_order_relaxed);
       });
-      fmt::print("{} more off-value voxels to be appended to {} blocks.\n", valueOffCount.load(),
-                 nbs);
+      std::cout << valueOffCount.load() << " more off-value voxels to be appended to " << nbs
+                << " blocks.\n";
       auto newNbs = nbs + valueOffCount.load();  // worst-case scenario
       if (newNbs != nbs) {
         ret.resize(ompExec, newNbs);
@@ -509,8 +520,8 @@ namespace zs {
         for (int d = 0; d != SparseLevelSet<3>::table_t::dim; ++d) coord[d] = cell.getCoord()[d];
         auto blockid = coord - (coord & (ret.side_length - 1));
         if (table.query(blockid) >= 0) {
-          fmt::print("what is this??? block ({}, {}, {}) already taken!\n", blockid[0], blockid[1],
-                     blockid[2]);
+          std::cout << "what is this??? block (" << blockid[0] << ", " << blockid[1]
+                    << ", " << blockid[2] << ") already taken!\n";
         }
         auto blockno = table.insert(blockid);
         auto block = spgv.block(blockno);

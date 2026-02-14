@@ -1,4 +1,7 @@
 #pragma once
+#include <iostream>
+#include <sstream>
+
 #include "zensim/ZpcTuple.hpp"
 #include "zensim/container/Bht.hpp"
 #include "zensim/container/Vector.hpp"
@@ -156,9 +159,9 @@ namespace zs {
       size_type offset = 0;
       for (index_type i = 0; i != outerSize(); ++i) {
         auto ed = _ptrs[i + 1];
-        fmt::print("#\tline [{}] ({} entries):\t", i, ed - offset);
-        for (; offset != ed; ++offset) fmt::print("{}\t", _inds[offset]);
-        fmt::print("\n");
+        std::cout << "#\tline [" << i << "] (" << ed - offset << " entries):\t";
+        for (; offset != ed; ++offset) std::cout << _inds[offset] << "\t";
+        std::cout << "\n";
       }
     }
 
@@ -402,9 +405,12 @@ namespace zs {
                   "input triplet types are not convertible to types of this sparse matrix.");
 
     auto size = range_size(is);
-    if (size != range_size(js) || size != range_size(vs))
-      throw std::runtime_error(fmt::format("is size: {}, while js size ({}), vs size ({})\n", size,
-                                           range_size(js), range_size(vs)));
+    if (size != range_size(js) || size != range_size(vs)) {
+      std::ostringstream oss;
+      oss << "is size: " << size << ", while js size (" << range_size(js) << "), vs size ("
+          << range_size(vs) << ")\n";
+      throw std::runtime_error(oss.str());
+    }
 
     /// @brief initial hashing
     _nrows = nrows;
@@ -430,8 +436,9 @@ namespace zs {
       if (!success) {
         tabSize *= 2;
         tab = bht<Ti, 2, index_type>{allocator, tabSize};
-        fmt::print(  // fg(fmt::color::light_golden_rod_yellow),
-            "doubling hash size required (from {} to {}) for csr build\n", tabSize / 2, tabSize);
+        std::cout <<  // fg(fmt::color::light_golden_rod_yellow),
+            "doubling hash size required (from " << tabSize / 2 << " to " << tabSize
+                  << ") for csr build\n";
       }
     } while (!success);
 
@@ -440,13 +447,14 @@ namespace zs {
     exclusive_scan(policy, std::begin(cnts), std::end(cnts), std::begin(_ptrs));
 
     auto numEntries = _ptrs.getVal(nsegs);
-    // fmt::print("{} entries activated in total from {} triplets.\n", numEntries, size);
+    // std::cout << numEntries << " entries activated in total from " << size << " triplets.\n";
 
-    if (auto ntab = tab.size(); numEntries != ntab)
-      throw std::runtime_error(
-          fmt::format("computed number of entries {} not equal to the number of active table "
-                      "entries {}\n",
-                      numEntries, ntab));
+    if (auto ntab = tab.size(); numEntries != ntab) {
+      std::ostringstream oss;
+      oss << "computed number of entries " << numEntries
+          << " not equal to the number of active table entries " << ntab << "\n";
+      throw std::runtime_error(oss.str());
+    }
 
     /// @brief _inds, _vals
     static_assert(std::is_fundamental_v<value_type> || is_vec<value_type>::value,
@@ -476,9 +484,11 @@ namespace zs {
                   "input doublet types are not convertible to types of this sparse matrix.");
 
     auto size = range_size(is);
-    if (size != range_size(js))
-      throw std::runtime_error(
-          fmt::format("is size: {}, while js size ({})\n", size, range_size(js)));
+    if (size != range_size(js)) {
+      std::ostringstream oss;
+      oss << "is size: " << size << ", while js size (" << range_size(js) << ")\n";
+      throw std::runtime_error(oss.str());
+    }
 
     /// @brief initial hashing
     _nrows = nrows;
@@ -502,8 +512,9 @@ namespace zs {
       if (!success) {
         tabSize *= 2;
         tab = bht<Ti, 2, index_type>{allocator, tabSize};
-        fmt::print(  // fg(fmt::color::light_golden_rod_yellow),
-            "doubling hash size required (from {} to {}) for csr build\n", tabSize / 2, tabSize);
+        std::cout <<  // fg(fmt::color::light_golden_rod_yellow),
+            "doubling hash size required (from " << tabSize / 2 << " to " << tabSize
+                  << ") for csr build\n";
       }
     } while (!success);
 
@@ -512,12 +523,13 @@ namespace zs {
     exclusive_scan(policy, std::begin(cnts), std::end(cnts), std::begin(_ptrs));
 
     auto numEntries = _ptrs.getVal(nsegs);
-    fmt::print("{} entries activated in total from {} doublets.\n", numEntries, size);
+    std::cout << numEntries << " entries activated in total from " << size << " doublets.\n";
 
     if (auto ntab = tab.size(); numEntries != ntab) {
-      throw std::runtime_error(fmt::format(
-          "computed number of entries {} not equal to the number of active table entries {}\n",
-          numEntries, ntab));
+      std::ostringstream oss;
+      oss << "computed number of entries " << numEntries
+          << " not equal to the number of active table entries " << ntab << "\n";
+      throw std::runtime_error(oss.str());
     }
 
     /// @brief _inds
@@ -539,9 +551,11 @@ namespace zs {
                   "input doublet types are not convertible to types of this sparse matrix.");
 
     auto size = range_size(is);
-    if (size != range_size(js))
-      throw std::runtime_error(
-          fmt::format("is size: {}, while js size ({})\n", size, range_size(js)));
+    if (size != range_size(js)) {
+      std::ostringstream oss;
+      oss << "is size: " << size << ", while js size (" << range_size(js) << ")\n";
+      throw std::runtime_error(oss.str());
+    }
 
     /// @brief initial hashing
     _nrows = nrows;

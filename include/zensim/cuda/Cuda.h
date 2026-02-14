@@ -13,6 +13,7 @@
 #include <memory>
 #include <set>
 #include <string>
+#include <string_view>
 #include <unordered_map>
 #include <vector>
 
@@ -20,7 +21,7 @@
 #include "zensim/Reflection.h"
 #include "zensim/profile/CppTimers.hpp"
 #include "zensim/types/SourceLocation.hpp"
-#include "zensim/zpc_tpls/fmt/format.h"
+#include <sstream>
 
 namespace zs {
 
@@ -152,8 +153,11 @@ namespace zs {
       struct StreamExecutionTimer {
         StreamExecutionTimer(CudaContext *ctx, void *stream, const source_location &loc)
             : ctx{ctx}, stream{stream} {
-          msg = fmt::format("[Cuda Exec [Device {}, Stream {}] | File {}, Ln {}, Col {}]",
-                            ctx->getDevId(), stream, loc.file_name(), loc.line(), loc.column());
+          std::ostringstream oss;
+          oss << "[Cuda Exec [Device " << ctx->getDevId() << ", Stream " << stream
+              << "] | File " << loc.file_name() << ", Ln " << loc.line()
+              << ", Col " << loc.column() << "]";
+          msg = oss.str();
           timer.tick();
         }
         ~StreamExecutionTimer() { timer.tock(msg); }
@@ -258,13 +262,12 @@ namespace zs {
                                                std::string_view msg,
                                                std::string_view errorString) noexcept {
     if (error != 0) {
-      const auto fileInfo = fmt::format("# File: \"{:<50}\"", loc.file_name());
-      const auto locInfo = fmt::format("# Ln {}, Col {}", loc.line(), loc.column());
-      const auto funcInfo = fmt::format("# Func: \"{}\"", loc.function_name());
-
-      std::cerr << fmt::format("\nCuda Driver Api Error {}: {}\n{:=^60}\n{}\n{}\n{}\n{:=^60}\n\n",
-                               msg, errorString, " error location ", fileInfo, locInfo, funcInfo,
-                               "=");
+      std::cerr << "\nCuda Driver Api Error " << msg << ": " << errorString
+                << "\n============================================================\n"
+                << "# File: \"" << loc.file_name() << "\"\n"
+                << "# Ln " << loc.line() << ", Col " << loc.column() << "\n"
+                << "# Func: \"" << loc.function_name() << "\"\n"
+                << "============================================================\n\n";
       return false;
     }
     return true;
@@ -272,12 +275,12 @@ namespace zs {
   [[maybe_unused]] inline bool checkCuApiError(u32 error, const source_location &loc,
                                                std::string_view msg) noexcept {
     if (error != 0) {
-      const auto fileInfo = fmt::format("# File: \"{:<50}\"", loc.file_name());
-      const auto locInfo = fmt::format("# Ln {}, Col {}", loc.line(), loc.column());
-      const auto funcInfo = fmt::format("# Func: \"{}\"", loc.function_name());
-
-      std::cerr << fmt::format("\nCuda Driver Api Error {}\n{:=^60}\n{}\n{}\n{}\n{:=^60}\n\n", msg,
-                               " error location ", fileInfo, locInfo, funcInfo, "=");
+      std::cerr << "\nCuda Driver Api Error " << msg
+                << "\n============================================================\n"
+                << "# File: \"" << loc.file_name() << "\"\n"
+                << "# Ln " << loc.line() << ", Col " << loc.column() << "\n"
+                << "# Func: \"" << loc.function_name() << "\"\n"
+                << "============================================================\n\n";
       return false;
     }
     return true;
@@ -292,22 +295,16 @@ namespace zs {
                                        std::string_view streamInfo,
                                        const source_location &loc) noexcept {
     if (error != 0) {
-      const auto fileInfo = fmt::format("# File: \"{:<50}\"", loc.file_name());
-      const auto locInfo = fmt::format("# Ln {}, Col {}", loc.line(), loc.column());
-      const auto funcInfo = fmt::format("# Func: \"{}\"", loc.function_name());
       if (ctx.errorStatus) return;  // there already exists a preceding cuda error
       ctx.errorStatus = true;
-#if 0
-      fmt::print(fg(fmt::color::crimson) | fmt::emphasis::italic | fmt::emphasis::bold,
-                 "\nCuda Error on Device {}, Stream {}: {}\n{:=^60}\n{}\n{}\n{}\n{:=^60}\n\n",
-                 ctx.getDevId(), streamInfo, Cuda::get_cuda_rt_error_string(error),
-                 " kernel error location ", fileInfo, locInfo, funcInfo, "=");
-#else
-      std::cerr << fmt::format(
-          "\nCuda Error on Device {}, Stream {}: {}\n{:=^60}\n{}\n{}\n{}\n{:=^60}\n\n",
-          ctx.getDevId(), streamInfo, Cuda::get_cuda_rt_error_string(error),
-          " kernel error location ", fileInfo, locInfo, funcInfo, "=");
-#endif
+      std::cerr << "\nCuda Error on Device " << ctx.getDevId()
+                << ", Stream " << streamInfo
+                << ": " << Cuda::get_cuda_rt_error_string(error)
+                << "\n============================================================\n"
+                << "# File: \"" << loc.file_name() << "\"\n"
+                << "# Ln " << loc.line() << ", Col " << loc.column() << "\n"
+                << "# Func: \"" << loc.function_name() << "\"\n"
+                << "============================================================\n\n";
     }
   }
   template <typename... Args> struct cuda_safe_launch {

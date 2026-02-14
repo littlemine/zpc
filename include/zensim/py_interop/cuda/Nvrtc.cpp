@@ -5,6 +5,7 @@
 
 //
 #include <cstdio>
+#include <iostream>
 #include <string>
 #include <vector>
 //
@@ -38,7 +39,7 @@ ZENSIM_EXPORT size_t cuda_compile_program(const char *cuda_src, int arch, const 
   //
   constexpr int max_path = 4096 + 16;
   if (auto len = strlen(include_dir); len > max_path) {
-    std::cerr << fmt::format("Zpc-JIT error: include path too long ({})\n", len);
+    std::cerr << "Zpc-JIT error: include path too long (" << len << ")\n";
     return (size_t)-1;
   }
 
@@ -47,9 +48,9 @@ ZENSIM_EXPORT size_t cuda_compile_program(const char *cuda_src, int arch, const 
 
   std::string arch_opt;
   if (use_ptx)
-    arch_opt = fmt::format("--gpu-architecture=compute_{}", arch);
+    arch_opt = "--gpu-architecture=compute_" + std::to_string(arch);
   else
-    arch_opt = fmt::format("--gpu-architecture=sm_{}", arch);
+    arch_opt = "--gpu-architecture=sm_" + std::to_string(arch);
 
   std::vector<const char *> opts;
   opts.push_back(arch_opt.data());
@@ -90,9 +91,9 @@ ZENSIM_EXPORT size_t cuda_compile_program(const char *cuda_src, int arch, const 
       std::vector<char> log(log_size);
       if (check_nvrtc(nvrtcGetProgramLog(prog, log.data()))) {
         if (res != NVRTC_SUCCESS)
-          std::cerr << fmt::format("{}", log.data());
+          std::cerr << log.data();
         else
-          std::cout << fmt::format("{}", log.data());
+          std::cout << log.data();
       }
     }
   }
@@ -124,13 +125,12 @@ ZENSIM_EXPORT size_t cuda_compile_program(const char *cuda_src, int arch, const 
       FILE *file = fopen(output_path, output_mode);
       if (file) {
         if (fwrite(output.data(), 1, output_size, file) != output_size) {
-          std::cerr << fmt::format("Zpc-JIT error: failed to write output file \'{}\'\n",
-                                   output_path);
+          std::cerr << "Zpc-JIT error: failed to write output file '" << output_path << "'\n";
           res = (nvrtcResult)-1;
         }
         fclose(file);
       } else {
-        std::cerr << fmt::format("Zpc-JIT error: failed to open output file \'{}\'\n", output_path);
+        std::cerr << "Zpc-JIT error: failed to open output file '" << output_path << "'\n";
         res = (nvrtcResult)-1;
       }
     }
@@ -165,13 +165,13 @@ ZENSIM_EXPORT void *cuda_load_module(void *pol, const char *path) {
 
     input.resize(length);
     if (fread(input.data(), 1, length, file) != length) {
-      std::cerr << fmt::format("Zpc-JIT error: failed to read input file \'{}\'\n", path);
+      std::cerr << "Zpc-JIT error: failed to read input file '" << path << "'\n";
       fclose(file);
       return NULL;
     }
     fclose(file);
   } else {
-    std::cerr << fmt::format("Zpc-JIT error: failed to open input file \'{}\'\n", path);
+    std::cerr << "Zpc-JIT error: failed to open input file '" << path << "'\n";
     return NULL;
   }
 
@@ -192,10 +192,10 @@ ZENSIM_EXPORT void *cuda_load_module(void *pol, const char *path) {
 
       if (!zs::checkCuApiError(cuModuleLoadDataEx(&module, input.data(), 2, options, option_vals),
                                "[Zpc-JIT::cuModuleLoadDataEx]")) {
-        std::cerr << fmt::format("Zpc-JIT error: loading PTX module failed\n");
+        std::cerr << "Zpc-JIT error: loading PTX module failed\n";
         // print error log if not empty
         if (!error_log.empty())
-          std::cerr << fmt::format("PTX loader error:\n{}\n", error_log.data());
+          std::cerr << "PTX loader error:\n" << error_log.data() << "\n";
         return NULL;
       }
     } else {
@@ -204,7 +204,7 @@ ZENSIM_EXPORT void *cuda_load_module(void *pol, const char *path) {
       cuLinkCreate(0, nullptr, nullptr, (CUlinkState *)&state);
 
       // auto jitSrc = cudri::compile_cuda_source_to_ptx(jitCode);
-      auto name = fmt::format("[{}]", path);
+      auto name = std::string("[") + path + "]";
       cuLinkAddData((CUlinkState)state, CU_JIT_INPUT_PTX, (void *)input.data(),
                     (size_t)input.size(), name.data(), 0, NULL, NULL);
 
@@ -214,7 +214,7 @@ ZENSIM_EXPORT void *cuda_load_module(void *pol, const char *path) {
 
       if (!zs::checkCuApiError(cuModuleLoadData((CUmodule *)&module, cubin),
                                "[Zpc-JIT::cuModuleLoadData]")) {
-        std::cerr << fmt::format("Zpc-JIT CUDA error: loading module failed\n");
+        std::cerr << "Zpc-JIT CUDA error: loading module failed\n";
         cuLinkDestroy((CUlinkState)state);
         return NULL;
       }
@@ -224,7 +224,7 @@ ZENSIM_EXPORT void *cuda_load_module(void *pol, const char *path) {
     // load CUBIN
     if (!zs::checkCuApiError(cuModuleLoadDataEx(&module, input.data(), 0, NULL, NULL),
                              "[Zpc-JIT::cuModuleLoadDataEx]")) {
-      std::cerr << fmt::format("Zpc-JIT CUDA error: loading CUBIN module failed\n");
+      std::cerr << "Zpc-JIT CUDA error: loading CUBIN module failed\n";
       return NULL;
     }
   }
@@ -246,7 +246,7 @@ ZENSIM_EXPORT void *cuda_get_kernel(void *pol, void *module, const char *name) {
   CUfunction kernel = NULL;
   if (!zs::checkCuApiError(cuModuleGetFunction(&kernel, (CUmodule)module, name),
                            "[Zpc-JIT::cuModuleGetFunction]"))
-    fmt::print("Zpc-JIT: failed to lookup kernel function {} in module\n", name);
+    std::cerr << "Zpc-JIT: failed to lookup kernel function " << name << " in module\n";
 
   return kernel;
 }

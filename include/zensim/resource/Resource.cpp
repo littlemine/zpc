@@ -47,10 +47,10 @@ namespace zs {
   Resource::~Resource() {
     for (auto &&record : g_resource_records) {
       const auto &[ptr, info] = record;
-      fmt::print("recycling allocation [{}], tag [{}], size [{}], alignment [{}], allocator [{}]\n",
-                 (std::uintptr_t)ptr,
-                 match([](auto &tag) { return get_memory_tag_name(tag); })(info.tag), info.size,
-                 info.alignment, info.allocatorType);
+      std::cout << "recycling allocation [" << (std::uintptr_t)ptr << "], tag ["
+                << match([](auto &tag) { return get_memory_tag_name(tag); })(info.tag)
+                << "], size [" << info.size << "], alignment [" << info.alignment
+                << "], allocator [" << info.allocatorType << "]\n";
     }
 #if 0
 #  if ZS_ENABLE_CUDA
@@ -79,9 +79,11 @@ namespace zs {
       std::unique_lock lk(g_resource_rw_mutex);
       const auto &r = g_resource_records.get(ptr);
       match([&r, ptr](auto &tag) { zs::deallocate(tag, ptr, r.size, r.alignment); })(r.tag);
-    } else
-      throw std::runtime_error(
-          fmt::format("allocation record {} not found in records!", (std::uintptr_t)ptr));
+    } else {
+      std::ostringstream oss;
+      oss << "allocation record " << (std::uintptr_t)ptr << " not found in records!";
+      throw std::runtime_error(oss.str());
+    }
     g_resource_records.erase(ptr);
   }
 

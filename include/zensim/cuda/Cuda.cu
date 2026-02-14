@@ -8,8 +8,8 @@
 #include "zensim/cuda/memory/MemOps.hpp"
 #include "zensim/execution/ConcurrencyPrimitive.hpp"
 #include "zensim/types/SourceLocation.hpp"
-#include "zensim/zpc_tpls/fmt/color.h"
-#include "zensim/zpc_tpls/fmt/format.h"
+#include <iostream>
+#include <sstream>
 
 #define MEM_POOL_CTRL 3
 
@@ -56,10 +56,15 @@ namespace zs {
         const char *errString = nullptr;
         if (cuGetErrorString) {
           cuGetErrorString(ec, &errString);
-          checkCuApiError((u32)ec, loc, fmt::format("on restoring context {}", prevContext),
+          std::ostringstream oss;
+          oss << "on restoring context " << prevContext;
+          checkCuApiError((u32)ec, loc, oss.str(),
                           errString);
-        } else
-          checkCuApiError((u32)ec, loc, fmt::format("on restoring context {}", prevContext));
+        } else {
+          std::ostringstream oss;
+          oss << "on restoring context " << prevContext;
+          checkCuApiError((u32)ec, loc, oss.str());
+        }
       }
   }
   /*
@@ -89,19 +94,17 @@ namespace zs {
         if (context.errorStatus) return;  // there already exists a preceding cuda error
         context.errorStatus = true;
       }
-      const auto fileInfo = fmt::format("# File: \"{:<50}\"", loc.file_name());
-      const auto locInfo = fmt::format("# Ln {}, Col {}", loc.line(), loc.column());
-      const auto funcInfo = fmt::format("# Func: \"{}\"", loc.function_name());
+      const auto fileInfo = std::string("# File: \"") + loc.file_name() + "\"";
+      const auto locInfo = std::string("# Ln ") + std::to_string(loc.line()) + ", Col " + std::to_string(loc.column());
+      const auto funcInfo = std::string("# Func: \"") + loc.function_name() + "\"";
 #if 0
-      fmt::print(fg(fmt::color::crimson) | fmt::emphasis::italic | fmt::emphasis::bold,
-                 "\nCuda Error on Device {}: {}\n{:=^60}\n{}\n{}\n{}\n{:=^60}\n\n",
-                 did >= 0 ? std::to_string(did) : "unknown", get_cuda_rt_error_string(errorCode),
-                 " cuda api error location ", fileInfo, locInfo, funcInfo, "=");
+      std::cerr << "\nCuda Error on Device " << (did >= 0 ? std::to_string(did) : "unknown")
+                << ": " << get_cuda_rt_error_string(errorCode)
+                << "\n" << fileInfo << "\n" << locInfo << "\n" << funcInfo << "\n\n";
 #else
-      std::cerr << fmt::format("\nCuda Error on Device {}: {}\n{:=^60}\n{}\n{}\n{}\n{:=^60}\n\n",
-                               did >= 0 ? std::to_string(did) : "unknown",
-                               get_cuda_rt_error_string(errorCode), " cuda api error location ",
-                               fileInfo, locInfo, funcInfo, "=");
+      std::cerr << "\nCuda Error on Device " << (did >= 0 ? std::to_string(did) : "unknown")
+                << ": " << get_cuda_rt_error_string(errorCode)
+                << "\n" << fileInfo << "\n" << locInfo << "\n" << funcInfo << "\n\n";
 #endif
     }
   }
@@ -201,7 +204,7 @@ namespace zs {
   int Cuda::get_default_device() noexcept { return driver().defaultDevice; }
 
   Cuda::Cuda() {
-    fmt::print("[Init -- Begin] Cuda\n");
+    printf("[Init -- Begin] Cuda\n");
     errorStatus = false;
     CUresult res = cuInit(0);
 
@@ -209,11 +212,11 @@ namespace zs {
     cuDeviceGetCount(&numTotalDevice);
     contexts.resize(numTotalDevice);
     if (numTotalDevice == 0)
-      fmt::print(
+      printf(
           "\t[InitInfo -- DevNum] There are no available device(s) that "
           "support CUDA\n");
     else
-      fmt::print("\t[InitInfo -- DevNum] Detected {} CUDA Capable device(s)\n", numTotalDevice);
+      printf("\t[InitInfo -- DevNum] Detected %d CUDA Capable device(s)\n", numTotalDevice);
 
     defaultDevice = 0;
     {
@@ -243,7 +246,7 @@ namespace zs {
         void *ctx{nullptr};
         // checkError(cudaSetDevice(i), i);
         cuDeviceGet((CUdevice *)&dev, i);
-        fmt::print("device ordinal {} has handle {}\n", i, dev);
+        printf("device ordinal %d has handle %d\n", i, dev);
 
         unsigned int ctxFlags, expectedFlags = CU_CTX_SCHED_AUTO;
         // unsigned int ctxFlags, expectedFlags = CU_CTX_SCHED_BLOCKING_SYNC;
@@ -253,10 +256,10 @@ namespace zs {
         /// follow tensorflow's impl
         if (ctxFlags != expectedFlags) {
           if (isActive) {
-            ZS_ERROR(
-                fmt::format("The primary active context has flag [{}], but [{}] is expected.\n",
-                            ctxFlags, expectedFlags)
-                    .data());
+            std::ostringstream oss;
+            oss << "The primary active context has flag [" << ctxFlags
+                << "], but [" << expectedFlags << "] is expected.\n";
+            ZS_ERROR(oss.str().data());
           } else {
             cuDevicePrimaryCtxSetFlags((CUdevice)dev, expectedFlags);
           }
@@ -269,15 +272,15 @@ namespace zs {
         if (formerCtx != nullptr) {
           cuCtxGetDevice(&formerDev);
           ZS_ERROR_IF(formerDev == dev,
-                      fmt::format("setting device [{}], yet the current device handle is {}.", dev,
-                                  formerDev));
+                      (std::ostringstream() << "setting device [" << dev
+                       << "], yet the current device handle is " << formerDev << ".").str().data());
           if (formerCtx == ctx) {
-            ZS_INFO(fmt::format("The primary context [{}] for device {} exists.", formerCtx,
-                                formerDev));
+            ZS_INFO((std::ostringstream() << "The primary context [" << formerCtx
+                     << "] for device " << formerDev << " exists.").str().data());
           } else {
-            ZS_WARN(fmt::format(
-                "A non-primary context [{}] for device {} exists. The primary context is now {}.",
-                formerCtx, formerDev, ctx));
+            ZS_WARN((std::ostringstream() << "A non-primary context [" << formerCtx
+                     << "] for device " << formerDev
+                     << " exists. The primary context is now " << ctx << ".").str().data());
           }
         }
         cuCtxSetCurrent((CUcontext)ctx);  // not sure why this is meaningful
@@ -287,7 +290,7 @@ namespace zs {
         } else if (res == CUDA_ERROR_OUT_OF_MEMORY) {
           size_t nbs;
           cuDeviceTotalMem(&nbs, (CUdevice)dev);
-          ZS_WARN(fmt::format("{} bytes in total for device {}.", nbs, dev));
+          ZS_WARN((std::ostringstream() << nbs << " bytes in total for device " << dev << ".").str().data());
         }
       }
 
@@ -329,12 +332,12 @@ namespace zs {
 
         context.supportConcurrentUmAccess = supportConcurrentUmAccess;
 
-        fmt::print(
-            "\t[InitInfo -- Dev Property] CUDA device {} ({}-th group on "
-            "board)\n\t\tshared memory per block: {} bytes,\n\t\tregisters per SM: "
-            "{},\n\t\tMulti-Processor count: {},\n\t\tSM compute capabilities: "
-            "{}.{}.\n\t\tTexture alignment: {} bytes\n\t\tUVM support: allocation({}), unified "
-            "addressing({}), concurrent access({})\n",
+        printf(
+            "\t[InitInfo -- Dev Property] CUDA device %d (%d-th group on "
+            "board)\n\t\tshared memory per block: %d bytes,\n\t\tregisters per SM: "
+            "%d,\n\t\tMulti-Processor count: %d,\n\t\tSM compute capabilities: "
+            "%d.%d.\n\t\tTexture alignment: %d bytes\n\t\tUVM support: allocation(%d), unified "
+            "addressing(%d), concurrent access(%d)\n",
             i, multiGpuBoardGroupID, context.sharedMemPerBlock, regsPerBlock,
             context.numMultiprocessor, major, minor, textureAlignment, supportUm,
             supportUnifiedAddressing, supportConcurrentUmAccess);
@@ -350,7 +353,7 @@ namespace zs {
           int iCanAccessPeer = 0;
           cuDeviceCanAccessPeer(&iCanAccessPeer, contexts[i].getDevice(), contexts[j].getDevice());
           if (iCanAccessPeer) cuCtxEnablePeerAccess((CUcontext)contexts[j].getContext(), 0);
-          fmt::print("\t[InitInfo -- Peer Access] Peer access status {} -> {}: {}\n", i, j,
+          printf("\t[InitInfo -- Peer Access] Peer access status %d -> %d: %s\n", i, j,
                      iCanAccessPeer ? "Inactive" : "Active");
         }
       }
@@ -365,7 +368,7 @@ namespace zs {
     or WDDM mode) will use the basic Unified Memory model as on pre-6.x architectures even
     when they are running on hardware with compute capability 6.x or higher. */
 
-    fmt::print("\n[Init -- End] == Finished \'Cuda\' initialization\n\n");
+    printf("\n[Init -- End] == Finished 'Cuda' initialization\n\n");
   }
 
   Cuda::~Cuda() {
@@ -447,15 +450,17 @@ namespace zs {
     };
 
     optBlockSize = deduce_opt_block_size();
-    fmt::print(
-        fg(fmt::color::lime_green) | fmt::emphasis::bold,
-        "{:=^60}\nnumRegs: {}\t\tmaxThreadsPerBlock: {}\nsharedSizeBytes: {}\t"
-        "maxDynamicSharedSizeBytes: {}.\n",
-        fmt::format(" cuda kernel [{}] optBlockSize [{}] ",
-                    kernelName.empty() ? std::to_string((std::uintptr_t)kernelFunc) : kernelName,
-                    optBlockSize),
-        funcAttribs.numRegs, funcAttribs.maxThreadsPerBlock, funcAttribs.sharedSizeBytes,
-        funcAttribs.maxDynamicSharedSizeBytes);
+    {
+      std::string name = kernelName.empty() ? std::to_string((std::uintptr_t)kernelFunc)
+                                            : std::string(kernelName);
+      printf(
+          "============ cuda kernel [%s] optBlockSize [%d] ============\n"
+          "numRegs: %d\t\tmaxThreadsPerBlock: %d\n"
+          "sharedSizeBytes: %zu\tmaxDynamicSharedSizeBytes: %zu.\n",
+          name.c_str(), optBlockSize,
+          funcAttribs.numRegs, funcAttribs.maxThreadsPerBlock,
+          (size_t)funcAttribs.sharedSizeBytes, (size_t)funcAttribs.maxDynamicSharedSizeBytes);
+    }
     ctx.funcLaunchConfigs.emplace(kernelFunc, typename Cuda::CudaContext::Config{optBlockSize});
     return optBlockSize;
   }

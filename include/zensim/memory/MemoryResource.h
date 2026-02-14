@@ -1,6 +1,7 @@
 #pragma once
 #include <cstddef>
 #include <memory>
+#include <sstream>
 #include <stdexcept>
 
 #include "zensim/Platform.hpp"
@@ -8,7 +9,6 @@
 #include "zensim/types/Polymorphism.h"
 #include "zensim/types/Property.h"
 #include "zensim/types/SourceLocation.hpp"
-#include "zensim/zpc_tpls/fmt/format.h"
 
 namespace zs {
 
@@ -178,23 +178,5 @@ namespace zs {
     template <typename T>
     constexpr explicit MemoryEntity(MemoryProperty prop, T* ptr) : location{prop}, ptr{(void *)ptr} {}
   };
-
-  /// this should be refactored
-  // host = 0, device, um
-  constexpr mem_tags memop_tag(const MemoryHandle a, const MemoryHandle b) {
-    auto spaceA = static_cast<unsigned char>(a.memspace());
-    auto spaceB = static_cast<unsigned char>(b.memspace());
-    if (spaceA > spaceB) std::swap(spaceA, spaceB);
-    if (a.memspace() == b.memspace()) return to_memory_source_tag(a.memspace());
-    /// avoid um issue
-    else if (spaceB < static_cast<unsigned char>(memsrc_e::um))
-      return to_memory_source_tag(memsrc_e::device);
-    else if (spaceB == static_cast<unsigned char>(memsrc_e::um))
-      return to_memory_source_tag(memsrc_e::um);
-    else
-      throw std::runtime_error(fmt::format("memop_tag for ({}, {}) is undefined!",
-                                           get_memory_tag_name(a.memspace()),
-                                           get_memory_tag_name(b.memspace())));
-  }
 
 }  // namespace zs

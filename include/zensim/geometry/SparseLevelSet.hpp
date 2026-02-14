@@ -9,7 +9,9 @@
 #include "zensim/math/curve/InterpolationKernel.hpp"
 #include "zensim/math/matrix/Transform.hpp"
 #include "zensim/types/Property.h"
-#include "zensim/zpc_tpls/fmt/color.h"
+#include <iomanip>
+#include <iostream>
+#include <sstream>
 
 namespace zs {
 
@@ -123,14 +125,16 @@ namespace zs {
     void printTransformation(std::string_view msg = {}) const {
       auto r = _i2wRinv.transpose();
       auto [mi, ma] = proxy<execspace_e::host>(*this).getBoundingBox();
-      fmt::print(fg(fmt::color::aquamarine),
-                 "[ls<dim {}, cate {}> {}] dx: {}. ibox: [{}, {}, {} ~ {}, {}, {}]; wbox: [{}, {}, "
-                 "{} ~ {}, {}, {}]. trans: {}, {}, "
-                 "{}. \nrotation [{}, {}, {}; {}, {}, {}; {}, {}, {}].\n",
-                 dim, category, msg, (value_type)1 / _i2wSinv(0), _min[0], _min[1], _min[2],
-                 _max[0], _max[1], _max[2], mi[0], mi[1], mi[2], ma[0], ma[1], ma[2], _i2wT(0),
-                 _i2wT(1), _i2wT(2), r(0, 0), r(0, 1), r(0, 2), r(1, 0), r(1, 1), r(1, 2), r(2, 0),
-                 r(2, 1), r(2, 2));
+      std::cout << "[ls<dim " << dim << ", cate " << category << "> " << msg
+                << "] dx: " << (value_type)1 / _i2wSinv(0)
+                << ". ibox: [" << _min[0] << ", " << _min[1] << ", " << _min[2]
+                << " ~ " << _max[0] << ", " << _max[1] << ", " << _max[2]
+                << "]; wbox: [" << mi[0] << ", " << mi[1] << ", " << mi[2]
+                << " ~ " << ma[0] << ", " << ma[1] << ", " << ma[2]
+                << "]. trans: " << _i2wT(0) << ", " << _i2wT(1) << ", " << _i2wT(2)
+                << ". \nrotation [" << r(0, 0) << ", " << r(0, 1) << ", " << r(0, 2)
+                << "; " << r(1, 0) << ", " << r(1, 1) << ", " << r(1, 2)
+                << "; " << r(2, 0) << ", " << r(2, 1) << ", " << r(2, 2) << "].\n";
     }
     template <typename VecTM,
               enable_if_all<VecTM::dim == 2, VecTM::template range_t<0>::value == dim + 1,
@@ -286,10 +290,10 @@ namespace zs {
         using IV = vec<Ti, dim>;
         for (Ti bno = 0; bno != blockCnt; ++bno) {
           auto blockCoord = _table._activeKeys[bno];
-          fmt::print(fg(fmt::color::orange), "\nblock [{}] ({}, {})\n", bno, blockCoord[0],
-                     blockCoord[1]);
+          std::cout << "\nblock [" << bno << "] (" << blockCoord[0] << ", " << blockCoord[1]
+                    << ")\n";
           if (blockCoord[0] >= 0 || blockCoord[1] >= 0) {
-            fmt::print("skip\n");
+            std::cout << "skip\n";
             continue;
           }
 
@@ -300,25 +304,19 @@ namespace zs {
             auto tag = block("tag", cellCoord);
             auto mask = block("mask", cellCoord);
             auto tagmask = block("tagmask", cellCoord);
-            auto c = fg(fmt::color::white);
-            if (mask == 0 || tagmask == 0) {
-            } else {
-              if (tag > 1)
-                c = fg(fmt::color::dark_olive_green);
-              else if (tag > 0)
-                c = fg(fmt::color::light_sea_green);
-              else
-                c = fg(fmt::color::yellow_green);
-            }
-            // if (tag < 0) fmt::print("WTF at {} ({}, {})??\n", (int)bno, (int)cellCoord[0],
-            // (int)cellCoord[1]);
-            auto candi = fmt::format("{:.4f}", val);
-            auto candi1 = fmt::format("{}", tag);
-            fmt::print(c, "[{}{}({})] ", val < 0 ? "" : " ", mask ? candi : "------",
-                       tagmask ? candi1 : " ");
-            if (cno % side_length == side_length - 1) fmt::print("\n");
+            // if (tag < 0) std::cout << "WTF at " << (int)bno << " (" << (int)cellCoord[0]
+            // << ", " << (int)cellCoord[1] << ")??\n";
+            std::ostringstream oss;
+            oss << std::fixed << std::setprecision(4) << val;
+            auto candi = oss.str();
+            std::ostringstream oss1;
+            oss1 << tag;
+            auto candi1 = oss1.str();
+            std::cout << "[" << (val < 0 ? "" : " ") << (mask ? candi : "------")
+                      << "(" << (tagmask ? candi1 : " ") << ")] ";
+            if (cno % side_length == side_length - 1) std::cout << "\n";
           }
-          fmt::print("\n");
+          std::cout << "\n";
         }
       }
     }
@@ -975,13 +973,13 @@ namespace zs {
       for (int d = 0; d != dim; ++d) {
         for (int w = 0; w != width; ++w) {
           sum += get<0>(weights)(d, w);
-          fmt::print("weights({}, {}): [{}]\t", d, w, get<0>(weights)(d, w));
-          if constexpr (deriv_order > 0) fmt::print("[{}]\t", get<1>(weights)(d, w));
-          if constexpr (deriv_order > 1) fmt::print("[{}]\t", get<2>(weights)(d, w));
-          fmt::print("\n");
+          std::cout << "weights(" << d << ", " << w << "): [" << get<0>(weights)(d, w) << "]\t";
+          if constexpr (deriv_order > 0) std::cout << "[" << get<1>(weights)(d, w) << "]\t";
+          if constexpr (deriv_order > 1) std::cout << "[" << get<2>(weights)(d, w) << "]\t";
+          std::cout << "\n";
         }
       }
-      fmt::print("weight sum: {}\n", sum);
+      std::cout << "weight sum: " << sum << "\n";
     }
 
     lsv_t *lsPtr{nullptr};

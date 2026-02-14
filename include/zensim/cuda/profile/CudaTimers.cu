@@ -1,6 +1,6 @@
 #include "CudaTimers.cuh"
-#include "zensim/zpc_tpls/fmt/color.h"
-#include "zensim/zpc_tpls/fmt/core.h"
+
+#include <cstdio>
 
 namespace zs {
 
@@ -22,7 +22,7 @@ namespace zs {
   void CudaTimer::tock() { cudaEventRecord((cudaEvent_t)cur, (cudaStream_t)streamId); }
   void CudaTimer::tock(std::string_view tag) {
     tock();
-    fmt::print(fg(fmt::color::cyan), "{}: {} ms\n", tag, elapsed());
+    printf("%.*s: %f ms\n", (int)tag.size(), tag.data(), elapsed());
   }
 
 }  // namespace zs

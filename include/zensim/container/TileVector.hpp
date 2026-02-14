@@ -611,10 +611,13 @@ namespace zs {
         tags.push_back(tag);
         modified = true;
       } else if (tags[i].numChannels != tag.numChannels)
-        throw std::runtime_error(
-            fmt::format("append_channels: property[{}] currently has [{}] channels, cannot change "
-                        "it to [{}] channels.",
-                        tag.name.asChars(), tags[i].numChannels, tag.numChannels));
+      {
+        std::ostringstream oss;
+        oss << "append_channels: property[" << tag.name.asChars() << "] currently has ["
+            << tags[i].numChannels << "] channels, cannot change it to [" << tag.numChannels
+            << "] channels.";
+        throw std::runtime_error(oss.str());
+      }
     }
     if (!modified) return;
     TileVector<T, Length, Allocator> tmp{get_allocator(), tags, s};
@@ -1580,17 +1583,22 @@ namespace zs {
                        const TileVector<T, Length, Allocator> &vec) {
     for (auto &&tag : tagNames)
       if (!vec.hasProperty(tag))
-        throw std::runtime_error(
-            fmt::format("tilevector property [\"{}\"] does not exist", (std::string)tag));
+      {
+        std::ostringstream oss;
+        oss << "tilevector property [\"" << (std::string)tag << "\"] does not exist";
+        throw std::runtime_error(oss.str());
+      }
     return view<space>(tagNames, vec, false_c);
   }
   template <execspace_e space, typename T, size_t Length, typename Allocator>
   decltype(auto) proxy(const std::vector<SmallString> &tagNames,
                        TileVector<T, Length, Allocator> &vec) {
     for (auto &&tag : tagNames)
-      if (!vec.hasProperty(tag))
-        throw std::runtime_error(
-            fmt::format("tilevector property [\"{}\"] does not exist\n", (std::string)tag));
+      if (!vec.hasProperty(tag)) {
+        std::ostringstream oss;
+        oss << "tilevector property [\"" << (std::string)tag << "\"] does not exist\n";
+        throw std::runtime_error(oss.str());
+      }
     return view<space>(tagNames, vec, false_c);
   }
 
@@ -1599,18 +1607,22 @@ namespace zs {
   decltype(auto) proxy(const std::vector<SmallString> &tagNames,
                        const TileVector<T, Length, Allocator> &vec, const SmallString &tagName) {
     for (auto &&tag : tagNames)
-      if (!vec.hasProperty(tag))
-        throw std::runtime_error(
-            fmt::format("tilevector property [\"{}\"] does not exist\n", (std::string)tag));
+      if (!vec.hasProperty(tag)) {
+        std::ostringstream oss;
+        oss << "tilevector property [\"" << (std::string)tag << "\"] does not exist\n";
+        throw std::runtime_error(oss.str());
+      }
     return view<space>(tagNames, vec, false_c, tagName);
   }
   template <execspace_e space, typename T, size_t Length, typename Allocator>
   decltype(auto) proxy(const std::vector<SmallString> &tagNames,
                        TileVector<T, Length, Allocator> &vec, const SmallString &tagName) {
     for (auto &&tag : tagNames)
-      if (!vec.hasProperty(tag))
-        throw std::runtime_error(
-            fmt::format("tilevector property [\"{}\"] does not exist\n", (std::string)tag));
+      if (!vec.hasProperty(tag)) {
+        std::ostringstream oss;
+        oss << "tilevector property [\"" << (std::string)tag << "\"] does not exist\n";
+        throw std::runtime_error(oss.str());
+      }
     return view<space>(tagNames, vec, false_c, tagName);
   }
 

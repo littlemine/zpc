@@ -4,6 +4,8 @@
 #endif
 #include <algorithm>
 #include <fstream>
+#include <iostream>
+#include <sstream>
 
 #include "zensim/container/DenseGrid.hpp"
 #include "zensim/math/RandomNumber.hpp"
@@ -12,7 +14,6 @@
 #include "zensim/execution/Concurrency.h"
 #include "zensim/geometry/LevelSetInterface.h"
 #include "zensim/io/Filesystem.hpp"
-#include "zensim/zpc_tpls/fmt/format.h"
 
 namespace zs {
 
@@ -146,19 +147,21 @@ namespace zs {
 #endif
         // Read std vector
         std::ifstream is(loc, std::ios::in | std::ios::binary);
-        if (!is)
-          throw std::runtime_error(fmt::format("particle-1000k.dat file not found at [{}]!", loc));
+        if (!is) {
+          std::ostringstream oss;
+          oss << "particle-1000k.dat file not found at [" << loc << "]!";
+          throw std::runtime_error(oss.str());
+        }
         std::size_t cnt, tmp;
         is.read((char *)&cnt, sizeof(std::size_t));
         auto estimate = cnt * (sideLength.prod() / scaled_ref_box_length.prod());
-        fmt::print(
-            "try reserving {} entries, cnt {}, minDistance: {}, box: [{}, {}, {} ~ {}, {}, {}], "
-            "sidelen: "
-            "{}, "
-            "{}, {}, scaledlen: {}, {}, {}\n",
-            estimate, cnt, minDistance, minCorner[0], minCorner[1], minCorner[2], maxCorner[0],
-            maxCorner[1], maxCorner[2], sideLength[0], sideLength[1], sideLength[2],
-            scaled_ref_box_length[0], scaled_ref_box_length[1], scaled_ref_box_length[2]);
+        std::cout << "try reserving " << estimate << " entries, cnt " << cnt
+                  << ", minDistance: " << minDistance << ", box: [" << minCorner[0] << ", "
+                  << minCorner[1] << ", " << minCorner[2] << " ~ " << maxCorner[0] << ", "
+                  << maxCorner[1] << ", " << maxCorner[2] << "], sidelen: " << sideLength[0] << ", "
+                  << sideLength[1] << ", " << sideLength[2]
+                  << ", scaledlen: " << scaled_ref_box_length[0] << ", "
+                  << scaled_ref_box_length[1] << ", " << scaled_ref_box_length[2] << "\n";
         if (estimate < 100000) samples.reserve((i64)estimate);
 
         is.read((char *)&tmp, sizeof(size_t));  ///< neglect this
@@ -224,7 +227,7 @@ namespace zs {
               }
         }
 #endif
-        fmt::print("[PoissonDiskSampling]\tcnt: {}\n", samples.size());
+        std::cout << "[PoissonDiskSampling]\tcnt: " << samples.size() << "\n";
 
       } else if (dim == 2) {
         const T h = minDistance / std::sqrt((T)dim);

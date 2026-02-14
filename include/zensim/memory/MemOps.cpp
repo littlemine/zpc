@@ -13,13 +13,13 @@ namespace zs {
 #endif
 #if ZS_ENABLE_OFB_ACCESS_CHECK
     if (ret == nullptr) {
-      const auto fileInfo = fmt::format("# File: \"{:<50}\"", loc.file_name());
-      const auto locInfo = fmt::format("# Ln {}, Col {}", loc.line(), loc.column());
-      const auto funcInfo = fmt::format("# Func: \"{}\"", loc.function_name());
-      std::cerr << fmt::format(
-          "\nHost Side Error: allocattion failed (size: {} bytes, alignment: {} "
-          "bytes)\n{:=^60}\n{}\n{}\n{}\n{:=^60}\n\n",
-          size, alignment, " api error location ", fileInfo, locInfo, funcInfo, "=");
+      std::cerr << "\nHost Side Error: allocattion failed (size: " << size
+                << " bytes, alignment: " << alignment << " bytes)"
+                << "\n============================================================\n"
+                << "# File: \"" << loc.file_name() << "\"\n"
+                << "# Ln " << loc.line() << ", Col " << loc.column() << "\n"
+                << "# Func: \"" << loc.function_name() << "\"\n"
+                << "============================================================\n\n";
     }
 #endif
     return ret;

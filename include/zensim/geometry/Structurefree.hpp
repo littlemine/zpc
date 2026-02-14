@@ -1,5 +1,6 @@
 #pragma once
 #include <map>
+#include <sstream>
 #include <stdexcept>
 
 #include "zensim/TypeAlias.hpp"
@@ -40,8 +41,9 @@ namespace zs {
         return attrib_e::matrix;
       else if constexpr (is_same_v<TT, TMAffine>)
         return attrib_e::affine;
-      throw std::runtime_error(
-          fmt::format(" array of \"{}\" is not a known attribute type\n", demangle<T>()));
+      std::ostringstream oss;
+      oss << " array of \"" << demangle<T>() << "\" is not a known attribute type\n";
+      throw std::runtime_error(oss.str());
     }
     static constexpr attrib_e get_attribute_enum(const Attribute &att) {
       return match([](const auto &att) { return get_attribute_enum(att); })(att);
@@ -202,9 +204,13 @@ namespace zs {
               [&attrib](auto &&dst, auto &&src)
                   -> enable_if_type<!is_same_v<RM_CVREF_T(dst), RM_CVREF_T(src)>> {
                 throw std::runtime_error(
-                    fmt::format("attributes of the same name \"{}\" are of type \"{}\"(dst) and "
-                                "\"{}\"(src)\n",
-                                attrib.first, demangle(dst), demangle(src)));
+                    [&]() {
+                      std::ostringstream oss;
+                      oss << "attributes of the same name \"" << attrib.first
+                          << "\" are of type \"" << demangle(dst) << "\"(dst) and \""
+                          << demangle(src) << "\"(src)\n";
+                      return oss.str();
+                    }());
               })(*obj, attrib.second);
         } else
           _attributes[attrib.first] = attrib.second;

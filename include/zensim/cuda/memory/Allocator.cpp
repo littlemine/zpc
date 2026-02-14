@@ -69,17 +69,17 @@ namespace zs {
 #if ZS_ENABLE_OFB_ACCESS_CHECK
       if (ret == nullptr) {
         auto loc = source_location::current();
-        const auto fileInfo = fmt::format("# File: \"{:<50}\"", loc.file_name());
-        const auto locInfo = fmt::format("# Ln {}, Col {}", loc.line(), loc.column());
-        const auto funcInfo = fmt::format("# Func: \"{}\"", loc.function_name());
         int devid;
         cuCtxGetDevice(&devid);
-        std::cerr << fmt::format(
-            "\nCuda Error on Device {}, Context [{}], Stream [{}]: cuMemAllocAsync failed (size: "
-            "{} bytes, alignment: {} "
-            "bytes)\n{:=^60}\n{}\n{}\n{}\n{:=^60}\n\n",
-            devid, context, stream, bytes, alignment, " cuda driver api error location ", fileInfo,
-            locInfo, funcInfo, "=");
+        std::cerr << "\nCuda Error on Device " << devid
+                  << ", Context [" << context << "], Stream [" << stream
+                  << "]: cuMemAllocAsync failed (size: " << bytes
+                  << " bytes, alignment: " << alignment << " bytes)"
+                  << "\n============================================================\n"
+                  << "# File: \"" << loc.file_name() << "\"\n"
+                  << "# Ln " << loc.line() << ", Col " << loc.column() << "\n"
+                  << "# Func: \"" << loc.function_name() << "\"\n"
+                  << "============================================================\n\n";
       }
 #endif
       return ret;
@@ -110,7 +110,7 @@ namespace zs {
     CUmemAllocationProp allocProp{};
     if (type != "DEVICE_PINNED")
       throw std::runtime_error(
-          fmt::format("currently cudavm does not support allocation type {}", type));
+          std::string("currently cudavm does not support allocation type ") + std::string(type));
     allocProp.type = CU_MEM_ALLOCATION_TYPE_PINNED;
     allocProp.location.type = CU_MEM_LOCATION_TYPE_DEVICE;
     allocProp.location.id = (int)did;
@@ -200,7 +200,7 @@ namespace zs {
     // cudri::vcreate(&handle, allocationBytes, &allocProp, (unsigned long long)0);
     auto status = cuMemCreate(&handle, allocationBytes, &allocProp, 0ull);
     if (status != CUDA_SUCCESS) return nullptr;
-    // ZS_WARN(fmt::format("alloc handle is {}, bytes {}\n", handle, allocationBytes));
+    // ZS_WARN("alloc handle is " + std::to_string(handle) + ", bytes " + std::to_string(allocationBytes) + "\n");
 
     void *base = (char *)_addr + _offset;
     // cudri::mmap(base, allocationBytes, (size_t)0, handle, (unsigned long long)0);
@@ -350,9 +350,11 @@ namespace zs {
   arena_virtual_memory_resource<device_mem_tag>::arena_virtual_memory_resource(ProcID did,
                                                                                size_t space)
       : _did{did}, _reservedSpace{round_up(space, s_chunk_granularity)} {
-    if (did < 0)
-      throw std::runtime_error(
-          fmt::format("devicevm target device index [{}] is negative", (int)did));
+    if (did < 0) {
+      std::ostringstream oss;
+      oss << "devicevm target device index [" << (int)did << "] is negative";
+      throw std::runtime_error(oss.str());
+    }
     CUmemAllocationProp allocProp{};
     allocProp.type = CU_MEM_ALLOCATION_TYPE_PINNED;
     allocProp.location.type = CU_MEM_LOCATION_TYPE_DEVICE;
