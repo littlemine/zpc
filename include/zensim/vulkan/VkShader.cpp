@@ -342,8 +342,11 @@ namespace zs {
         break;
     }
     std::string tmp{glslCode};
+    shaderc::CompileOptions options;
+    options.SetTargetEnvironment(shaderc_target_env_vulkan, shaderc_env_version_vulkan_1_3);
+    options.SetTargetSpirv(shaderc_spirv_version_1_3);
     auto compiled = shaderc::Compiler().CompileGlslToSpv(tmp.data(), tmp.size(), shaderKind,
-                                                         moduleName.data());
+                                                         moduleName.data(), options);
     if (compiled.GetNumErrors()) {
       fmt::print("\n\tGLSL module [{}] compilation error log: \n{}\n", moduleName,
                  compiled.GetErrorMessage());
