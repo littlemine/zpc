@@ -13,7 +13,8 @@ namespace zs {
           compiled{nullptr, nullptr},
           resources{nullptr, nullptr},
           shaderModule{VK_NULL_HANDLE},
-          stageFlag{} {}
+          stageFlag{},
+          entryPoint{"main"} {}
     ShaderModule(ShaderModule&& o) noexcept
         : ctx{o.ctx},
           setLayouts{std::move(o.setLayouts)},
@@ -21,7 +22,8 @@ namespace zs {
           compiled{std::move(o.compiled)},
           resources{std::move(o.resources)},
           shaderModule{o.shaderModule},
-          stageFlag{o.stageFlag} {
+          stageFlag{o.stageFlag},
+          entryPoint{std::move(o.entryPoint)} {
       o.shaderModule = VK_NULL_HANDLE;
       o.stageFlag = {};
     }
@@ -32,6 +34,8 @@ namespace zs {
     const DescriptorSetLayout& layout(u32 no = 0) const { return setLayouts.at(no); }
     DescriptorSetLayout& layout(u32 no = 0) { return setLayouts.at(no); }
     vk::ShaderStageFlagBits getStage() const noexcept { return stageFlag; }
+    const std::string& getEntryPoint() const noexcept { return entryPoint; }
+    void setEntryPoint(std::string ep) { entryPoint = std::move(ep); }
     const auto& getInputAttributes() const noexcept { return inputAttributes; }
 
     vk::ShaderModule operator*() const { return shaderModule; }
@@ -52,6 +56,7 @@ namespace zs {
     // inherent data
     vk::ShaderModule shaderModule;
     vk::ShaderStageFlagBits stageFlag;
+    std::string entryPoint{"main"};
   };
 
 }  // namespace zs

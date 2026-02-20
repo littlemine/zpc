@@ -29,6 +29,7 @@
 #include "zensim/vulkan/VkRenderPass.hpp"
 #include "zensim/vulkan/VkShader.hpp"
 #include "zensim/vulkan/VkSwapchain.hpp"
+#include "zensim/vulkan/VkTexture.hpp"
 #include "zensim/vulkan/Vulkan.hpp"
 
 //
@@ -712,6 +713,17 @@ namespace zs {
   }
   PipelineBuilder VulkanContext::pipeline() { return PipelineBuilder{*this}; }
   RenderPassBuilder VulkanContext::renderpass() { return RenderPassBuilder(*this); }
+  RenderPass VulkanContext::createRenderPass(const RenderPassDesc& desc) {
+    auto builder = renderpass();
+    for (const auto& attachment : desc.attachments)
+      builder.addAttachment(attachment);
+    for (const auto& subpass : desc.subpasses) {
+      builder.addSubpass(subpass.colorRefs, subpass.depthStencilRef, subpass.colorResolveRefs,
+                         subpass.depthStencilResolveRef, subpass.inputRefs);
+    }
+    if (!desc.dependencies.empty()) builder.setSubpassDependencies(desc.dependencies);
+    return builder.build();
+  }
   DescriptorSetLayoutBuilder VulkanContext::setlayout() {
     return DescriptorSetLayoutBuilder{*this};
   }
@@ -756,6 +768,178 @@ namespace zs {
 
     device.updateDescriptorSets(writes.size(), writes.data(), 0, nullptr, dispatcher);
     return ret;
+  }
+
+  Pipeline VulkanContext::createGraphicsPipeline(
+      const GraphicsPipelineDesc& desc, vk::RenderPass renderPass,
+      const std::vector<vk::DescriptorSetLayout>& setLayouts) {
+    if (desc.shaderStages.empty())
+      throw std::runtime_error("graphics pipeline creation requires shader stages");
+    if (renderPass == VK_NULL_HANDLE)
+      throw std::runtime_error("graphics pipeline creation requires a render pass");
+
+    Pipeline ret{*this};
+
+    PipelineLayoutDesc layoutDesc{};
+    layoutDesc.pushConstantRanges = desc.pushConstantRanges;
+    ret.layout = createPipelineLayout(layoutDesc, setLayouts);
+
+    const auto numStages = desc.shaderStages.size();
+    std::vector<ShaderModule> stageModules;
+    stageModules.reserve(numStages);
+    std::vector<std::string> entryPoints;
+    entryPoints.reserve(numStages);
+    for (const auto& stageDesc : desc.shaderStages) {
+      if (stageDesc.spirv.empty())
+        throw std::runtime_error("graphics pipeline shader stage missing SPIR-V");
+      stageModules.push_back(createShaderModule(stageDesc.spirv.data(), stageDesc.spirv.size(),
+                                                 stageDesc.stage));
+      entryPoints.push_back(stageDesc.entryPoint);
+    }
+    std::vector<vk::PipelineShaderStageCreateInfo> stages;
+    stages.reserve(numStages);
+    for (size_t i = 0; i < numStages; ++i) {
+      stages.emplace_back(vk::PipelineShaderStageCreateInfo{}
+                              .setStage(desc.shaderStages[i].stage)
+                              .setModule(stageModules[i])
+                              .setPName(entryPoints[i].c_str()));
+    }
+
+    auto vertexInputInfo = vk::PipelineVertexInputStateCreateInfo{};
+    if (!desc.vertexInput.attributes.empty() && !desc.vertexInput.bindings.empty()) {
+      vertexInputInfo.setVertexAttributeDescriptionCount(
+          static_cast<u32>(desc.vertexInput.attributes.size()))
+          .setPVertexAttributeDescriptions(desc.vertexInput.attributes.data())
+          .setVertexBindingDescriptionCount(
+              static_cast<u32>(desc.vertexInput.bindings.size()))
+          .setPVertexBindingDescriptions(desc.vertexInput.bindings.data());
+    }
+
+    auto inputAssemblyInfo
+        = vk::PipelineInputAssemblyStateCreateInfo{}
+              .setTopology(desc.inputAssembly.topology)
+              .setPrimitiveRestartEnable(desc.inputAssembly.primitiveRestartEnable);
+
+    auto viewportInfo
+        = vk::PipelineViewportStateCreateInfo{}
+              .setViewportCount(desc.viewport.viewportCount)
+              .setPViewports(nullptr)
+              .setScissorCount(desc.viewport.scissorCount)
+              .setPScissors(nullptr);
+
+    auto rasterizationInfo
+        = vk::PipelineRasterizationStateCreateInfo{}
+              .setDepthClampEnable(desc.rasterization.depthClampEnable)
+              .setRasterizerDiscardEnable(desc.rasterization.rasterizerDiscardEnable)
+              .setPolygonMode(desc.rasterization.polygonMode)
+              .setLineWidth(desc.rasterization.lineWidth)
+              .setCullMode(desc.rasterization.cullMode)
+              .setFrontFace(desc.rasterization.frontFace)
+              .setDepthBiasEnable(desc.rasterization.depthBiasEnable)
+              .setDepthBiasConstantFactor(desc.rasterization.depthBiasConstantFactor)
+              .setDepthBiasClamp(desc.rasterization.depthBiasClamp)
+              .setDepthBiasSlopeFactor(desc.rasterization.depthBiasSlopeFactor);
+
+    auto multisampleInfo
+        = vk::PipelineMultisampleStateCreateInfo{}
+              .setSampleShadingEnable(desc.multisample.sampleShadingEnable)
+              .setRasterizationSamples(desc.multisample.rasterizationSamples)
+              .setMinSampleShading(desc.multisample.minSampleShading)
+              .setPSampleMask(nullptr)
+              .setAlphaToCoverageEnable(desc.multisample.alphaToCoverageEnable)
+              .setAlphaToOneEnable(desc.multisample.alphaToOneEnable);
+
+    auto depthStencilInfo
+        = vk::PipelineDepthStencilStateCreateInfo{}
+              .setDepthTestEnable(desc.depthStencil.depthTestEnable)
+              .setDepthWriteEnable(desc.depthStencil.depthWriteEnable)
+              .setDepthCompareOp(desc.depthStencil.depthCompareOp)
+              .setDepthBoundsTestEnable(desc.depthStencil.depthBoundsTestEnable)
+              .setStencilTestEnable(desc.depthStencil.stencilTestEnable)
+              .setFront(desc.depthStencil.front)
+              .setBack(desc.depthStencil.back)
+              .setMinDepthBounds(desc.depthStencil.minDepthBounds)
+              .setMaxDepthBounds(desc.depthStencil.maxDepthBounds);
+
+    auto colorBlendInfo
+        = vk::PipelineColorBlendStateCreateInfo{}
+              .setLogicOpEnable(desc.colorBlend.logicOpEnable)
+              .setLogicOp(desc.colorBlend.logicOp)
+              .setAttachmentCount(static_cast<u32>(desc.colorBlend.attachments.size()))
+              .setPAttachments(desc.colorBlend.attachments.data())
+              .setBlendConstants(desc.colorBlend.blendConstants);
+
+    vk::PipelineDynamicStateCreateInfo dynamicStateInfo{};
+    if (!desc.dynamicState.states.empty()) {
+      dynamicStateInfo.setDynamicStateCount(static_cast<u32>(desc.dynamicState.states.size()))
+          .setPDynamicStates(desc.dynamicState.states.data());
+    }
+
+    vk::GraphicsPipelineCreateInfo pipelineInfo{};
+    pipelineInfo.setStageCount(static_cast<u32>(stages.size()))
+        .setPStages(stages.data())
+        .setPVertexInputState(&vertexInputInfo)
+        .setPInputAssemblyState(&inputAssemblyInfo)
+        .setPTessellationState(nullptr)
+        .setPViewportState(&viewportInfo)
+        .setPRasterizationState(&rasterizationInfo)
+        .setPMultisampleState(&multisampleInfo)
+        .setPDepthStencilState(&depthStencilInfo)
+        .setPColorBlendState(&colorBlendInfo)
+        .setPDynamicState(desc.dynamicState.states.empty() ? nullptr : &dynamicStateInfo)
+        .setLayout(ret.layout)
+        .setRenderPass(renderPass)
+        .setSubpass(desc.subpass)
+        .setBasePipelineHandle(VK_NULL_HANDLE)
+        .setBasePipelineIndex(-1);
+
+    if (device.createGraphicsPipelines(VK_NULL_HANDLE, (u32)1, &pipelineInfo, nullptr,
+                                       &ret.pipeline, dispatcher)
+        != vk::Result::eSuccess)
+      throw std::runtime_error("failed to create graphics pipeline");
+
+    return ret;
+  }
+  Pipeline VulkanContext::createGraphicsPipeline(
+      const GraphicsPipelineDesc& desc, vk::RenderPass renderPass,
+      const std::vector<ShaderModule>& shaderModules) {
+    if (shaderModules.empty())
+      throw std::runtime_error("graphics pipeline creation requires shader modules");
+
+    // Merge descriptor set layouts from all shader modules
+    std::map<u32, vk::DescriptorSetLayout> mergedSetLayoutMap;
+    for (const auto& sm : shaderModules) {
+      for (const auto& [setNo, layout] : sm.layouts()) {
+        mergedSetLayoutMap[setNo] = layout;
+      }
+    }
+    u32 nSets = mergedSetLayoutMap.empty() ? 0 : (mergedSetLayoutMap.rbegin()->first + 1);
+    std::vector<vk::DescriptorSetLayout> setLayouts(nSets, VK_NULL_HANDLE);
+    std::vector<vk::DescriptorSetLayout> emptyLayouts;
+    for (const auto& [setNo, layout] : mergedSetLayoutMap) {
+      setLayouts[setNo] = layout;
+    }
+    // Fill gaps with empty descriptor set layouts for non-consecutive set numbers
+    for (u32 i = 0; i < nSets; ++i) {
+      if (setLayouts[i] == VK_NULL_HANDLE) {
+        auto emptyLayout = device.createDescriptorSetLayout(
+            vk::DescriptorSetLayoutCreateInfo{}, nullptr, dispatcher);
+        emptyLayouts.push_back(emptyLayout);
+        setLayouts[i] = emptyLayout;
+      }
+    }
+
+    auto result = createGraphicsPipeline(desc, renderPass, setLayouts);
+
+    // Clean up temporary empty layouts
+    for (auto layout : emptyLayouts) {
+      device.destroyDescriptorSetLayout(layout, nullptr, dispatcher);
+    }
+
+    return result;
+  }
+  ImageSampler VulkanContext::createSampler(const SamplerDesc& desc, const source_location& loc) {
+    return createSampler(desc.samplerCI, loc);
   }
 
   buffer_handle_t VulkanContext::registerBuffer(const Buffer& buffer) {
@@ -873,6 +1057,9 @@ namespace zs {
 #endif
 
     return buffer;
+  }
+  Buffer VulkanContext::createBuffer(const BufferDesc& desc, const source_location& loc) {
+    return createBuffer(desc.size, desc.usage, desc.memoryProperties, loc);
   }
   Buffer VulkanContext::createStagingBuffer(vk::DeviceSize size, vk::BufferUsageFlags usage,
                                             const source_location& loc) {
@@ -1004,6 +1191,9 @@ namespace zs {
     }
 
     return image;
+  }
+  Image VulkanContext::createImage(const ImageDesc& desc, const source_location& loc) {
+    return createImage(desc.imageCI, desc.memoryProperties, desc.createView, loc);
   }
   Image VulkanContext::create2DImage(const vk::Extent2D& dim, vk::Format format,
                                      vk::ImageUsageFlags usage, vk::MemoryPropertyFlags props,
@@ -1210,6 +1400,52 @@ namespace zs {
                      .setDescriptorCount((u32)1)
                      .setPBufferInfo(&bufferInfo);
     device.updateDescriptorSets(1, &write, 0, nullptr, dispatcher);
+  }
+
+  vk::PipelineLayout VulkanContext::createPipelineLayout(
+      const PipelineLayoutDesc& desc, const std::vector<vk::DescriptorSetLayout>& setLayouts) {
+    vk::PipelineLayoutCreateInfo layoutCI{};
+    if (!setLayouts.empty())
+      layoutCI.setSetLayoutCount(static_cast<u32>(setLayouts.size()))
+          .setPSetLayouts(setLayouts.data());
+    if (!desc.pushConstantRanges.empty())
+      layoutCI.setPushConstantRangeCount(static_cast<u32>(desc.pushConstantRanges.size()))
+          .setPPushConstantRanges(desc.pushConstantRanges.data());
+    return device.createPipelineLayout(layoutCI, nullptr, dispatcher);
+  }
+
+  Pipeline VulkanContext::createComputePipeline(const ComputePipelineDesc& desc) {
+    if (desc.shader == nullptr)
+      throw std::runtime_error("compute pipeline creation requires a valid shader module");
+    if (desc.pipelineLayout == VK_NULL_HANDLE) {
+      return Pipeline{*desc.shader, desc.pushConstantSize};
+    }
+
+    Pipeline ret{*this};
+    ret.layout = desc.pipelineLayout;
+
+    auto shaderStage = vk::PipelineShaderStageCreateInfo{}
+                           .setStage(desc.shader->getStage())
+                           .setModule(*desc.shader)
+                           .setPName("main");
+    auto pipelineInfo
+        = vk::ComputePipelineCreateInfo{}.setStage(shaderStage).setLayout(ret.layout);
+
+    if (device.createComputePipelines(VK_NULL_HANDLE, (u32)1, &pipelineInfo, nullptr,
+                                      &ret.pipeline, dispatcher)
+        != vk::Result::eSuccess)
+      throw std::runtime_error("failed to create compute pipeline");
+    return ret;
+  }
+
+  VkTexture VulkanContext::createTexture(const TextureDesc& desc, const source_location& loc) {
+    VkTexture tex{};
+    tex.image = createImage(desc.image, loc);
+    auto sampler = createSampler(desc.samplerCI, loc);
+    tex.sampler = sampler.get();
+    tex.imageLayout = desc.imageLayout;
+    sampler.sampler = VK_NULL_HANDLE;
+    return tex;
   }
   void VulkanContext::writeDescriptorSet(const vk::DescriptorImageInfo& imageInfo,
                                          vk::DescriptorSet dstSet, vk::DescriptorType type,

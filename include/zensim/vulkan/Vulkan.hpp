@@ -17,6 +17,7 @@
 #include "zensim/vulkan/VkShader.hpp"
 #include "zensim/vulkan/VkSwapchain.hpp"
 #include "zensim/vulkan/VkTexture.hpp"
+#include "zensim/vulkan/VkTransientResource.hpp"
 //
 #include "zensim/ZpcFunction.hpp"
 #include "zensim/container/Callables.hpp"

@@ -115,7 +115,7 @@ namespace zs {
       o.event = VK_NULL_HANDLE;
     }
 
-    DeviceEvent& operator=(DeviceEvent&& o) noexcept {
+    DeviceEvent& operator=(DeviceEvent&& o) {
       if (this != &o) {
         if (&ctx != &o.ctx)
           throw std::runtime_error("unable to move-assign device event due to ctx mismatch");
@@ -190,7 +190,7 @@ namespace zs {
       o.event = VK_NULL_HANDLE;
     }
 
-    HostEvent& operator=(HostEvent&& o) noexcept {
+    HostEvent& operator=(HostEvent&& o) {
       if (this != &o) {
         if (&ctx != &o.ctx)
           throw std::runtime_error("unable to move-assign host event due to ctx mismatch");
@@ -274,7 +274,7 @@ namespace zs {
       o.semaphore = VK_NULL_HANDLE;
     }
 
-    BinarySemaphore& operator=(BinarySemaphore&& o) noexcept {
+    BinarySemaphore& operator=(BinarySemaphore&& o) {
       if (this != &o) {
         if (&ctx != &o.ctx)
           throw std::runtime_error("unable to move-assign vk semaphore due to ctx mismatch");
@@ -332,7 +332,7 @@ namespace zs {
       o.currentValue = 0;
     }
 
-    TimelineSemaphore& operator=(TimelineSemaphore&& o) noexcept {
+    TimelineSemaphore& operator=(TimelineSemaphore&& o) {
       if (this != &o) {
         if (&ctx != &o.ctx)
           throw std::runtime_error(
@@ -475,7 +475,7 @@ namespace zs {
       o.submitted = true;  // Prevent double submission
     }
 
-    SingleUseCommandBuffer& operator=(SingleUseCommandBuffer&& o) noexcept {
+    SingleUseCommandBuffer& operator=(SingleUseCommandBuffer&& o) {
       if (this != &o) {
         if (&ctx != &o.ctx)
           throw std::runtime_error(
@@ -620,7 +620,7 @@ namespace zs {
       o.ended = false;
     }
 
-    StaticCommandBuffer& operator=(StaticCommandBuffer&& o) noexcept {
+    StaticCommandBuffer& operator=(StaticCommandBuffer&& o) {
       if (this != &o) {
         if (&ctx != &o.ctx)
           throw std::runtime_error(
@@ -776,7 +776,7 @@ namespace zs {
       o.recording = false;
     }
 
-    ResetCommandBuffer& operator=(ResetCommandBuffer&& o) noexcept {
+    ResetCommandBuffer& operator=(ResetCommandBuffer&& o) {
       if (this != &o) {
         if (&ctx != &o.ctx)
           throw std::runtime_error(

@@ -6,6 +6,7 @@
 namespace zs {
 
   enum attachment_category_e { color = 0, depth_stencil, input, preserve };
+
   struct ZPC_CORE_API AttachmentDesc {
     AttachmentDesc(vk::Format format, vk::ImageLayout initialLayout, vk::ImageLayout finalLayout)
         : format{format}, initialLayout{initialLayout}, finalLayout{finalLayout} {}
@@ -107,6 +108,12 @@ namespace zs {
     }
   };
 
+  struct ZPC_CORE_API RenderPassDesc {
+    std::vector<AttachmentDesc> attachments{};
+    std::vector<SubpassDesc> subpasses{};
+    std::vector<vk::SubpassDependency2> dependencies{};
+  };
+
   /// @note https://www.khronos.org/blog/streamlining-render-passes
   struct ZPC_CORE_API RenderPass {
     RenderPass(VulkanContext& ctx)
@@ -138,12 +145,11 @@ namespace zs {
 
   struct ZPC_CORE_API RenderPassBuilder {
     RenderPassBuilder(VulkanContext& ctx) noexcept
-        : ctx{ctx}, _attachments{}, _subpassCount{1}, _subpasses{}, _subpassDependencies{} {}
+        : ctx{ctx}, _desc{}, _subpassCount{1} {}
     ~RenderPassBuilder() = default;
 
     RenderPassBuilder& addAttachment(const AttachmentDesc& desc) {
-      // could check [desc] validity here
-      _attachments.push_back(desc);
+      _desc.attachments.push_back(desc);
       return *this;
     }
     RenderPassBuilder& addAttachment(vk::Format format = vk::Format::eR8G8B8A8Unorm,
@@ -186,12 +192,12 @@ namespace zs {
       sd.depthStencilRef = depthStencilRef;
       sd.colorResolveRefs = colorResolveRange;
       sd.depthStencilResolveRef = depthStencilResolveRef;
-      _subpasses.push_back(sd);
+      _desc.subpasses.push_back(sd);
       return *this;
     }
     RenderPassBuilder& setSubpassDependencies(
         const std::vector<vk::SubpassDependency2>& subpassDependencies) {
-      _subpassDependencies = subpassDependencies;
+      _desc.dependencies = subpassDependencies;
       return *this;
     }
     RenderPassBuilder& setNumPasses(u32 cnt) {
@@ -201,7 +207,7 @@ namespace zs {
 
     RenderPass build() const {
       RenderPass ret{ctx};
-      const u32 num = _attachments.size();
+      const u32 num = _desc.attachments.size();
       std::vector<vk::AttachmentDescription2> attachments;
       attachments.reserve(num);
 
@@ -212,10 +218,10 @@ namespace zs {
       colorRefs.reserve(num);
       depthRefs.reserve(2);  // at most 2
 
-      bool autoBuildRefs = _subpassDependencies.size() == 0 && _subpasses.size() == 0;
+      bool autoBuildRefs = _desc.dependencies.size() == 0 && _desc.subpasses.size() == 0;
       SubpassDesc autoSubpassDesc;
-      for (int i = 0; i != _attachments.size(); ++i) {
-        const auto& attachmentDesc = _attachments[i];
+      for (int i = 0; i != _desc.attachments.size(); ++i) {
+        const auto& attachmentDesc = _desc.attachments[i];
         //
         attachments.push_back(vk::AttachmentDescription2{}
                                   .setFormat(attachmentDesc.format)
@@ -304,9 +310,9 @@ namespace zs {
 
         ret.subpasses = std::vector<SubpassDesc>(_subpassCount, autoSubpassDesc);
       } else {
-        std::vector<vk::SubpassDescription2> subpasses(_subpasses.size());
+        std::vector<vk::SubpassDescription2> subpasses(_desc.subpasses.size());
         for (u32 i = 0; i < subpasses.size(); i++)
-          subpasses[i] = _subpasses[i].resolve(attachments);
+          subpasses[i] = _desc.subpasses[i].resolve(attachments);
 
         ret.renderpass
             = ctx.device.createRenderPass2(vk::RenderPassCreateInfo2{}
@@ -314,14 +320,14 @@ namespace zs {
                                                .setPAttachments(attachments.data())
                                                .setSubpassCount(subpasses.size())
                                                .setPSubpasses(subpasses.data())
-                                               .setDependencyCount(_subpassDependencies.size())
-                                               .setPDependencies(_subpassDependencies.data()),
+                                               .setDependencyCount(_desc.dependencies.size())
+                                               .setPDependencies(_desc.dependencies.data()),
                                            nullptr, ctx.dispatcher);
 
-        ret.subpasses = _subpasses;
+        ret.subpasses = _desc.subpasses;
       }
 
-      ret.attachments = _attachments;
+      ret.attachments = _desc.attachments;
 
       return ret;
     }
@@ -329,12 +335,7 @@ namespace zs {
   private:
     VulkanContext& ctx;
 
-    std::vector<AttachmentDesc> _attachments;
-
-    // a
-    std::vector<SubpassDesc> _subpasses;
-    std::vector<vk::SubpassDependency2> _subpassDependencies;
-    // b
+    RenderPassDesc _desc;
     u32 _subpassCount;
   };
 

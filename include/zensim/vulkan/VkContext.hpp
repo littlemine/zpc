@@ -29,16 +29,20 @@ namespace zs {
   struct Framebuffer;
   struct RenderPass;
   struct RenderPassBuilder;
+  struct RenderPassDesc;
   struct Swapchain;
   struct SwapchainBuilder;
   struct ShaderModule;
   struct Pipeline;
   struct PipelineBuilder;
+  struct GraphicsPipelineDesc;
   struct DescriptorSetLayoutBuilder;
   struct DescriptorPool;
   struct ExecutionContext;
   struct VkTexture;
   struct QueryPool;
+  struct TransientBufferDesc;
+  struct TransientImageDesc;
 
   struct Vulkan;
 
@@ -289,6 +293,7 @@ namespace zs {
     SwapchainBuilder &swapchain(vk::SurfaceKHR surface = VK_NULL_HANDLE, bool reset = false);
     PipelineBuilder pipeline();
     RenderPassBuilder renderpass();
+    RenderPass createRenderPass(const RenderPassDesc &desc);
     DescriptorSetLayoutBuilder setlayout();
     ExecutionContext &env();  // thread-safe
 
@@ -302,8 +307,48 @@ namespace zs {
     buffer_handle_t registerBuffer(const Buffer &buffer);
 
     /// @note buffer
+    struct BufferDesc {
+      vk::DeviceSize size{0};
+      vk::BufferUsageFlags usage{};
+      vk::MemoryPropertyFlags memoryProperties{vk::MemoryPropertyFlagBits::eDeviceLocal};
+    };
+
+    struct ImageDesc {
+      vk::ImageCreateInfo imageCI{};
+      vk::MemoryPropertyFlags memoryProperties{vk::MemoryPropertyFlagBits::eDeviceLocal};
+      bool createView{true};
+    };
+
+    struct SamplerDesc {
+      vk::SamplerCreateInfo samplerCI{};
+    };
+
+    struct ShaderModuleDesc {
+      const u32 *spirvCode{nullptr};
+      size_t size{0};
+      vk::ShaderStageFlagBits stageFlag{};
+    };
+
+    struct PipelineLayoutDesc {
+      std::vector<vk::PushConstantRange> pushConstantRanges{};
+    };
+
+    struct ComputePipelineDesc {
+      const ShaderModule *shader{nullptr};
+      vk::PipelineLayout pipelineLayout{VK_NULL_HANDLE};
+      u32 pushConstantSize{0};
+    };
+
+    struct TextureDesc {
+      ImageDesc image{};
+      vk::SamplerCreateInfo samplerCI{};
+      vk::ImageLayout imageLayout{vk::ImageLayout::eShaderReadOnlyOptimal};
+    };
+
     Buffer createBuffer(vk::DeviceSize size, vk::BufferUsageFlags usage,
                         vk::MemoryPropertyFlags props = vk::MemoryPropertyFlagBits::eDeviceLocal,
+                        const source_location &loc = source_location::current());
+    Buffer createBuffer(const BufferDesc &desc,
                         const source_location &loc = source_location::current());
     Buffer createStagingBuffer(vk::DeviceSize size,
                                vk::BufferUsageFlags usage = vk::BufferUsageFlagBits::eTransferSrc,
@@ -312,12 +357,15 @@ namespace zs {
     /// @note image/ sampler/ texture
     ImageSampler createSampler(const vk::SamplerCreateInfo &,
                                const source_location &loc = source_location::current());
+    ImageSampler createSampler(const SamplerDesc &desc,
+                               const source_location &loc = source_location::current());
     ImageSampler createDefaultSampler(const source_location &loc = source_location::current());
 
     Image createImage(vk::ImageCreateInfo imageCI,
                       vk::MemoryPropertyFlags props = vk::MemoryPropertyFlagBits::eDeviceLocal,
                       bool createView = true,
                       const source_location &loc = source_location::current());
+    Image createImage(const ImageDesc &desc, const source_location &loc = source_location::current());
     Image create2DImage(const vk::Extent2D &dim, vk::Format format = vk::Format::eR8G8B8A8Unorm,
                         vk::ImageUsageFlags usage = vk::ImageUsageFlagBits::eSampled,
                         vk::MemoryPropertyFlags props = vk::MemoryPropertyFlagBits::eDeviceLocal,
@@ -371,6 +419,7 @@ namespace zs {
                                     vk::ShaderStageFlagBits stageFlag);
     ShaderModule createShaderModule(const u32 *spirvCode, size_t size,
                                     vk::ShaderStageFlagBits stageFlag);
+    ShaderModule createShaderModule(const ShaderModuleDesc &desc);
     ShaderModule createShaderModuleFromGlsl(const char *glslCode, vk::ShaderStageFlagBits stageFlag,
                                             std::string_view moduleName);
     std::vector<u32> compileHlslToSpirv(const char *hlslCode, vk::ShaderStageFlagBits stage,
@@ -378,6 +427,17 @@ namespace zs {
     ShaderModule createShaderModuleFromHlsl(const char *hlslCode, vk::ShaderStageFlagBits stageFlag,
                                             std::string_view moduleName,
                                             std::string_view entryPoint = "main");
+
+    vk::PipelineLayout createPipelineLayout(
+        const PipelineLayoutDesc &desc,
+        const std::vector<vk::DescriptorSetLayout> &setLayouts = {});
+    Pipeline createComputePipeline(const ComputePipelineDesc &desc);
+    Pipeline createGraphicsPipeline(const GraphicsPipelineDesc &desc, vk::RenderPass renderPass,
+                                    const std::vector<vk::DescriptorSetLayout> &setLayouts = {});
+    Pipeline createGraphicsPipeline(const GraphicsPipelineDesc &desc, vk::RenderPass renderPass,
+                                    const std::vector<ShaderModule> &shaderModules);
+    VkTexture createTexture(const TextureDesc &desc,
+                            const source_location &loc = source_location::current());
 
     int devid;
     vk::PhysicalDevice physicalDevice;

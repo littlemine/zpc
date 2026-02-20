@@ -36,7 +36,7 @@ namespace zs {
           frameIndex(std::exchange(o.frameIndex, -1)) {
     }
     ~Swapchain() {
-      ctx.device.waitIdle(ctx.dispatcher);
+      (void)ctx.device.waitIdle(ctx.dispatcher);
       // cleanup buffers
       for (const auto &f : submitFences) ctx.device.destroyFence(f, nullptr, ctx.dispatcher);
       for (const auto &s : imageAcquiredSemaphores)
@@ -149,7 +149,7 @@ namespace zs {
     std::vector<vk::Fence> fencePool;
     void recycleFence(vk::Fence fence) {
       fencePool.push_back(fence);
-      ctx.device.resetFences(1, &fence, ctx.dispatcher);
+      (void)ctx.device.resetFences(1, &fence, ctx.dispatcher);
     }
     vk::Fence getFence() {
       if (!fencePool.empty()) {

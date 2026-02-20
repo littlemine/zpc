@@ -259,7 +259,8 @@ namespace zs {
       imgvs.push_back((vk::ImageView)swapchainObjects.imageViews[i]);
       if (enableDepth) imgvs.push_back((vk::ImageView)swapchainObjects.depthBuffers[i]);
 
-      swapchainObjects.frameBuffers.emplace_back(ctx.createFramebuffer(imgvs, ci.imageExtent, renderPass));
+      swapchainObjects.frameBuffers.emplace_back(
+          ctx.createFramebuffer(imgvs, ci.imageExtent, renderPass));
     }
   }
 

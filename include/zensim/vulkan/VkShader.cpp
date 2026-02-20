@@ -277,6 +277,9 @@ namespace zs {
     ret.initializeInputAttributes();
     return ret;
   }
+  ShaderModule VulkanContext::createShaderModule(const ShaderModuleDesc &desc) {
+    return createShaderModule(desc.spirvCode, desc.size, desc.stageFlag);
+  }
   ShaderModule VulkanContext::createShaderModuleFromGlsl(const char *glslCode,
                                                          vk::ShaderStageFlagBits stage,
                                                          std::string_view moduleName) {
@@ -623,7 +626,9 @@ namespace zs {
                                                          std::string_view moduleName,
                                                          std::string_view entryPoint) {
     std::vector<u32> spirv = compileHlslToSpirv(hlslCode, stage, moduleName, entryPoint);
-    return createShaderModule(spirv.data(), spirv.size(), stage);
+    auto ret = createShaderModule(spirv.data(), spirv.size(), stage);
+    ret.setEntryPoint(std::string(entryPoint));
+    return ret;
   }
 
 }  // namespace zs

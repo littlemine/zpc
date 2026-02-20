@@ -113,7 +113,7 @@ namespace zs {
     
     ImageView(ImageView &&o) noexcept : ctx{o.ctx}, imgv{o.imgv} { o.imgv = VK_NULL_HANDLE; }
     
-    ImageView &operator=(ImageView &&o) noexcept {
+    ImageView &operator=(ImageView &&o) {
       if (this != &o) {
         if (&ctx != &o.ctx)
           throw std::runtime_error("unable to move-assign vk image view due to ctx mismatch");
@@ -167,7 +167,7 @@ namespace zs {
       o.sampler = VK_NULL_HANDLE;
     }
     
-    ImageSampler &operator=(ImageSampler &&o) noexcept {
+    ImageSampler &operator=(ImageSampler &&o) {
       if (this != &o) {
         if (&ctx != &o.ctx) 
           throw std::runtime_error("unable to move-assign vk sampler due to ctx mismatch");
@@ -231,7 +231,7 @@ namespace zs {
       o.framebuffer = VK_NULL_HANDLE;
     }
     
-    Framebuffer &operator=(Framebuffer &&o) noexcept {
+    Framebuffer &operator=(Framebuffer &&o) {
       if (this != &o) {
         if (&ctx != &o.ctx)
           throw std::runtime_error("unable to move-assign vk framebuffer due to ctx mismatch");
