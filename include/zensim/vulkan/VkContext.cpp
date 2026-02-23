@@ -772,7 +772,8 @@ namespace zs {
 
   Pipeline VulkanContext::createGraphicsPipeline(
       const GraphicsPipelineDesc& desc, vk::RenderPass renderPass,
-      const std::vector<vk::DescriptorSetLayout>& setLayouts) {
+      const std::vector<vk::DescriptorSetLayout>& setLayouts,
+      vk::PipelineCache pipelineCache) {
     if (desc.shaderStages.empty())
       throw std::runtime_error("graphics pipeline creation requires shader stages");
     if (renderPass == VK_NULL_HANDLE)
@@ -893,8 +894,8 @@ namespace zs {
         .setBasePipelineHandle(VK_NULL_HANDLE)
         .setBasePipelineIndex(-1);
 
-    if (device.createGraphicsPipelines(VK_NULL_HANDLE, (u32)1, &pipelineInfo, nullptr,
-                                       &ret.pipeline, dispatcher)
+    if (device.createGraphicsPipelines(pipelineCache, (u32)1, &pipelineInfo, nullptr,
+                                        &ret.pipeline, dispatcher)
         != vk::Result::eSuccess)
       throw std::runtime_error("failed to create graphics pipeline");
 
@@ -902,7 +903,8 @@ namespace zs {
   }
   Pipeline VulkanContext::createGraphicsPipeline(
       const GraphicsPipelineDesc& desc, vk::RenderPass renderPass,
-      const std::vector<ShaderModule>& shaderModules) {
+      const std::vector<ShaderModule>& shaderModules,
+      vk::PipelineCache pipelineCache) {
     if (shaderModules.empty())
       throw std::runtime_error("graphics pipeline creation requires shader modules");
 
@@ -929,7 +931,7 @@ namespace zs {
       }
     }
 
-    auto result = createGraphicsPipeline(desc, renderPass, setLayouts);
+    auto result = createGraphicsPipeline(desc, renderPass, setLayouts, pipelineCache);
 
     // Clean up temporary empty layouts
     for (auto layout : emptyLayouts) {

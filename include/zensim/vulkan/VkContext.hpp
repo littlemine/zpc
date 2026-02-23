@@ -420,6 +420,8 @@ namespace zs {
     ShaderModule createShaderModule(const u32 *spirvCode, size_t size,
                                     vk::ShaderStageFlagBits stageFlag);
     ShaderModule createShaderModule(const ShaderModuleDesc &desc);
+    std::vector<u32> compileGlslToSpirv(const char *glslCode, vk::ShaderStageFlagBits stage,
+                                        std::string_view moduleName);
     ShaderModule createShaderModuleFromGlsl(const char *glslCode, vk::ShaderStageFlagBits stageFlag,
                                             std::string_view moduleName);
     std::vector<u32> compileHlslToSpirv(const char *hlslCode, vk::ShaderStageFlagBits stage,
@@ -433,9 +435,11 @@ namespace zs {
         const std::vector<vk::DescriptorSetLayout> &setLayouts = {});
     Pipeline createComputePipeline(const ComputePipelineDesc &desc);
     Pipeline createGraphicsPipeline(const GraphicsPipelineDesc &desc, vk::RenderPass renderPass,
-                                    const std::vector<vk::DescriptorSetLayout> &setLayouts = {});
+                                    const std::vector<vk::DescriptorSetLayout> &setLayouts = {},
+                                    vk::PipelineCache pipelineCache = VK_NULL_HANDLE);
     Pipeline createGraphicsPipeline(const GraphicsPipelineDesc &desc, vk::RenderPass renderPass,
-                                    const std::vector<ShaderModule> &shaderModules);
+                                    const std::vector<ShaderModule> &shaderModules,
+                                    vk::PipelineCache pipelineCache = VK_NULL_HANDLE);
     VkTexture createTexture(const TextureDesc &desc,
                             const source_location &loc = source_location::current());
 

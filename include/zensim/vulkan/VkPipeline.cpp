@@ -114,7 +114,7 @@ namespace zs {
     _desc = GraphicsPipelineDesc::defaultPipelineDesc();
   }
 
-  Pipeline PipelineBuilder::build() {
+  Pipeline PipelineBuilder::build(vk::PipelineCache pipelineCache) {
     Pipeline ret{ctx};
 
     if (shaders.size() < 2) {
@@ -303,8 +303,8 @@ namespace zs {
                                                        /*basePipelineHandle*/ VK_NULL_HANDLE,
                                                        /*basePipelineIndex*/ -1};
 
-    if (ctx.device.createGraphicsPipelines(VK_NULL_HANDLE, (u32)1, &pipelineInfo, nullptr,
-                                           &ret.pipeline, ctx.dispatcher)
+    if (ctx.device.createGraphicsPipelines(pipelineCache, (u32)1, &pipelineInfo, nullptr,
+                                            &ret.pipeline, ctx.dispatcher)
         != vk::Result::eSuccess)
       throw std::runtime_error("failed to create graphics pipeline");
 

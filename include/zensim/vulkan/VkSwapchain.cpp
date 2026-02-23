@@ -22,7 +22,7 @@ namespace zs {
   /// swapchain builder
   ///
   ///
-  u32 Swapchain::newFrame() noexcept {
+  u32 Swapchain::newFrame() {
     frameIndex = (frameIndex + 1) % num_buffered_frames;
     if (currentFence()) {
       if (vk::Result res = ctx.device.waitForFences(

@@ -82,6 +82,7 @@ option(ZS_ENABLE_OPENVDB "Enable openvdb-related build" ON)
 # package/shipping
 option(ZS_ENABLE_INSTALL "Install targets" OFF)
 option(ZS_ENABLE_PACKAGE "Build package" OFF)
+option(ZS_ENABLE_RENDER_GRAPH_EXAMPLES "Build render graph examples" OFF)
 
 # option(ZENSIM_CORE_SHARED "Build dynamically linked version of the core library." ON)
 # option(ZENSIM_CORE_STATIC "Build statically linked version of the core library." ON)
@@ -374,6 +375,10 @@ if(ZS_ENABLE_TEST)
   enable_testing()
   add_subdirectory(test)
 endif(ZS_ENABLE_TEST)
+
+if(ZS_ENABLE_RENDER_GRAPH_EXAMPLES)
+  add_subdirectory(ai_process)
+endif()
 
 # ---- Install ----
 # =================

@@ -92,7 +92,7 @@ namespace zs {
       return vals;
     }
 
-    u32 newFrame() noexcept;
+    u32 newFrame();
     vk::Result acquireNextImage(u32 &imageId);
     vk::Result present(vk::Queue queue, u32 imageId);
     auto getCurrentFrame() const noexcept { return frameIndex; }

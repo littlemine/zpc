@@ -280,9 +280,9 @@ namespace zs {
   ShaderModule VulkanContext::createShaderModule(const ShaderModuleDesc &desc) {
     return createShaderModule(desc.spirvCode, desc.size, desc.stageFlag);
   }
-  ShaderModule VulkanContext::createShaderModuleFromGlsl(const char *glslCode,
-                                                         vk::ShaderStageFlagBits stage,
-                                                         std::string_view moduleName) {
+  std::vector<u32> VulkanContext::compileGlslToSpirv(const char *glslCode,
+                                                     vk::ShaderStageFlagBits stage,
+                                                     std::string_view moduleName) {
     using namespace spirv_cross;
     shaderc_shader_kind shaderKind;
     switch (stage) {
@@ -358,8 +358,12 @@ namespace zs {
           fmt::format("compilation of the glsl module [{}] failed with {} errors!\n", moduleName,
                       compiled.GetNumErrors()));
     }
-    const std::vector<uint32_t> spirv(compiled.cbegin(), compiled.cend());
-    // displayLayoutInfo();
+    return std::vector<uint32_t>(compiled.cbegin(), compiled.cend());
+  }
+  ShaderModule VulkanContext::createShaderModuleFromGlsl(const char *glslCode,
+                                                         vk::ShaderStageFlagBits stage,
+                                                         std::string_view moduleName) {
+    auto spirv = compileGlslToSpirv(glslCode, stage, moduleName);
     return createShaderModule(spirv.data(), spirv.size(), stage);
   }
 

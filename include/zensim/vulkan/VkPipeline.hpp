@@ -72,6 +72,11 @@ namespace zs {
     vk::ShaderStageFlagBits stage{};
     std::vector<u32> spirv{};
     std::string entryPoint{"main"};
+    /// User-supplied key that identifies the shader source (file path, label,
+    /// source-string hash, etc.).  Not part of the pipeline identity hash
+    /// (the SPIR-V content is) but persisted for traceability and to enable
+    /// source-key-based lookups in the shader cache.
+    std::string sourceKey{};
   };
 
   struct ZPC_CORE_API GraphicsPipelineDesc {
@@ -319,7 +324,7 @@ namespace zs {
       return _desc.colorBlend.attachments[i];
     }
 
-    Pipeline build();
+    Pipeline build(vk::PipelineCache pipelineCache = VK_NULL_HANDLE);
 
   protected:
     friend struct VulkanContext;

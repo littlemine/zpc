@@ -40,8 +40,12 @@ set(ZENSIM_LIBRARY_VULKAN_SOURCE_FILES
   vulkan/VkCommand.cpp
   vulkan/VkTexture.cpp
   vulkan/VkShader.cpp
+  vulkan/VkShaderManager.cpp
   vulkan/VkSwapchain.cpp
   vulkan/VkPipeline.cpp
+  vulkan/VkPipelineSerialization.cpp
+  vulkan/VkPipelineJson.cpp
+  vulkan/VkPipelineStateManager.cpp
   vulkan/VkContext.cpp
   vulkan/VkContextQuery.cpp
   vulkan/VkDeviceConfig.cpp

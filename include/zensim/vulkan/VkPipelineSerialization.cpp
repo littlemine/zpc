@@ -4,12 +4,69 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <stdexcept>
 
 #include "zensim/io/Filesystem.hpp"
 #include "zensim/zpc_tpls/fmt/format.h"
 #include "zensim/zpc_tpls/rapidhash/rapidhash.h"
 
+// Vulkan SDK header version (compile-time constant)
+#include <vulkan/vulkan_core.h>
+
 namespace zs {
+
+  // ============================================================================
+  // DescFileHeader
+  // ============================================================================
+
+  static constexpr u32 kDescFileMagic = 0x4450535A;       // "ZSPD"
+  static constexpr u32 kDescFileFormatVersion = 1;
+  static constexpr u32 kZpcVersionEncoded =
+      (0u << 22) | (0u << 12) | 0u;  // 0.0.0 -- update when project_info.in changes
+
+  DescFileHeader current_desc_file_header() {
+    DescFileHeader h;
+    h.magic = kDescFileMagic;
+    h.formatVersion = kDescFileFormatVersion;
+    h.vkHeaderVersion = VK_HEADER_VERSION_COMPLETE;
+    h.zpcVersion = kZpcVersionEncoded;
+    return h;
+  }
+
+  void write_header(std::ostream& os, const DescFileHeader& hdr) {
+    os.write(reinterpret_cast<const char*>(&hdr), sizeof(DescFileHeader));
+  }
+
+  void read_header(std::istream& is, DescFileHeader& hdr) {
+    is.read(reinterpret_cast<char*>(&hdr), sizeof(DescFileHeader));
+  }
+
+  bool validate_header(const DescFileHeader& hdr, std::string* errMsg) {
+    if (hdr.magic != kDescFileMagic) {
+      if (errMsg) *errMsg = fmt::format("bad magic: expected 0x{:08X}, got 0x{:08X}",
+                                        kDescFileMagic, hdr.magic);
+      return false;
+    }
+    if (hdr.formatVersion != kDescFileFormatVersion) {
+      if (errMsg)
+        *errMsg = fmt::format("format version mismatch: expected {}, got {}",
+                              kDescFileFormatVersion, hdr.formatVersion);
+      return false;
+    }
+    if (hdr.vkHeaderVersion != VK_HEADER_VERSION_COMPLETE) {
+      if (errMsg)
+        *errMsg = fmt::format("Vulkan header version mismatch: expected 0x{:08X}, got 0x{:08X}",
+                              static_cast<u32>(VK_HEADER_VERSION_COMPLETE), hdr.vkHeaderVersion);
+      return false;
+    }
+    if (hdr.zpcVersion != kZpcVersionEncoded) {
+      if (errMsg)
+        *errMsg = fmt::format("zpc version mismatch: expected 0x{:08X}, got 0x{:08X}",
+                              kZpcVersionEncoded, hdr.zpcVersion);
+      return false;
+    }
+    return true;
+  }
 
   // ============================================================================
   // Helpers
@@ -200,11 +257,13 @@ namespace zs {
     write_pod(os, desc.stage);
     write_pod_vector(os, desc.spirv);
     write_string(os, desc.entryPoint);
+    write_string(os, desc.sourceKey);
   }
   void read_desc(std::istream& is, ShaderStageDesc& desc) {
     read_pod(is, desc.stage);
     read_pod_vector(is, desc.spirv);
     read_string(is, desc.entryPoint);
+    read_string(is, desc.sourceKey);
   }
 
   // ============================================================================
@@ -212,6 +271,7 @@ namespace zs {
   // ============================================================================
 
   void write_desc(std::ostream& os, const GraphicsPipelineDesc& desc) {
+    write_header(os, current_desc_file_header());
     u32 numStages = static_cast<u32>(desc.shaderStages.size());
     write_pod(os, numStages);
     for (const auto& stage : desc.shaderStages) write_desc(os, stage);
@@ -229,6 +289,11 @@ namespace zs {
     write_pod(os, desc.subpass);
   }
   void read_desc(std::istream& is, GraphicsPipelineDesc& desc) {
+    DescFileHeader hdr;
+    read_header(is, hdr);
+    std::string err;
+    if (!validate_header(hdr, &err))
+      throw std::runtime_error("GraphicsPipelineDesc binary: " + err);
     u32 numStages = 0;
     read_pod(is, numStages);
     desc.shaderStages.resize(numStages);
@@ -252,11 +317,17 @@ namespace zs {
   // ============================================================================
 
   void write_desc(std::ostream& os, const TransientBufferDesc& desc) {
+    write_header(os, current_desc_file_header());
     write_pod(os, desc.size);
     write_pod(os, desc.usage);
     write_pod(os, desc.memoryProperties);
   }
   void read_desc(std::istream& is, TransientBufferDesc& desc) {
+    DescFileHeader hdr;
+    read_header(is, hdr);
+    std::string err;
+    if (!validate_header(hdr, &err))
+      throw std::runtime_error("TransientBufferDesc binary: " + err);
     read_pod(is, desc.size);
     read_pod(is, desc.usage);
     read_pod(is, desc.memoryProperties);
@@ -267,6 +338,7 @@ namespace zs {
   // ============================================================================
 
   void write_desc(std::ostream& os, const TransientImageDesc& desc) {
+    write_header(os, current_desc_file_header());
     write_pod(os, desc.extent);
     write_pod(os, desc.format);
     write_pod(os, desc.usage);
@@ -277,6 +349,11 @@ namespace zs {
     write_pod(os, desc.memoryProperties);
   }
   void read_desc(std::istream& is, TransientImageDesc& desc) {
+    DescFileHeader hdr;
+    read_header(is, hdr);
+    std::string err;
+    if (!validate_header(hdr, &err))
+      throw std::runtime_error("TransientImageDesc binary: " + err);
     read_pod(is, desc.extent);
     read_pod(is, desc.format);
     read_pod(is, desc.usage);
@@ -482,6 +559,172 @@ namespace zs {
   TempFileManager& default_temp_file_manager() {
     static TempFileManager instance{};
     return instance;
+  }
+
+  // ============================================================================
+  // DescriptorCache
+  // ============================================================================
+
+  DescriptorCache::DescriptorCache(TempFileManager& tfm, std::string appTag)
+      : _tfm{&tfm} {
+    if (appTag.empty()) {
+      auto path = abs_exe_path();
+      auto h = rapidhash(path.data(), path.size());
+      _subdir = fmt::format("app_{:016x}", h);
+    } else {
+      _subdir = std::move(appTag);
+    }
+    _tfm->ensureSubdirectoryExists(_subdir);
+  }
+
+  std::string DescriptorCache::binaryPath(uint64_t key) const {
+    return _tfm->resolve(fmt::format("{}/pso_{:016x}.bin", _subdir, key));
+  }
+
+  std::string DescriptorCache::jsonPath(uint64_t key) const {
+    return _tfm->resolve(fmt::format("{}/pso_{:016x}.json", _subdir, key));
+  }
+
+  bool DescriptorCache::load(uint64_t key, GraphicsPipelineDesc& desc) const {
+    // try binary first
+    {
+      auto path = binaryPath(key);
+      std::ifstream ifs(path, std::ios::binary);
+      if (ifs.good()) {
+        try {
+          read_desc(ifs, desc);
+          if (hash_desc(desc) == key) return true;
+        } catch (...) { /* fall through to JSON */ }
+      }
+    }
+    // try JSON fallback
+    {
+      auto path = jsonPath(key);
+      std::ifstream ifs(path);
+      if (ifs.good()) {
+        try {
+          read_json(ifs, desc);
+          if (hash_desc(desc) == key) return true;
+        } catch (...) { /* cache miss */ }
+      }
+    }
+    return false;
+  }
+
+  void DescriptorCache::save(uint64_t key, const GraphicsPipelineDesc& desc) const {
+    _tfm->ensureSubdirectoryExists(_subdir);
+    // write binary
+    {
+      auto path = binaryPath(key);
+      std::ofstream ofs(path, std::ios::binary | std::ios::trunc);
+      if (ofs.good()) write_desc(ofs, desc);
+    }
+    // write JSON (human-readable)
+    {
+      auto path = jsonPath(key);
+      std::ofstream ofs(path, std::ios::trunc);
+      if (ofs.good()) write_json(ofs, desc);
+    }
+  }
+
+  bool DescriptorCache::exists(uint64_t key) const {
+    std::error_code ec;
+    return fs::exists(binaryPath(key), ec) || fs::exists(jsonPath(key), ec);
+  }
+
+  void DescriptorCache::remove(uint64_t key) const {
+    std::error_code ec;
+    fs::remove(binaryPath(key), ec);
+    fs::remove(jsonPath(key), ec);
+  }
+
+  void DescriptorCache::clearAll() const {
+    std::error_code ec;
+    auto dir = _tfm->resolve(_subdir);
+    if (!fs::exists(dir, ec)) return;
+    for (const auto& entry : fs::directory_iterator(dir, ec)) {
+      if (entry.is_regular_file(ec)) fs::remove(entry.path(), ec);
+    }
+  }
+
+  // ============================================================================
+  // PipelineCacheManager
+  // ============================================================================
+
+  PipelineCacheManager::PipelineCacheManager(VulkanContext& ctx, TempFileManager& tfm,
+                                             std::string appTag)
+      : _ctx{&ctx}, _tfm{&tfm}, _cache{VK_NULL_HANDLE} {
+    _tfm->ensureSubdirectoryExists(appTag);
+    _filePath = _tfm->resolve(fmt::format("{}/vk_pipeline.pso", appTag));
+
+    auto blob = loadBlob();
+    vk::PipelineCacheCreateInfo ci{};
+    if (!blob.empty()) {
+      ci.setInitialDataSize(blob.size());
+      ci.setPInitialData(blob.data());
+    }
+    _cache = _ctx->device.createPipelineCache(ci, nullptr, _ctx->dispatcher);
+  }
+
+  PipelineCacheManager::~PipelineCacheManager() {
+    if (_cache && _ctx) {
+      try {
+        save();
+      } catch (...) { /* best-effort */ }
+      _ctx->device.destroyPipelineCache(_cache, nullptr, _ctx->dispatcher);
+    }
+  }
+
+  PipelineCacheManager::PipelineCacheManager(PipelineCacheManager&& o) noexcept
+      : _ctx{o._ctx},
+        _tfm{o._tfm},
+        _filePath{std::move(o._filePath)},
+        _cache{o._cache} {
+    o._cache = VK_NULL_HANDLE;
+    o._ctx = nullptr;
+  }
+
+  PipelineCacheManager& PipelineCacheManager::operator=(PipelineCacheManager&& o) noexcept {
+    if (this != &o) {
+      if (_cache && _ctx)
+        _ctx->device.destroyPipelineCache(_cache, nullptr, _ctx->dispatcher);
+      _ctx = o._ctx;
+      _tfm = o._tfm;
+      _filePath = std::move(o._filePath);
+      _cache = o._cache;
+      o._cache = VK_NULL_HANDLE;
+      o._ctx = nullptr;
+    }
+    return *this;
+  }
+
+  std::vector<uint8_t> PipelineCacheManager::loadBlob() const {
+    std::error_code ec;
+    if (!fs::exists(_filePath, ec)) return {};
+    std::ifstream ifs(_filePath, std::ios::binary | std::ios::ate);
+    if (!ifs.good()) return {};
+    auto size = static_cast<size_t>(ifs.tellg());
+    if (size == 0) return {};
+    ifs.seekg(0);
+    std::vector<uint8_t> data(size);
+    ifs.read(reinterpret_cast<char*>(data.data()), static_cast<std::streamsize>(size));
+    return data;
+  }
+
+  void PipelineCacheManager::save() const {
+    if (!_cache || !_ctx) return;
+    size_t dataSize = 0;
+    if (_ctx->device.getPipelineCacheData(_cache, &dataSize, nullptr, _ctx->dispatcher)
+        != vk::Result::eSuccess)
+      return;
+    if (dataSize == 0) return;
+    std::vector<uint8_t> data(dataSize);
+    if (_ctx->device.getPipelineCacheData(_cache, &dataSize, data.data(), _ctx->dispatcher)
+        != vk::Result::eSuccess)
+      return;
+    std::ofstream ofs(_filePath, std::ios::binary | std::ios::trunc);
+    if (ofs.good())
+      ofs.write(reinterpret_cast<const char*>(data.data()), static_cast<std::streamsize>(dataSize));
   }
 
 }  // namespace zs
