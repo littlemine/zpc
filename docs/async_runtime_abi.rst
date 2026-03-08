@@ -47,8 +47,40 @@ The initial ABI includes:
 * submission release entry point
 * extension query entry point
 
+The first concrete in-tree adapter now also exposes a discoverable host-submit extension,
+``zpc.runtime.host_submit.v1``. That extension keeps the base engine table narrow while making the
+current host-callback submission contract explicit.
+
 This is intentionally narrow. It is enough to support runtime discovery, submission, lifecycle
 control, and future extension lookup without freezing internal C++ implementation details.
+
+Concrete Adapter
+----------------
+
+The current header now includes a first concrete bridge from the stable ABI into the in-tree
+``AsyncRuntime``.
+
+The adapter shape is:
+
+* ``make_async_runtime_abi_engine()`` creates an engine handle backed by ``AsyncRuntime``
+* ``async_runtime_abi_engine_table()`` returns the stable ``zpc_runtime_engine_v1_t`` table for
+	that engine
+* ``destroy_async_runtime_abi_engine()`` releases the engine handle
+
+Host submission is intentionally modeled as an extension rather than a base-table expansion.
+
+The ``zpc.runtime.host_submit.v1`` extension documents that:
+
+* ``zpc_runtime_submission_desc_t::reserved[0]`` carries a
+	``zpc_runtime_host_submit_payload_t`` pointer
+* the payload contains a stable C callback and opaque user-data pointer
+* the callback receives a ``zpc_runtime_host_task_context_t`` with submission id and current stop
+	state so suspend or cancellation-aware host tasks can be expressed without leaking internal C++
+	runtime types across the ABI boundary
+
+This is a pragmatic first implementation step: it exercises the stable engine boundary with a real
+runtime underneath it while keeping richer backend-native or validation transport surfaces available
+for future queried extensions.
 
 Upgrade Discipline
 ------------------
@@ -87,5 +119,6 @@ first.
 Testing
 -------
 
-``test/async_runtime_abi.cpp`` validates the version header, compatibility checks, and initial
-engine function-table contract so ABI drift is caught early in normal development.
+``test/async_runtime_abi.cpp`` now validates the version header, compatibility checks, engine
+function-table contract, host-submit extension discovery, completed host submission, and suspended
+task cancellation through the concrete ``AsyncRuntime`` adapter.

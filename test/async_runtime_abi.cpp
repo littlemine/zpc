@@ -4,39 +4,41 @@
 
 namespace {
 
-  int32_t query_engine_desc(zpc_runtime_engine_handle_t *, zpc_runtime_engine_desc_t *desc) {
-    if (!desc) return ZPC_RUNTIME_ABI_ERROR;
-    desc->header = zpc_runtime_make_header((uint32_t)sizeof(zpc_runtime_engine_desc_t));
-    desc->engine_name = {"zpc-test-engine", 15};
-    desc->build_id = {"local", 5};
-    desc->capability_mask = ZPC_RUNTIME_ABI_CAP_ASYNC_SUBMIT | ZPC_RUNTIME_ABI_CAP_HOT_UPGRADE;
-    return ZPC_RUNTIME_ABI_OK;
+  struct CountingTaskState {
+    int callCount{0};
+    uint64_t lastSubmissionId{0};
+  };
+
+  struct SuspendedTaskState {
+    int callCount{0};
+    bool sawStop{false};
+  };
+
+  zpc_runtime_host_task_result_e counting_task(void *user_data,
+                                               const zpc_runtime_host_task_context_t *context,
+                                               const zpc_runtime_submission_desc_t *desc) {
+    auto *state = static_cast<CountingTaskState *>(user_data);
+    assert(state != nullptr);
+    assert(context != nullptr);
+    assert(desc != nullptr);
+    ++state->callCount;
+    state->lastSubmissionId = context->submission_id;
+    assert(desc->priority == 7);
+    return ZPC_RUNTIME_HOST_TASK_COMPLETED;
   }
 
-  int32_t submit(zpc_runtime_engine_handle_t *, const zpc_runtime_submission_desc_t *,
-                 zpc_runtime_submission_handle_t **) {
-    return ZPC_RUNTIME_ABI_OK;
-  }
-
-  int32_t query_event(zpc_runtime_submission_handle_t *, zpc_runtime_host_event_t *eventDesc) {
-    if (!eventDesc) return ZPC_RUNTIME_ABI_ERROR;
-    eventDesc->header = zpc_runtime_make_header((uint32_t)sizeof(zpc_runtime_host_event_t));
-    eventDesc->status_code = 3;
-    eventDesc->native_signal_token = 7;
-    return ZPC_RUNTIME_ABI_OK;
-  }
-
-  int32_t cancel(zpc_runtime_submission_handle_t *) { return ZPC_RUNTIME_ABI_OK; }
-  int32_t release_submission(zpc_runtime_submission_handle_t *) { return ZPC_RUNTIME_ABI_OK; }
-  int32_t query_extension(zpc_runtime_engine_handle_t *, zpc_runtime_string_view_t,
-                          zpc_runtime_extension_desc_t *extensionDesc) {
-    if (!extensionDesc) return ZPC_RUNTIME_ABI_ERROR;
-    extensionDesc->header = zpc_runtime_make_header((uint32_t)sizeof(zpc_runtime_extension_desc_t));
-    extensionDesc->extension_name = {"ext.validation", 14};
-    extensionDesc->extension_version_major = 1;
-    extensionDesc->extension_version_minor = 0;
-    extensionDesc->function_table = nullptr;
-    return ZPC_RUNTIME_ABI_OK;
+  zpc_runtime_host_task_result_e suspending_task(void *user_data,
+                                                 const zpc_runtime_host_task_context_t *context,
+                                                 const zpc_runtime_submission_desc_t *) {
+    auto *state = static_cast<SuspendedTaskState *>(user_data);
+    assert(state != nullptr);
+    assert(context != nullptr);
+    ++state->callCount;
+    if (context->stop_requested) {
+      state->sawStop = true;
+      return ZPC_RUNTIME_HOST_TASK_CANCELLED;
+    }
+    return ZPC_RUNTIME_HOST_TASK_SUSPEND;
   }
 
 }  // namespace
@@ -59,31 +61,96 @@ int main() {
   assert(zpc_runtime_is_abi_compatible(&wrongMajor, (uint32_t)sizeof(zpc_runtime_abi_header_t))
          == ZPC_RUNTIME_ABI_INCOMPATIBLE_MAJOR);
 
-  zpc_runtime_engine_v1_t engineTable{};
-  engineTable.header = zpc_runtime_make_header((uint32_t)sizeof(zpc_runtime_engine_v1_t));
-  engineTable.query_engine_desc = &query_engine_desc;
-  engineTable.submit = &submit;
-  engineTable.query_event = &query_event;
-  engineTable.cancel = &cancel;
-  engineTable.release_submission = &release_submission;
-  engineTable.query_extension = &query_extension;
-  assert(zpc_runtime_check_engine_table(&engineTable) == ZPC_RUNTIME_ABI_OK);
+    zs::AsyncRuntimeAbiEngineConfig config{};
+    config.engineName = "zpc-test-engine";
+    config.buildId = "local";
+    auto *engine = zs::make_async_runtime_abi_engine(config);
+    assert(engine != nullptr);
 
-  zpc_runtime_engine_desc_t engineDesc{};
-  assert(engineTable.query_engine_desc(nullptr, &engineDesc) == ZPC_RUNTIME_ABI_OK);
+    const auto *engineTable = zs::async_runtime_abi_engine_table(engine);
+    assert(engineTable != nullptr);
+    assert(zpc_runtime_check_engine_table(engineTable) == ZPC_RUNTIME_ABI_OK);
+
+    zpc_runtime_engine_desc_t engineDesc{};
+    engineDesc.header = zpc_runtime_make_header((uint32_t)sizeof(zpc_runtime_engine_desc_t));
+    assert(engineTable->query_engine_desc(engine, &engineDesc) == ZPC_RUNTIME_ABI_OK);
   assert(engineDesc.engine_name.size == 15);
   assert(engineDesc.capability_mask & ZPC_RUNTIME_ABI_CAP_HOT_UPGRADE);
-
-  zpc_runtime_host_event_t eventDesc{};
-  assert(engineTable.query_event(nullptr, &eventDesc) == ZPC_RUNTIME_ABI_OK);
-  assert(eventDesc.status_code == 3);
-  assert(eventDesc.native_signal_token == 7);
+    assert(zs::zpc_runtime_string_view_equals(engineDesc.build_id, "local"));
 
   zpc_runtime_extension_desc_t extensionDesc{};
-  assert(engineTable.query_extension(nullptr, {"ext.validation", 14}, &extensionDesc)
-         == ZPC_RUNTIME_ABI_OK);
+    extensionDesc.header = zpc_runtime_make_header((uint32_t)sizeof(zpc_runtime_extension_desc_t));
+    assert(engineTable->query_extension(
+         engine, zs::zpc_runtime_make_string_view(zs::zpc_runtime_host_submit_extension_name),
+         &extensionDesc)
+       == ZPC_RUNTIME_ABI_OK);
   assert(extensionDesc.extension_version_major == 1);
   assert(extensionDesc.extension_version_minor == 0);
+    const auto *hostExtension =
+      static_cast<const zpc_runtime_host_submit_extension_v1_t *>(extensionDesc.function_table);
+    assert(hostExtension != nullptr);
+    assert(hostExtension->payload_reserved_index == zs::zpc_runtime_host_submit_payload_slot);
+
+    CountingTaskState countingState{};
+    zpc_runtime_host_submit_payload_t payload{};
+    payload.header = zpc_runtime_make_header((uint32_t)sizeof(zpc_runtime_host_submit_payload_t));
+    payload.task = &counting_task;
+    payload.user_data = &countingState;
+
+    zpc_runtime_submission_desc_t submitDesc{};
+    submitDesc.header = zpc_runtime_make_header((uint32_t)sizeof(zpc_runtime_submission_desc_t));
+    submitDesc.executor_name = zs::zpc_runtime_make_string_view("inline");
+    submitDesc.task_label = zs::zpc_runtime_make_string_view("abi-counting-task");
+    submitDesc.domain_code = static_cast<uint32_t>(zs::AsyncDomain::compute);
+    submitDesc.queue_code = static_cast<uint32_t>(zs::AsyncQueueClass::compute);
+    submitDesc.backend_code = static_cast<uint32_t>(zs::AsyncBackend::inline_host);
+    submitDesc.priority = 7;
+    submitDesc.reserved[zs::zpc_runtime_host_submit_payload_slot] =
+      reinterpret_cast<uint64_t>(&payload);
+
+    zpc_runtime_submission_handle_t *submission = nullptr;
+    assert(engineTable->submit(engine, &submitDesc, &submission) == ZPC_RUNTIME_ABI_OK);
+    assert(submission != nullptr);
+    assert(countingState.callCount == 1);
+    assert(countingState.lastSubmissionId != 0);
+
+    zpc_runtime_host_event_t eventDesc{};
+    eventDesc.header = zpc_runtime_make_header((uint32_t)sizeof(zpc_runtime_host_event_t));
+    assert(engineTable->query_event(submission, &eventDesc) == ZPC_RUNTIME_ABI_OK);
+    assert(eventDesc.status_code == static_cast<uint64_t>(zs::AsyncTaskStatus::completed));
+    assert(eventDesc.native_signal_token == countingState.lastSubmissionId);
+    assert(engineTable->release_submission(submission) == ZPC_RUNTIME_ABI_OK);
+
+    SuspendedTaskState suspendedState{};
+    zpc_runtime_host_submit_payload_t suspendedPayload{};
+    suspendedPayload.header = zpc_runtime_make_header((uint32_t)sizeof(zpc_runtime_host_submit_payload_t));
+    suspendedPayload.task = &suspending_task;
+    suspendedPayload.user_data = &suspendedState;
+
+    zpc_runtime_submission_desc_t suspendedDesc = submitDesc;
+    suspendedDesc.task_label = zs::zpc_runtime_make_string_view("abi-suspended-task");
+    suspendedDesc.reserved[zs::zpc_runtime_host_submit_payload_slot] =
+      reinterpret_cast<uint64_t>(&suspendedPayload);
+
+    zpc_runtime_submission_handle_t *suspendedSubmission = nullptr;
+    assert(engineTable->submit(engine, &suspendedDesc, &suspendedSubmission) == ZPC_RUNTIME_ABI_OK);
+    assert(suspendedSubmission != nullptr);
+    assert(suspendedState.callCount == 1);
+
+    zpc_runtime_host_event_t suspendedEvent{};
+    suspendedEvent.header = zpc_runtime_make_header((uint32_t)sizeof(zpc_runtime_host_event_t));
+    assert(engineTable->query_event(suspendedSubmission, &suspendedEvent) == ZPC_RUNTIME_ABI_OK);
+    assert(suspendedEvent.status_code == static_cast<uint64_t>(zs::AsyncTaskStatus::suspended));
+
+    assert(engineTable->cancel(suspendedSubmission) == ZPC_RUNTIME_ABI_OK);
+    suspendedEvent.header = zpc_runtime_make_header((uint32_t)sizeof(zpc_runtime_host_event_t));
+    assert(engineTable->query_event(suspendedSubmission, &suspendedEvent) == ZPC_RUNTIME_ABI_OK);
+    assert(suspendedEvent.status_code == static_cast<uint64_t>(zs::AsyncTaskStatus::cancelled));
+    assert(suspendedState.callCount == 2);
+    assert(suspendedState.sawStop);
+    assert(engineTable->release_submission(suspendedSubmission) == ZPC_RUNTIME_ABI_OK);
+
+    zs::destroy_async_runtime_abi_engine(engine);
 
   return 0;
 }
