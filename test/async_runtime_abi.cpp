@@ -14,6 +14,13 @@ namespace {
     bool sawStop{false};
   };
 
+  struct FakeNativeQueueState {
+    void *queueHandle{reinterpret_cast<void *>(static_cast<uintptr_t>(0xAAAA))};
+    void *signalHandle{reinterpret_cast<void *>(static_cast<uintptr_t>(0xBBBB))};
+    int syncCount{0};
+    int recordCount{0};
+  };
+
   zpc_runtime_host_task_result_e counting_task(void *user_data,
                                                const zpc_runtime_host_task_context_t *context,
                                                const zpc_runtime_submission_desc_t *desc) {
@@ -44,6 +51,24 @@ namespace {
   std::string string_from_view(zpc_runtime_string_view_t view) {
     if (!view.data || view.size == 0) return {};
     return std::string{view.data, view.size};
+  }
+
+  void *fake_native_queue_handle(void *binding) {
+    return static_cast<FakeNativeQueueState *>(binding)->queueHandle;
+  }
+
+  void *fake_native_signal_handle(void *binding) {
+    return static_cast<FakeNativeQueueState *>(binding)->signalHandle;
+  }
+
+  int32_t fake_native_sync(void *binding) {
+    ++static_cast<FakeNativeQueueState *>(binding)->syncCount;
+    return 1;
+  }
+
+  int32_t fake_native_record(void *binding) {
+    ++static_cast<FakeNativeQueueState *>(binding)->recordCount;
+    return 1;
   }
 
 }  // namespace
@@ -96,6 +121,17 @@ int main() {
     assert(hostExtension != nullptr);
     assert(hostExtension->payload_reserved_index == zs::zpc_runtime_host_submit_payload_slot);
 
+    zpc_runtime_extension_desc_t nativeExtensionDesc{};
+    nativeExtensionDesc.header =
+      zpc_runtime_make_header((uint32_t)sizeof(zpc_runtime_extension_desc_t));
+    assert(engineTable->query_extension(
+         engine, zs::zpc_runtime_make_string_view(zs::zpc_runtime_native_queue_extension_name),
+         &nativeExtensionDesc)
+       == ZPC_RUNTIME_ABI_OK);
+    const auto *nativeExtension =
+      static_cast<const zpc_runtime_native_queue_extension_v1_t *>(nativeExtensionDesc.function_table);
+    assert(nativeExtension != nullptr);
+
     zpc_runtime_extension_desc_t validationExtensionDesc{};
     validationExtensionDesc.header =
       zpc_runtime_make_header((uint32_t)sizeof(zpc_runtime_extension_desc_t));
@@ -142,6 +178,59 @@ int main() {
     assert(eventDesc.status_code == static_cast<uint64_t>(zs::AsyncTaskStatus::completed));
     assert(eventDesc.native_signal_token == countingState.lastSubmissionId);
     assert(engineTable->release_submission(submission) == ZPC_RUNTIME_ABI_OK);
+
+    FakeNativeQueueState nativeState{};
+    zpc_runtime_native_queue_desc_t nativeDesc{};
+    nativeDesc.header = zpc_runtime_make_header((uint32_t)sizeof(zpc_runtime_native_queue_desc_t));
+    nativeDesc.backend_code = static_cast<uint32_t>(zs::AsyncBackend::cuda);
+    nativeDesc.queue_code = static_cast<uint32_t>(zs::AsyncQueueClass::compute);
+    nativeDesc.device = 2;
+    nativeDesc.stream_or_queue_id = 5;
+    nativeDesc.capability_mask = zs::async_native_capability_submit
+                               | zs::async_native_capability_sync
+                               | zs::async_native_capability_record;
+    nativeDesc.sync_after_submit = 1;
+    nativeDesc.record_after_submit = 1;
+
+    zpc_runtime_native_queue_payload_t nativePayload{};
+    nativePayload.header =
+      zpc_runtime_make_header((uint32_t)sizeof(zpc_runtime_native_queue_payload_t));
+    nativePayload.binding = &nativeState;
+    nativePayload.queue_handle = &fake_native_queue_handle;
+    nativePayload.signal_handle = &fake_native_signal_handle;
+    nativePayload.sync = &fake_native_sync;
+    nativePayload.record = &fake_native_record;
+
+    CountingTaskState nativeTaskState{};
+    zpc_runtime_host_submit_payload_t nativeHostPayload{};
+    nativeHostPayload.header =
+      zpc_runtime_make_header((uint32_t)sizeof(zpc_runtime_host_submit_payload_t));
+    nativeHostPayload.task = &counting_task;
+    nativeHostPayload.user_data = &nativeTaskState;
+
+    zpc_runtime_submission_desc_t nativeSubmitDesc = submitDesc;
+    nativeSubmitDesc.task_label = zs::zpc_runtime_make_string_view("abi-native-task");
+    nativeSubmitDesc.backend_code = static_cast<uint32_t>(zs::AsyncBackend::cuda);
+    nativeSubmitDesc.queue_code = static_cast<uint32_t>(zs::AsyncQueueClass::compute);
+    nativeSubmitDesc.reserved[zs::zpc_runtime_host_submit_payload_slot] =
+      reinterpret_cast<uint64_t>(&nativeHostPayload);
+
+    zpc_runtime_submission_handle_t *nativeSubmission = nullptr;
+    assert(nativeExtension->submit(engine, &nativeDesc, &nativePayload, &nativeSubmitDesc,
+                                   &nativeSubmission)
+           == ZPC_RUNTIME_ABI_OK);
+    assert(nativeSubmission != nullptr);
+    assert(nativeTaskState.callCount == 1);
+    assert(nativeState.recordCount == 1);
+    assert(nativeState.syncCount == 1);
+
+    zpc_runtime_host_event_t nativeEvent{};
+    nativeEvent.header = zpc_runtime_make_header((uint32_t)sizeof(zpc_runtime_host_event_t));
+    assert(engineTable->query_event(nativeSubmission, &nativeEvent) == ZPC_RUNTIME_ABI_OK);
+    assert(nativeEvent.status_code == static_cast<uint64_t>(zs::AsyncTaskStatus::completed));
+    assert(nativeEvent.native_signal_token
+           == static_cast<uint64_t>(reinterpret_cast<uintptr_t>(nativeState.signalHandle)));
+    assert(engineTable->release_submission(nativeSubmission) == ZPC_RUNTIME_ABI_OK);
 
     SuspendedTaskState suspendedState{};
     zpc_runtime_host_submit_payload_t suspendedPayload{};

@@ -195,3 +195,5 @@ The most immediate work that best supports this roadmap is:
   agents or workers by module or layer
 * extend the deployable runtime ABI through queried extensions for validation export first, then
   native backend submission and signaling, instead of widening the base engine table prematurely
+* after the first native queue ABI bridge is stable, extend it toward richer dependency and signal
+  propagation rather than duplicating backend submission concepts in parallel ad hoc APIs

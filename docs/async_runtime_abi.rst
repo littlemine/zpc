@@ -55,6 +55,10 @@ It also exposes a validation-report extension, ``zpc.runtime.validation_report.v
 machine-readable validation payloads can move across the deployable ABI without forcing validation
 transport details into the base engine table.
 
+The next queried extension layer now also begins exposing backend-native queue submission through
+``zpc.runtime.native_queue.v1`` so queue or stream-oriented backends can reuse the deployable ABI
+without flattening backend-specific signaling hooks into the base engine table.
+
 This is intentionally narrow. It is enough to support runtime discovery, submission, lifecycle
 control, and future extension lookup without freezing internal C++ implementation details.
 
@@ -104,6 +108,25 @@ The adapter-side helpers ``publish_async_runtime_validation_report()`` and
 ABI. That keeps the deployable surface transport-friendly while reusing the already established
 validation schema and formatting stack.
 
+Native Queue Extension
+----------------------
+
+The ``zpc.runtime.native_queue.v1`` extension is the first deployable ABI bridge for queue or
+stream-backed backends.
+
+The current host-validated shape exposes:
+
+* a stable ``zpc_runtime_native_queue_desc_t`` mirroring the queue descriptor fields already used
+	by the in-tree native queue adapter
+* a stable ``zpc_runtime_native_queue_payload_t`` hook table for queue handle lookup, signal handle
+	lookup, synchronization, record, and wait hooks
+* a native submit entry point that reuses the existing host task payload for the task body while
+	routing execution through ``AsyncNativeQueueExecutor``
+
+This keeps task definition and queue binding separate: host-callable task logic remains on the
+existing host-submit payload contract, while backend-native synchronization and signaling stay on
+their own queried extension surface.
+
 Upgrade Discipline
 ------------------
 
@@ -143,5 +166,5 @@ Testing
 
 ``test/async_runtime_abi.cpp`` now validates the version header, compatibility checks, engine
 function-table contract, host-submit extension discovery, completed host submission, suspended task
-cancellation, validation extension discovery, and validation summary or JSON or text export through
-the concrete ``AsyncRuntime`` adapter.
+cancellation, validation extension discovery, validation summary or JSON or text export, and a
+host-only fake native queue submission path through the concrete ``AsyncRuntime`` adapter.

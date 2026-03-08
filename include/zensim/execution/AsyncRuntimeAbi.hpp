@@ -142,6 +142,49 @@ extern "C" {
     void *reserved[8];
   } zpc_runtime_validation_extension_v1_t;
 
+  typedef struct zpc_runtime_native_queue_desc_t {
+    zpc_runtime_abi_header_t header;
+    uint32_t backend_code;
+    uint32_t queue_code;
+    int32_t device;
+    int32_t reserved0;
+    int64_t stream_or_queue_id;
+    uint32_t capability_mask;
+    uint32_t sync_after_submit;
+    uint32_t record_after_submit;
+    uint32_t interactive;
+    uint64_t reserved[4];
+  } zpc_runtime_native_queue_desc_t;
+
+  typedef void *(*zpc_runtime_native_queue_handle_fn)(void *binding);
+  typedef void *(*zpc_runtime_native_signal_handle_fn)(void *binding);
+  typedef int32_t (*zpc_runtime_native_sync_fn)(void *binding);
+  typedef int32_t (*zpc_runtime_native_record_fn)(void *binding);
+  typedef int32_t (*zpc_runtime_native_wait_fn)(void *binding, void *foreign_signal);
+
+  typedef struct zpc_runtime_native_queue_payload_t {
+    zpc_runtime_abi_header_t header;
+    void *binding;
+    zpc_runtime_native_queue_handle_fn queue_handle;
+    zpc_runtime_native_signal_handle_fn signal_handle;
+    zpc_runtime_native_sync_fn sync;
+    zpc_runtime_native_record_fn record;
+    zpc_runtime_native_wait_fn wait;
+    uint64_t reserved[4];
+  } zpc_runtime_native_queue_payload_t;
+
+  typedef int32_t (*zpc_runtime_native_submit_fn)(
+      zpc_runtime_engine_handle_t *engine, const zpc_runtime_native_queue_desc_t *queue_desc,
+      const zpc_runtime_native_queue_payload_t *queue_payload,
+      const zpc_runtime_submission_desc_t *submission_desc,
+      zpc_runtime_submission_handle_t **submission);
+
+  typedef struct zpc_runtime_native_queue_extension_v1_t {
+    zpc_runtime_abi_header_t header;
+    zpc_runtime_native_submit_fn submit;
+    void *reserved[8];
+  } zpc_runtime_native_queue_extension_v1_t;
+
   typedef int32_t (*zpc_runtime_query_engine_desc_fn)(zpc_runtime_engine_handle_t *engine,
                                                       zpc_runtime_engine_desc_t *desc);
   typedef int32_t (*zpc_runtime_submit_fn)(zpc_runtime_engine_handle_t *engine,
@@ -210,6 +253,7 @@ extern "C" {
 
 #include <memory>
 #include "zensim/execution/AsyncRuntime.hpp"
+#include "zensim/execution/AsyncNativeQueueAdapter.hpp"
 #include "zensim/execution/ValidationFormat.hpp"
 
 namespace zs {
@@ -218,6 +262,8 @@ namespace zs {
       "zpc.runtime.host_submit.v1";
   inline constexpr const char *zpc_runtime_validation_extension_name =
       "zpc.runtime.validation_report.v1";
+  inline constexpr const char *zpc_runtime_native_queue_extension_name =
+      "zpc.runtime.native_queue.v1";
   inline constexpr uint32_t zpc_runtime_host_submit_payload_slot = 0u;
 
   inline zpc_runtime_string_view_t zpc_runtime_make_string_view(const char *text) noexcept {
@@ -276,8 +322,8 @@ namespace zs {
   struct AsyncRuntimeAbiEngineConfig {
     SmallString engineName{"zpc-async-runtime"};
     SmallString buildId{"local"};
-    uint64_t capabilityMask{ZPC_RUNTIME_ABI_CAP_ASYNC_SUBMIT | ZPC_RUNTIME_ABI_CAP_VALIDATION
-                            | ZPC_RUNTIME_ABI_CAP_HOT_UPGRADE};
+    uint64_t capabilityMask{ZPC_RUNTIME_ABI_CAP_ASYNC_SUBMIT | ZPC_RUNTIME_ABI_CAP_NATIVE_QUEUE
+                            | ZPC_RUNTIME_ABI_CAP_VALIDATION | ZPC_RUNTIME_ABI_CAP_HOT_UPGRADE};
     size_t workerCount{1};
   };
 
@@ -317,16 +363,26 @@ namespace zs {
     }
   };
 
+  struct AsyncRuntimeAbiNativeQueueBindingState {
+    void *binding{nullptr};
+    zpc_runtime_native_queue_handle_fn queueHandle{};
+    zpc_runtime_native_signal_handle_fn signalHandle{};
+    zpc_runtime_native_sync_fn sync{};
+    zpc_runtime_native_record_fn record{};
+    zpc_runtime_native_wait_fn wait{};
+  };
+
 }  // namespace zs
 
 struct zpc_runtime_engine_handle_t {
   std::unique_ptr<zs::AsyncRuntime> runtime{};
   zs::SmallString engine_name{"zpc-async-runtime"};
   zs::SmallString build_id{"local"};
-  uint64_t capability_mask{ZPC_RUNTIME_ABI_CAP_ASYNC_SUBMIT | ZPC_RUNTIME_ABI_CAP_VALIDATION
-                           | ZPC_RUNTIME_ABI_CAP_HOT_UPGRADE};
+  uint64_t capability_mask{ZPC_RUNTIME_ABI_CAP_ASYNC_SUBMIT | ZPC_RUNTIME_ABI_CAP_NATIVE_QUEUE
+                           | ZPC_RUNTIME_ABI_CAP_VALIDATION | ZPC_RUNTIME_ABI_CAP_HOT_UPGRADE};
   zpc_runtime_host_submit_extension_v1_t host_submit_extension{};
   zpc_runtime_validation_extension_v1_t validation_extension{};
+  zpc_runtime_native_queue_extension_v1_t native_queue_extension{};
   zs::AsyncRuntimeAbiValidationState validation_state{};
   zpc_runtime_engine_v1_t table{};
 };
@@ -334,6 +390,7 @@ struct zpc_runtime_engine_handle_t {
 struct zpc_runtime_submission_handle_t {
   zpc_runtime_engine_handle_t *engine{nullptr};
   zs::AsyncSubmissionHandle handle{};
+  uint64_t native_signal_token{0};
   std::shared_ptr<zs::AsyncRuntimeAbiSubmissionState> state{};
 };
 
@@ -361,7 +418,8 @@ namespace zs {
     if (compatibility != ZPC_RUNTIME_ABI_OK) return compatibility;
     event_desc->header = zpc_runtime_make_header((uint32_t)sizeof(zpc_runtime_host_event_t));
     event_desc->status_code = static_cast<uint64_t>(submission->handle.status());
-    event_desc->native_signal_token = submission->handle.id();
+    event_desc->native_signal_token =
+      submission->native_signal_token ? submission->native_signal_token : submission->handle.id();
     for (auto &slot : event_desc->reserved) slot = 0;
     return ZPC_RUNTIME_ABI_OK;
   }
@@ -395,6 +453,13 @@ namespace zs {
       extension_desc->extension_version_major = 1;
       extension_desc->extension_version_minor = 0;
       extension_desc->function_table = &engine->host_submit_extension;
+    } else if (zpc_runtime_string_view_equals(extension_name,
+                                              zpc_runtime_native_queue_extension_name)) {
+      extension_desc->extension_name =
+          zpc_runtime_make_string_view(zpc_runtime_native_queue_extension_name);
+      extension_desc->extension_version_major = 1;
+      extension_desc->extension_version_minor = 0;
+      extension_desc->function_table = &engine->native_queue_extension;
     } else if (zpc_runtime_string_view_equals(extension_name,
                                               zpc_runtime_validation_extension_name)) {
       extension_desc->extension_name =
@@ -443,6 +508,144 @@ namespace zs {
     if (!engine || !view) return ZPC_RUNTIME_ABI_ERROR;
     if (!engine->validation_state.available) return ZPC_RUNTIME_ABI_UNSUPPORTED_OPERATION;
     *view = zpc_runtime_make_string_view(engine->validation_state.text.c_str());
+    return ZPC_RUNTIME_ABI_OK;
+  }
+
+  inline AsyncNativeQueueDescriptor zpc_runtime_make_native_queue_descriptor(
+      const zpc_runtime_native_queue_desc_t &desc) noexcept {
+    AsyncNativeQueueDescriptor nativeDesc{};
+    nativeDesc.backendCode = static_cast<u8>(desc.backend_code);
+    nativeDesc.queueCode = static_cast<u8>(desc.queue_code);
+    nativeDesc.device = desc.device;
+    nativeDesc.streamOrQueueId = static_cast<StreamID>(desc.stream_or_queue_id);
+    nativeDesc.capabilityMask = desc.capability_mask;
+    nativeDesc.syncAfterSubmit = desc.sync_after_submit != 0;
+    nativeDesc.recordAfterSubmit = desc.record_after_submit != 0;
+    nativeDesc.interactive = desc.interactive != 0;
+    return nativeDesc;
+  }
+
+  inline AsyncNativeQueueBinding zpc_runtime_make_native_queue_binding(
+      const zpc_runtime_native_queue_payload_t &payload) noexcept {
+    auto storage = std::make_shared<AsyncRuntimeAbiNativeQueueBindingState>();
+    storage->binding = payload.binding;
+    storage->queueHandle = payload.queue_handle;
+    storage->signalHandle = payload.signal_handle;
+    storage->sync = payload.sync;
+    storage->record = payload.record;
+    storage->wait = payload.wait;
+
+    AsyncNativeQueueBinding binding{};
+    binding.storage = storage;
+    binding.opaque = storage.get();
+    binding.ops.queueHandle = +[](void *state) noexcept -> void * {
+      auto *bindingState = static_cast<AsyncRuntimeAbiNativeQueueBindingState *>(state);
+      return bindingState && bindingState->queueHandle ? bindingState->queueHandle(bindingState->binding)
+                                                       : nullptr;
+    };
+    binding.ops.signalHandle = +[](void *state) noexcept -> void * {
+      auto *bindingState = static_cast<AsyncRuntimeAbiNativeQueueBindingState *>(state);
+      return bindingState && bindingState->signalHandle
+                 ? bindingState->signalHandle(bindingState->binding)
+                 : nullptr;
+    };
+    binding.ops.sync = +[](void *state) noexcept -> bool {
+      auto *bindingState = static_cast<AsyncRuntimeAbiNativeQueueBindingState *>(state);
+      return !bindingState || !bindingState->sync || bindingState->sync(bindingState->binding) != 0;
+    };
+    binding.ops.record = +[](void *state) noexcept -> bool {
+      auto *bindingState = static_cast<AsyncRuntimeAbiNativeQueueBindingState *>(state);
+      return !bindingState || !bindingState->record
+          || bindingState->record(bindingState->binding) != 0;
+    };
+    binding.ops.wait = +[](void *state, void *foreignSignal) noexcept -> bool {
+      auto *bindingState = static_cast<AsyncRuntimeAbiNativeQueueBindingState *>(state);
+      return !bindingState || !bindingState->wait
+          || bindingState->wait(bindingState->binding, foreignSignal) != 0;
+    };
+    return binding;
+  }
+
+  inline int32_t zpc_runtime_native_queue_submit(
+      zpc_runtime_engine_handle_t *engine, const zpc_runtime_native_queue_desc_t *queue_desc,
+      const zpc_runtime_native_queue_payload_t *queue_payload,
+      const zpc_runtime_submission_desc_t *submission_desc,
+      zpc_runtime_submission_handle_t **submission) {
+    if (!engine || !engine->runtime || !queue_desc || !queue_payload || !submission_desc
+        || !submission)
+      return ZPC_RUNTIME_ABI_ERROR;
+
+    const int32_t queueCompatibility = zpc_runtime_is_abi_compatible(
+        &queue_desc->header, (uint32_t)sizeof(zpc_runtime_native_queue_desc_t));
+    if (queueCompatibility != ZPC_RUNTIME_ABI_OK) return queueCompatibility;
+
+    const int32_t payloadCompatibility = zpc_runtime_is_abi_compatible(
+        &queue_payload->header, (uint32_t)sizeof(zpc_runtime_native_queue_payload_t));
+    if (payloadCompatibility != ZPC_RUNTIME_ABI_OK) return payloadCompatibility;
+
+    const int32_t submissionCompatibility = zpc_runtime_is_abi_compatible(
+        &submission_desc->header, (uint32_t)sizeof(zpc_runtime_submission_desc_t));
+    if (submissionCompatibility != ZPC_RUNTIME_ABI_OK) return submissionCompatibility;
+
+    const auto *hostPayload = reinterpret_cast<const zpc_runtime_host_submit_payload_t *>(
+        submission_desc->reserved[zpc_runtime_host_submit_payload_slot]);
+    if (!hostPayload) return ZPC_RUNTIME_ABI_UNSUPPORTED_OPERATION;
+
+    const int32_t hostPayloadCompatibility = zpc_runtime_is_abi_compatible(
+        &hostPayload->header, (uint32_t)sizeof(zpc_runtime_host_submit_payload_t));
+    if (hostPayloadCompatibility != ZPC_RUNTIME_ABI_OK) return hostPayloadCompatibility;
+    if (!hostPayload->task) return ZPC_RUNTIME_ABI_ERROR;
+
+    auto *submission_handle = new zpc_runtime_submission_handle_t{};
+    submission_handle->engine = engine;
+    submission_handle->state = std::make_shared<AsyncRuntimeAbiSubmissionState>();
+    submission_handle->state->desc = *submission_desc;
+    submission_handle->state->executorName = "abi_native_queue";
+    submission_handle->state->taskLabel = zpc_runtime_small_string_from_view(submission_desc->task_label);
+    submission_handle->state->task = hostPayload->task;
+    submission_handle->state->userData = hostPayload->user_data;
+    submission_handle->state->refresh_views();
+
+    auto descriptor = zpc_runtime_make_native_queue_descriptor(*queue_desc);
+    auto binding = zpc_runtime_make_native_queue_binding(*queue_payload);
+    submission_handle->native_signal_token =
+        static_cast<uint64_t>(reinterpret_cast<uintptr_t>(binding.signal_handle()));
+
+    engine->runtime->register_executor(
+        "abi_native_queue",
+        make_native_queue_executor("abi_native_queue", descriptor, binding));
+
+    AsyncSubmission async_submission{};
+    async_submission.executor = "abi_native_queue";
+    async_submission.desc.label = submission_handle->state->taskLabel;
+    async_submission.desc.domain = async_domain_from_abi_code(submission_desc->domain_code);
+    async_submission.desc.queue = async_queue_from_abi_code(submission_desc->queue_code);
+    async_submission.desc.priority = static_cast<int>(submission_desc->priority);
+    async_submission.endpoint = make_host_endpoint(async_backend_from_abi_code(submission_desc->backend_code),
+                                                   async_submission.desc.queue,
+                                                   submission_handle->state->taskLabel);
+    async_submission.cancellation = submission_handle->state->cancellation.token();
+
+    auto state = submission_handle->state;
+    async_submission.step = [state](AsyncExecutionContext &ctx) {
+      zpc_runtime_host_task_context_t host_context{};
+      host_context.header = zpc_runtime_make_header((uint32_t)sizeof(zpc_runtime_host_task_context_t));
+      host_context.submission_id = ctx.submissionId;
+      host_context.stop_requested = ctx.cancellation.stop_requested() ? 1u : 0u;
+      host_context.interrupt_requested = ctx.cancellation.interrupt_requested() ? 1u : 0u;
+      for (auto &slot : host_context.reserved) slot = 0;
+      return async_poll_status_from_host_task_result(
+          state->task(state->userData, &host_context, &state->desc));
+    };
+
+    try {
+      submission_handle->handle = engine->runtime->submit(zs::move(async_submission));
+    } catch (...) {
+      delete submission_handle;
+      return ZPC_RUNTIME_ABI_ERROR;
+    }
+
+    *submission = submission_handle;
     return ZPC_RUNTIME_ABI_OK;
   }
 
@@ -530,6 +733,11 @@ namespace zs {
     engine->validation_extension.query_text = &zpc_runtime_validation_query_text;
     for (auto &slot : engine->validation_extension.reserved) slot = nullptr;
 
+    engine->native_queue_extension.header =
+      zpc_runtime_make_header((uint32_t)sizeof(zpc_runtime_native_queue_extension_v1_t));
+    engine->native_queue_extension.submit = &zpc_runtime_native_queue_submit;
+    for (auto &slot : engine->native_queue_extension.reserved) slot = nullptr;
+
     engine->table.header = zpc_runtime_make_header((uint32_t)sizeof(zpc_runtime_engine_v1_t));
     engine->table.query_engine_desc = &zpc_runtime_async_query_engine_desc;
     engine->table.submit = &zpc_runtime_async_submit;
@@ -578,6 +786,9 @@ namespace zs {
   static_assert(offsetof(zpc_runtime_validation_extension_v1_t, query_summary)
                     == sizeof(zpc_runtime_abi_header_t),
                 "Validation extension function table order must remain append-only");
+  static_assert(offsetof(zpc_runtime_native_queue_extension_v1_t, submit)
+                    == sizeof(zpc_runtime_abi_header_t),
+                "Native queue extension function table order must remain append-only");
 
 }  // namespace zs
 #endif
