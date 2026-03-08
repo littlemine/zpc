@@ -54,6 +54,13 @@ target_link_libraries(asyncbackendcontract PRIVATE zpc)
 add_test(ZsAsyncBackendContract asyncbackendcontract)
 add_dependencies(zensim asyncbackendcontract)
 
+# async backend profile
+add_executable(asyncbackendprofile async_backend_profile.cpp)
+target_link_libraries(asyncbackendprofile PRIVATE zpc)
+
+add_test(ZsAsyncBackendProfile asyncbackendprofile)
+add_dependencies(zensim asyncbackendprofile)
+
 # validation schema
 add_executable(validationschema validation_schema.cpp)
 target_link_libraries(validationschema PRIVATE zpc)

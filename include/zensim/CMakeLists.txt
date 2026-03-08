@@ -117,6 +117,7 @@ set(ZENSIM_LIBRARY_CORE_INCLUDE_FILES
 
   # execution
   execution/Concurrency.h
+  execution/AsyncBackendProfile.hpp
   execution/AsyncRuntime.hpp
   execution/ManagedThread.hpp
   execution/ValidationCompare.hpp

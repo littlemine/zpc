@@ -293,6 +293,15 @@ if(ZS_ENABLE_JIT AND TARGET zpc_jit_deps)
   add_subdirectory(reflect_tool)
   include(${CMAKE_CURRENT_SOURCE_DIR}/CMake/ZpcReflection.cmake)
   message(STATUS "[zpc] Reflection module enabled (ZpcReflection.cmake loaded)")
+
+  if(TARGET zpc_py_interop)
+    zpc_target_reflect_sources(zpc_py_interop
+      SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/include/zensim/execution/AsyncBackendProfile.hpp
+      INCLUDE_DIRS ${CMAKE_CURRENT_SOURCE_DIR}/include
+      PYTHON_BINDINGS
+      PYTHON_LIB_NAME zpc_async_backend_reflect
+    )
+  endif()
 endif()
 
 if(NOT PROJECT_IS_TOP_LEVEL)
