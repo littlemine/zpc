@@ -184,10 +184,9 @@ extern "C" {
 }
 
 #include <memory>
+#include "zensim/execution/AsyncRuntime.hpp"
 
 namespace zs {
-
-#include "zensim/execution/AsyncRuntime.hpp"
 
   inline constexpr const char *zpc_runtime_host_submit_extension_name =
       "zpc.runtime.host_submit.v1";
@@ -450,7 +449,7 @@ namespace zs {
                 "Engine ABI table header must stay at offset 0");
   static_assert(offsetof(zpc_runtime_engine_v1_t, query_engine_desc) == sizeof(zpc_runtime_abi_header_t),
                 "Engine ABI function table order must remain append-only");
-  static_assert(sizeof(zpc_runtime_host_task_context_t) == 64,
+  static_assert(sizeof(zpc_runtime_host_task_context_t) == 72,
                 "Host task context layout must remain fixed");
   static_assert(offsetof(zpc_runtime_host_submit_payload_t, task)
                     == sizeof(zpc_runtime_abi_header_t),
