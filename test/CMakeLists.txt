@@ -75,6 +75,11 @@ target_link_libraries(asyncruntimeabi PRIVATE zpc)
 add_test(ZsAsyncRuntimeAbi asyncruntimeabi)
 add_dependencies(zensim asyncruntimeabi)
 
+add_executable(asyncruntimeabidemo async_runtime_abi_demo.cpp)
+target_link_libraries(asyncruntimeabidemo PRIVATE zpc)
+
+add_dependencies(zensim asyncruntimeabidemo)
+
 # validation schema
 add_executable(validationschema validation_schema.cpp)
 target_link_libraries(validationschema PRIVATE zpc)
