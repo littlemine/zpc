@@ -290,6 +290,7 @@ namespace zs {
         .withMaintenance4(true)             // Vulkan 1.3 maintenance
         .withGeometryShader(true)           // Geometry shader stage
         .withTessellation(true)             // Tessellation stages
+        .withMultiDrawIndirect(true)         // Multi-draw indirect + draw count
         .filterBySupported(devExts, devFeatures2, supportedVk12Features, supportedVk13Features);
 
     // Get flattened extension list

@@ -576,7 +576,7 @@ namespace zs {
             usageFlags = vk::CommandBufferUsageFlagBits::eOneTimeSubmit;
           else
             usageFlags = vk::CommandBufferUsageFlagBits::eSimultaneousUse;
-          cmd[0].begin(vk::CommandBufferBeginInfo{usageFlags, pInheritanceInfo});
+          cmd[0].begin(vk::CommandBufferBeginInfo{usageFlags, pInheritanceInfo}, pctx->dispatcher);
         }
 
         return cmd[0];
@@ -585,15 +585,20 @@ namespace zs {
                                 const source_location &loc = source_location::current());
       void submit(u32 count, const vk::CommandBuffer *cmds, vk::Fence fence,
                   vk_cmd_usage_e usage = vk_cmd_usage_e::single_use) {
-        for (u32 i = 0; i < count; i++) cmds[i].end();
+        for (u32 i = 0; i < count; i++) cmds[i].end(pctx->dispatcher);
 
         vk::SubmitInfo submit{};
         submit.setCommandBufferCount(count).setPCommandBuffers(cmds);
         if (auto res = queue.submit(1, &submit, fence, pctx->dispatcher);
             res != vk::Result::eSuccess)
           throw std::runtime_error(fmt::format("failed to submit {} commands to queue.", count));
-        if (usage == vk_cmd_usage_e::single_use)
+        if (usage == vk_cmd_usage_e::single_use) {
+          if (pctx->device.waitForFences({fence}, VK_TRUE, UINT64_MAX,
+                                          pctx->dispatcher)
+              != vk::Result::eSuccess)
+            throw std::runtime_error("error waiting for fences");
           pctx->device.freeCommandBuffers(singleUsePool, count, cmds, pctx->dispatcher);
+        }
       }
 
       /// @note reuse is mandatory for secondary commands here

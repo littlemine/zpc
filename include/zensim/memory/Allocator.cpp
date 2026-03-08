@@ -1,5 +1,6 @@
 #include "Allocator.h"
 
+#include <cstring>
 #include <iostream>
 #include <sstream>
 
@@ -17,7 +18,71 @@
 namespace zs {
 
   template struct ZPC_CORE_TEMPLATE_EXPORT advisor_memory_resource<host_mem_tag>;
-#if defined(ZS_PLATFORM_UNIX)
+
+#if defined(ZS_PLATFORM_WINDOWS)
+
+  arena_virtual_memory_resource<host_mem_tag>::arena_virtual_memory_resource(ProcID did,
+                                                                             size_t space)
+      : _did{did}, _reservedSpace{round_up(space, s_chunk_granularity)} {
+    if (did >= 0)
+      throw std::runtime_error(
+          std::string("hostvm target device index [") + std::to_string((int)did) + "] is not negative");
+
+    auto info = SYSTEM_INFO{};
+    GetSystemInfo(&info);
+    _granularity = (size_t)info.dwAllocationGranularity;
+
+    _addr = VirtualAlloc(nullptr, _reservedSpace, MEM_RESERVE, PAGE_NOACCESS);
+    if (_addr == nullptr) {
+      auto const err = GetLastError();
+      throw std::system_error(std::error_code(err, std::system_category()),
+                              "failed to reserve a virtual address range");
+    }
+    _activeChunkMasks.resize((_reservedSpace / s_chunk_granularity + 63) / 64, (u64)0);
+  }
+
+  arena_virtual_memory_resource<host_mem_tag>::~arena_virtual_memory_resource() {
+    (void)VirtualFree(_addr, 0, MEM_RELEASE);
+  }
+
+  bool arena_virtual_memory_resource<host_mem_tag>::do_check_residency(size_t offset,
+                                                                       size_t bytes) const {
+    size_t st = round_down(offset, s_chunk_granularity);
+    if (st >= _reservedSpace) return false;
+    offset += bytes;
+    size_t ed = offset <= _reservedSpace ? round_up(offset, s_chunk_granularity) : _reservedSpace;
+    for (st >>= s_chunk_granularity_bits, ed >>= s_chunk_granularity_bits; st != ed; ++st)
+      if ((_activeChunkMasks[st >> 6] & ((u64)1 << (st & 63))) == 0) return false;
+    return true;
+  }
+
+  bool arena_virtual_memory_resource<host_mem_tag>::do_commit(size_t offset, size_t bytes) {
+    size_t st = round_down(offset, s_chunk_granularity);
+    if (st >= _reservedSpace) return false;
+    offset += bytes;
+    size_t ed = offset <= _reservedSpace ? round_up(offset, s_chunk_granularity) : _reservedSpace;
+
+    if (VirtualAlloc((char *)_addr + st, ed - st, MEM_COMMIT, PAGE_READWRITE) != nullptr) {
+      for (st >>= s_chunk_granularity_bits, ed >>= s_chunk_granularity_bits; st != ed; ++st)
+        _activeChunkMasks[st >> 6] |= ((u64)1 << (st & 63));
+      return true;
+    }
+    return false;
+  }
+
+  bool arena_virtual_memory_resource<host_mem_tag>::do_evict(size_t offset, size_t bytes) {
+    size_t st = round_up(offset, s_chunk_granularity);
+    offset += bytes;
+    size_t ed = offset <= _reservedSpace ? round_down(offset, s_chunk_granularity) : _reservedSpace;
+    if (st >= ed) return false;
+    bytes = ed - st;
+    if (VirtualFree((void *)((char *)_addr + st), bytes, MEM_DECOMMIT) == 0) return false;
+    for (st >>= s_chunk_granularity_bits, ed >>= s_chunk_granularity_bits; st != ed; ++st)
+      _activeChunkMasks[st >> 6] &= ~((u64)1 << (st & 63));
+    return true;
+  }
+
+#elif defined(ZS_PLATFORM_UNIX)
 
 #  if 0
   stack_virtual_memory_resource<host_mem_tag>::stack_virtual_memory_resource(ProcID did,
@@ -153,7 +218,7 @@ namespace zs {
       _activeChunkMasks[st >> 6] &= ~((u64)1 << (st & 63));
     return true;
   }
-#endif  // end UNIX
+#endif  // end WINDOWS / UNIX
 
   stack_virtual_memory_resource<host_mem_tag>::stack_virtual_memory_resource(ProcID did,
                                                                              size_t size)
@@ -253,27 +318,29 @@ namespace zs {
   handle_resource::handle_resource() noexcept
       : handle_resource{&raw_memory_resource<host_mem_tag>::instance()} {}
   handle_resource::~handle_resource() {
-    _upstream->deallocate(_handle, _bufSize, _align);
-    std::cout << "deallocate " << _bufSize << " bytes in handle_resource\n";
+    if (_handle != nullptr) {
+      _upstream->deallocate(_handle, _bufSize, _align);
+    }
   }
 
   void *handle_resource::do_allocate(size_t bytes, size_t alignment) {
     if (_handle == nullptr) {
       _handle = _head = (char *)(_upstream->allocate(_bufSize, alignment));
       _align = alignment;
-      std::cout << "initially allocate " << _bufSize << " bytes in handle_resource\n";
     }
     char *ret = _head + alignment - 1 - ((size_t)_head + alignment - 1) % alignment;
     _head = ret + bytes;
-    if (_head < _handle + _bufSize) return ret;
+    if (_head <= _handle + _bufSize) return ret;
 
-    _upstream->deallocate(_handle, _bufSize, alignment);
-
-    auto offset = ret - _handle;  ///< ret is offset
+    auto offset = ret - _handle;  ///< ret is offset from old base
+    auto oldHandle = _handle;
+    auto oldBufSize = _bufSize;
     _bufSize = (size_t)(_head - _handle) << 1;
     _align = alignment;
     _handle = (char *)(_upstream->allocate(_bufSize, alignment));
-    std::cout << "reallocate " << _bufSize << " bytes in handle_resource\n";
+    // Copy existing data to the new buffer before freeing the old one
+    std::memcpy(_handle, oldHandle, oldBufSize);
+    _upstream->deallocate(oldHandle, oldBufSize, alignment);
     ret = _handle + offset;
     _head = ret + bytes;
     return ret;

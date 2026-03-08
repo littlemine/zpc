@@ -1,4 +1,5 @@
 #include "MemOps.hpp"
+#include <cstring>
 #include <iostream>
 
 namespace zs {
@@ -8,12 +9,14 @@ namespace zs {
 #ifdef _MSC_VER
     ret = _aligned_malloc(size, alignment);
 #else
-    // ret = std::aligned_alloc(alignment, size);
-    ret = std::malloc(size);
+    // Ensure alignment meets posix_memalign requirements (power of 2, multiple of sizeof(void*))
+    size_t adj_alignment = alignment < sizeof(void *) ? sizeof(void *) : alignment;
+    if (posix_memalign(&ret, adj_alignment, size) != 0)
+      ret = nullptr;
 #endif
 #if ZS_ENABLE_OFB_ACCESS_CHECK
     if (ret == nullptr) {
-      std::cerr << "\nHost Side Error: allocattion failed (size: " << size
+      std::cerr << "\nHost Side Error: allocation failed (size: " << size
                 << " bytes, alignment: " << alignment << " bytes)"
                 << "\n============================================================\n"
                 << "# File: \"" << loc.file_name() << "\"\n"

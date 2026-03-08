@@ -8,7 +8,6 @@
 #include "MemOps.hpp"
 #include "MemoryResource.h"
 #include "zensim/math/bit/Bits.h"
-#include "zensim/memory/MemOps.hpp"
 
 namespace zs {
 
@@ -70,6 +69,8 @@ namespace zs {
     bool do_is_equal(const mr_t &other) const noexcept override { return this == &other; }
   };
 
+  /// @brief Tag type that semantically indicates temporary/scratch allocations.
+  /// Inherits raw allocation behavior but signals intent for short-lived memory.
   template <typename MemTag> struct temporary_memory_resource : raw_memory_resource<MemTag> {
     using base_t = raw_memory_resource<MemTag>;
     using value_type = typename base_t::value_type;
@@ -240,6 +241,31 @@ namespace zs {
 #endif
 
 #ifdef ZS_PLATFORM_WINDOWS
+
+  template <> struct arena_virtual_memory_resource<host_mem_tag>
+      : vmr_t {
+    /// 2MB chunk granularity
+    static constexpr size_t s_chunk_granularity_bits = vmr_t::s_chunk_granularity_bits;
+    static constexpr size_t s_chunk_granularity = vmr_t::s_chunk_granularity;
+
+    ZPC_CORE_API arena_virtual_memory_resource(ProcID did, size_t space);
+    ZPC_CORE_API ~arena_virtual_memory_resource();
+    ZPC_CORE_API bool do_check_residency(size_t offset, size_t bytes) const override;
+    ZPC_CORE_API bool do_commit(size_t offset, size_t bytes) override;
+    ZPC_CORE_API bool do_evict(size_t offset, size_t bytes) override;
+    void *do_address(size_t offset) const override {
+      return static_cast<void *>(static_cast<char *>(_addr) + offset);
+    }
+
+    void *do_allocate(size_t /*bytes*/, size_t /*alignment*/) override { return _addr; }
+
+    size_t _granularity;
+    const size_t _reservedSpace;
+    void *_addr;
+    std::vector<u64> _activeChunkMasks;
+    ProcID _did;
+  };
+
 #elif defined(ZS_PLATFORM_UNIX)
 
   template <> struct arena_virtual_memory_resource<host_mem_tag>
@@ -267,7 +293,7 @@ namespace zs {
   };
 #endif
 
-  class handle_resource : mr_t {
+  class handle_resource : public mr_t {
   public:
     explicit handle_resource(mr_t *upstream) noexcept;
     handle_resource(size_t initSize, mr_t *upstream) noexcept;
@@ -421,10 +447,16 @@ namespace zs {
     void deallocate(void *p, size_t);
     void reset() { _head = _data; }
 
-    char *_data, *_head, *_tail;
-    size_t _align;
+    /// @brief Returns total capacity in bytes.
+    size_t capacity() const noexcept { return static_cast<size_t>(_tail - _data); }
+    /// @brief Returns number of bytes currently allocated.
+    size_t used() const noexcept { return static_cast<size_t>(_head - _data); }
+    /// @brief Returns number of bytes remaining.
+    size_t available() const noexcept { return static_cast<size_t>(_tail - _head); }
 
   private:
+    char *_data, *_head, *_tail;
+    size_t _align;
     mr_t *_mr{nullptr};
   };
 

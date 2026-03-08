@@ -8,7 +8,6 @@ namespace zs {
   template struct ZPC_TEMPLATE_EXPORT ZSPmrAllocator<false, byte>;
   template struct ZPC_TEMPLATE_EXPORT ZSPmrAllocator<true, byte>;
 
-  static std::shared_mutex g_resource_rw_mutex{};
   static concurrent_map<void *, Resource::AllocationRecord> g_resource_records;
 
 #if 0
@@ -75,16 +74,19 @@ namespace zs {
   void Resource::erase(void *ptr) { g_resource_records.erase(ptr); }
 
   void Resource::deallocate(void *ptr) {
-    if (g_resource_records.find(ptr) != nullptr) {
-      std::unique_lock lk(g_resource_rw_mutex);
-      const auto &r = g_resource_records.get(ptr);
-      match([&r, ptr](auto &tag) { zs::deallocate(tag, ptr, r.size, r.alignment); })(r.tag);
-    } else {
+    // Copy the record data before erasing to avoid TOCTOU race.
+    // concurrent_map releases its internal lock after each operation, so we must
+    // copy the record value before the reference becomes invalid.
+    AllocationRecord record;
+    try {
+      record = g_resource_records.get(ptr);
+    } catch (...) {
       std::ostringstream oss;
       oss << "allocation record " << (std::uintptr_t)ptr << " not found in records!";
       throw std::runtime_error(oss.str());
     }
     g_resource_records.erase(ptr);
+    match([&record, ptr](auto &tag) { zs::deallocate(tag, ptr, record.size, record.alignment); })(record.tag);
   }
 
 }  // namespace zs

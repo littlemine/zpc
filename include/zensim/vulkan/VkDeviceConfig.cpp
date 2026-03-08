@@ -45,11 +45,13 @@ void VkDeviceConfig::FeatureConfig::applyToVkStructures(
   features.features.independentBlend = independentBlend;
   features.features.geometryShader = geometryShader;
   features.features.tessellationShader = tessellationShader;
+  features.features.multiDrawIndirect = multiDrawIndirect;
 
   // Vulkan 1.2 features
   vk12Features.timelineSemaphore = timelineSemaphore;
   vk12Features.descriptorIndexing = descriptorIndexing;
   vk12Features.bufferDeviceAddress = bufferDeviceAddress;
+  vk12Features.drawIndirectCount = drawIndirectCount;
   
   // Bindless features
   vk12Features.descriptorBindingPartiallyBound = descriptorBindingPartiallyBound;
@@ -204,6 +206,12 @@ VkDeviceConfig::Builder& VkDeviceConfig::Builder::withMaintenance4(bool enable) 
   return *this;
 }
 
+VkDeviceConfig::Builder& VkDeviceConfig::Builder::withMultiDrawIndirect(bool enable) {
+  features.multiDrawIndirect = enable;
+  features.drawIndirectCount = enable;
+  return *this;
+}
+
 VkDeviceConfig::Builder& VkDeviceConfig::Builder::filterBySupported(
   const std::vector<vk::ExtensionProperties>& supportedExtensions,
   const VkPhysicalDeviceFeatures2& supportedFeatures,
@@ -245,6 +253,7 @@ VkDeviceConfig::Builder& VkDeviceConfig::Builder::filterBySupported(
   CHECK_FEATURE(independentBlend);
   CHECK_FEATURE(geometryShader);
   CHECK_FEATURE(tessellationShader);
+  CHECK_FEATURE(multiDrawIndirect);
   #undef CHECK_FEATURE
 
   // Filter Vulkan 1.2 features
@@ -252,6 +261,7 @@ VkDeviceConfig::Builder& VkDeviceConfig::Builder::filterBySupported(
   CHECK_VK12_FEATURE(timelineSemaphore);
   CHECK_VK12_FEATURE(descriptorIndexing);
   CHECK_VK12_FEATURE(bufferDeviceAddress);
+  CHECK_VK12_FEATURE(drawIndirectCount);
   CHECK_VK12_FEATURE(descriptorBindingPartiallyBound);
   CHECK_VK12_FEATURE(runtimeDescriptorArray);
   CHECK_VK12_FEATURE(descriptorBindingVariableDescriptorCount);

@@ -256,7 +256,7 @@ namespace zs {
             ret.setOwningUpstream<stack_virtual_memory_resource>(tag, devid, bytes);
           else {
             std::ostringstream oss;
-            oss << "unkonwn vmr option [" << option << "]\n";
+            oss << "unknown vmr option [" << option << "]\n";
             throw std::runtime_error(oss.str());
           }
           return;

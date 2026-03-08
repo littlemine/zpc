@@ -50,6 +50,8 @@ set(ZENSIM_LIBRARY_VULKAN_SOURCE_FILES
   vulkan/VkContextQuery.cpp
   vulkan/VkDeviceConfig.cpp
   vulkan/Vulkan.cpp
+  vulkan/VkRenderGraph.cpp
+  vulkan/VkRenderGraphAdvanced.cpp
 )
 set(ZENSIM_LIBRARY_CUDA_SOURCE_FILES
   cuda/Cuda.cu
@@ -230,6 +232,8 @@ set(ZENSIM_LIBRARY_TOOL_INCLUDE_FILES
 )
 set(ZENSIM_LIBRARY_VULKAN_INCLUDE_FILES
   vulkan/Vulkan.hpp
+  vulkan/VkRenderGraph.hpp
+  vulkan/VkRenderGraphAdvanced.hpp
 )
 set(ZENSIM_LIBRARY_CUDA_INCLUDE_FILES
   cuda/Cuda.h
@@ -280,6 +284,7 @@ set(ZENSIM_LIBRARY_ZPC_INCLUDE_FILES
   geometry/PointDataGrid.hpp
   geometry/OverlayGrid.hpp
   geometry/AdaptiveGrid.hpp
+  geometry/AdaptiveGridUtils.hpp
   geometry/Structure.hpp
   geometry/Structurefree.hpp
   geometry/SparseGrid.hpp
@@ -379,6 +384,13 @@ target_sources(zpcbase
 
   execution/Atomics.hpp
   # types/Mask.hpp
+
+  # reflection module headers
+  reflect/ZpcReflectAnnotations.hpp
+  reflect/ZpcReflectRuntime.hpp
+  reflect/ZpcReflectRegistry.hpp
+  reflect/ZpcReflectObject.hpp
+  reflect/ZpcReflectPyExport.hpp
 )
 target_include_directories(zpcbase INTERFACE
   $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/include>
@@ -430,7 +442,11 @@ target_link_options(zpccore
   -O3 -m64>>
 )
 set_target_properties(zpccore
-  PROPERTIES POSITION_INDEPENDENT_CODE ON
+  PROPERTIES
+  POSITION_INDEPENDENT_CODE ON
+  RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}
+  LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}
+  ARCHIVE_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}
 )
 
 # target_link_libraries(zpc_cxx_deps INTERFACE $<IF:$<CXX_COMPILER_ID:MSVC>, synchronization.lib, >)

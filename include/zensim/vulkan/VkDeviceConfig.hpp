@@ -31,11 +31,13 @@ struct VkDeviceConfig {
     bool independentBlend = false;
     bool geometryShader = false;
     bool tessellationShader = false;
+    bool multiDrawIndirect = false;
 
     // Vulkan 1.2 features
     bool timelineSemaphore = false;
     bool descriptorIndexing = false;
     bool bufferDeviceAddress = false;
+    bool drawIndirectCount = false;
     
     // Bindless features
     bool descriptorBindingPartiallyBound = false;
@@ -96,6 +98,7 @@ struct VkDeviceConfig {
     Builder& withSynchronization2(bool enable = true);
     Builder& withDynamicRendering(bool enable = true);
     Builder& withMaintenance4(bool enable = true);
+    Builder& withMultiDrawIndirect(bool enable = true);
     
     Builder& filterBySupported(
       const std::vector<vk::ExtensionProperties>& supportedExtensions,

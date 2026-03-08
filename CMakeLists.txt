@@ -285,6 +285,16 @@ target_link_libraries(zpc_deps INTERFACE zpc_cxx_deps)
 # =================
 add_subdirectory(include/zensim)
 
+# ---- reflection tool ----
+# =========================
+# Build the clang-based reflection code generator (requires LLVM/Clang via zpc_jit_deps).
+# Also make the ZpcReflection.cmake module available for downstream targets.
+if(ZS_ENABLE_JIT AND TARGET zpc_jit_deps)
+  add_subdirectory(reflect_tool)
+  include(${CMAKE_CURRENT_SOURCE_DIR}/CMake/ZpcReflection.cmake)
+  message(STATUS "[zpc] Reflection module enabled (ZpcReflection.cmake loaded)")
+endif()
+
 if(NOT PROJECT_IS_TOP_LEVEL)
   set(ZS_ENABLE_OPENGL ${ZS_ENABLE_OPENGL} PARENT_SCOPE)
 
