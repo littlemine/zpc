@@ -3,6 +3,7 @@
 #include <memory>
 #include <string>
 
+#include "zensim/execution/AsyncBackendProfile.hpp"
 #include "zensim/execution/AsyncRuntime.hpp"
 #include "zensim/reflect/ZpcReflectAnnotations.hpp"
 

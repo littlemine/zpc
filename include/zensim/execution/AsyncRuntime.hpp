@@ -182,6 +182,7 @@ namespace zs {
 
     friend class AsyncExecutor;
     friend class AsyncInlineExecutor;
+    friend class AsyncNativeQueueExecutor;
     friend class AsyncThreadPoolExecutor;
     friend class AsyncRuntime;
   };
