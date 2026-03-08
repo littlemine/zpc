@@ -40,6 +40,14 @@ target_link_libraries(binarysearchtest PRIVATE zpc)
 add_test(ZsBinarySearch binarysearchtest)
 add_dependencies(zensim binarysearchtest)
 
+# async runtime (requires C++20 for coroutine tests)
+add_executable(asyncruntime async_runtime.cpp)
+target_link_libraries(asyncruntime PRIVATE zpc)
+target_compile_features(asyncruntime PRIVATE cxx_std_20)
+
+add_test(ZsAsyncRuntime asyncruntime)
+add_dependencies(zensim asyncruntime)
+
 # sycl backend
 if(ZS_ENABLE_SYCL_ONEAPI OR ZS_ENABLE_SYCL_ACPP)
     #
