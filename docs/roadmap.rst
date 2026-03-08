@@ -33,6 +33,9 @@ The next generations of ZPC should follow these principles:
   execution without requiring source-level integration every time
 * progressive accessibility: advanced native backends remain first-class, while CLI, MCP, and
   web or mobile integration make the platform easier to adopt
+* scalable development: once interfaces are consolidated, module work should split across
+  coordinated agents or workers so backend, runtime, tooling, and validation layers can advance in
+  parallel without interface churn
 
 Major Product Surfaces
 ----------------------
@@ -121,6 +124,21 @@ Turn core capabilities into product surfaces:
 * an MCP server with stable tool contracts
 * packaging and deployment helpers for local, cluster, mobile, and web integration paths
 
+Track 5: Parallel Development
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+After interface boundaries are stable enough, development should shift from mostly serialized work
+to coordinated parallel work across modules and layers:
+
+* runtime and scheduler internals
+* backend adapters and transport bindings
+* validation and benchmark pipelines
+* CLI, MCP, and Python-facing surfaces
+* higher-level application layers
+
+This only works once the shared contracts are explicit enough that multiple agents or workers can
+develop against them without forcing repeated interface renegotiation.
+
 Track 4: Quality Gates
 ^^^^^^^^^^^^^^^^^^^^^^
 
@@ -147,6 +165,7 @@ Phase 2: Platform Surface
 * introduce the first CLI workflows
 * introduce the first MCP tools
 * expose hardware discovery, validation, and benchmark reporting
+* begin coordinated multi-agent or multi-worker development once the interface contracts are stable
 
 Phase 3: Deployment and Reach
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -172,3 +191,5 @@ The most immediate work that best supports this roadmap is:
 * define the first validation and benchmark schema that both CLI and MCP can consume
 * keep interface boundaries explicit so future CLI, MCP, and applications do not depend on
   backend internals
+* consolidate enough runtime and tooling interfaces that work can be distributed across multiple
+  agents or workers by module or layer

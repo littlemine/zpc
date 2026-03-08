@@ -63,6 +63,27 @@ That means:
 * engine internals may evolve as long as the ABI table and descriptor semantics remain compatible
 * the C++ runtime API can keep improving internally while the deployable engine ABI stays stable
 
+Parallel Development Discipline
+-------------------------------
+
+This ABI-stable boundary is also the prerequisite for coordinated parallel development.
+
+Once the runtime, backend-adapter, validation, and tooling interfaces are consolidated enough,
+multiple agents or workers should be able to develop different modules against the same stable
+contracts without repeatedly changing the deployable surface.
+
+That means the ABI and the surrounding interface contracts should be treated as the shared anchor
+for parallel work across:
+
+* deployable runtime implementation
+* backend-specific execution bindings
+* validation and upgrade-gating layers
+* CLI, MCP, and Python-facing integration layers
+
+If a proposed change would force unrelated modules to stop and renegotiate interfaces, it is a sign
+that the surface is not yet consolidated enough for broad parallelization and should be stabilized
+first.
+
 Testing
 -------
 
