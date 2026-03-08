@@ -200,3 +200,5 @@ host-only fake native queue submission and wait-signal path through the concrete
 adapter. It also validates dependency-list propagation for runtime submission-event prerequisites,
 rejection of unsupported native-signal dependencies on plain host submission, and mixed runtime or
 native prerequisite handling on the native queue path.
+
+For the broader deployable-boundary rationale, see :doc:`plugin_and_abi_stability`.

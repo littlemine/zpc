@@ -197,3 +197,17 @@ The most immediate work that best supports this roadmap is:
   native backend submission and signaling, instead of widening the base engine table prematurely
 * after the first native queue ABI bridge is stable, extend it toward richer dependency and signal
   propagation rather than duplicating backend submission concepts in parallel ad hoc APIs
+
+Architecture References
+-----------------------
+
+This roadmap stays intentionally strategic. The more specific design notes for the current
+foundation-first direction are:
+
+* :doc:`architecture_and_modularization`
+* :doc:`implementation_roadmap`
+* :doc:`platform_and_build_profiles`
+* :doc:`application_layer_design`
+
+Those pages should be treated as the working architectural baseline for modularization and platform
+surface evolution.

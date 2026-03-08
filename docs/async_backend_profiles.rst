@@ -52,3 +52,6 @@ When JIT reflection is enabled, the root CMake configuration now wires this head
 reflection generator for ``zpc_py_interop`` with Python bindings enabled. That gives the async
 backend profile layer a direct path to generated ctypes wrappers without introducing a separate
 manual binding surface.
+
+For the wider delivery-profile matrix that this backend-profile layer fits into, see
+:doc:`platform_and_build_profiles`.
