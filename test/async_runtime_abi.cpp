@@ -41,6 +41,11 @@ namespace {
     return ZPC_RUNTIME_HOST_TASK_SUSPEND;
   }
 
+  std::string string_from_view(zpc_runtime_string_view_t view) {
+    if (!view.data || view.size == 0) return {};
+    return std::string{view.data, view.size};
+  }
+
 }  // namespace
 
 int main() {
@@ -90,6 +95,23 @@ int main() {
       static_cast<const zpc_runtime_host_submit_extension_v1_t *>(extensionDesc.function_table);
     assert(hostExtension != nullptr);
     assert(hostExtension->payload_reserved_index == zs::zpc_runtime_host_submit_payload_slot);
+
+    zpc_runtime_extension_desc_t validationExtensionDesc{};
+    validationExtensionDesc.header =
+      zpc_runtime_make_header((uint32_t)sizeof(zpc_runtime_extension_desc_t));
+    assert(engineTable->query_extension(
+         engine, zs::zpc_runtime_make_string_view(zs::zpc_runtime_validation_extension_name),
+         &validationExtensionDesc)
+       == ZPC_RUNTIME_ABI_OK);
+    const auto *validationExtension =
+      static_cast<const zpc_runtime_validation_extension_v1_t *>(validationExtensionDesc.function_table);
+    assert(validationExtension != nullptr);
+
+    zpc_runtime_validation_summary_v1_t emptySummary{};
+    emptySummary.header =
+      zpc_runtime_make_header((uint32_t)sizeof(zpc_runtime_validation_summary_v1_t));
+    assert(validationExtension->query_summary(engine, &emptySummary)
+           == ZPC_RUNTIME_ABI_UNSUPPORTED_OPERATION);
 
     CountingTaskState countingState{};
     zpc_runtime_host_submit_payload_t payload{};
@@ -149,6 +171,52 @@ int main() {
     assert(suspendedState.callCount == 2);
     assert(suspendedState.sawStop);
     assert(engineTable->release_submission(suspendedSubmission) == ZPC_RUNTIME_ABI_OK);
+
+    zs::ValidationSuiteReport report{};
+    report.suite = "async-abi";
+    zs::ValidationRecord record{};
+    record.recordId = "abi.validation.sample";
+    record.suite = "async-abi";
+    record.name = "host-export";
+    record.backend = "inline_host";
+    record.executor = "inline";
+    record.target = "cpu";
+    record.kind = zs::ValidationRecordKind::validation;
+    record.outcome = zs::ValidationOutcome::pass;
+    record.durationNs = 33;
+    record.measurements.push_back(zs::ValidationMeasurement{
+      "latency", "ns", 33.0,
+      zs::ValidationThreshold{zs::ValidationThresholdMode::less_equal, 64.0, 0.0}});
+    report.records.push_back(record);
+    zs::publish_async_runtime_validation_report(engine, report);
+
+    zpc_runtime_validation_summary_v1_t validationSummary{};
+    validationSummary.header =
+      zpc_runtime_make_header((uint32_t)sizeof(zpc_runtime_validation_summary_v1_t));
+    assert(validationExtension->query_summary(engine, &validationSummary) == ZPC_RUNTIME_ABI_OK);
+    assert(string_from_view(validationSummary.schema_version) == "zpc.validation.v1");
+    assert(string_from_view(validationSummary.suite) == "async-abi");
+    assert(validationSummary.total == 1);
+    assert(validationSummary.passed == 1);
+    assert(validationSummary.failed == 0);
+
+    zpc_runtime_string_view_t jsonView{};
+    assert(validationExtension->query_json(engine, &jsonView) == ZPC_RUNTIME_ABI_OK);
+    const auto json = string_from_view(jsonView);
+    assert(json.find("\"schemaVersion\":\"zpc.validation.v1\"") != std::string::npos);
+    assert(json.find("\"recordId\":\"abi.validation.sample\"") != std::string::npos);
+
+    zpc_runtime_string_view_t textView{};
+    assert(validationExtension->query_text(engine, &textView) == ZPC_RUNTIME_ABI_OK);
+    const auto text = string_from_view(textView);
+    assert(text.find("suite=async-abi") != std::string::npos);
+    assert(text.find("host-export") != std::string::npos);
+
+    zs::clear_async_runtime_validation_report(engine);
+    validationSummary.header =
+      zpc_runtime_make_header((uint32_t)sizeof(zpc_runtime_validation_summary_v1_t));
+    assert(validationExtension->query_summary(engine, &validationSummary)
+           == ZPC_RUNTIME_ABI_UNSUPPORTED_OPERATION);
 
     zs::destroy_async_runtime_abi_engine(engine);
 

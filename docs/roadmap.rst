@@ -193,3 +193,5 @@ The most immediate work that best supports this roadmap is:
   backend internals
 * consolidate enough runtime and tooling interfaces that work can be distributed across multiple
   agents or workers by module or layer
+* extend the deployable runtime ABI through queried extensions for validation export first, then
+  native backend submission and signaling, instead of widening the base engine table prematurely

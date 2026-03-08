@@ -51,6 +51,10 @@ The first concrete in-tree adapter now also exposes a discoverable host-submit e
 ``zpc.runtime.host_submit.v1``. That extension keeps the base engine table narrow while making the
 current host-callback submission contract explicit.
 
+It also exposes a validation-report extension, ``zpc.runtime.validation_report.v1``, so
+machine-readable validation payloads can move across the deployable ABI without forcing validation
+transport details into the base engine table.
+
 This is intentionally narrow. It is enough to support runtime discovery, submission, lifecycle
 control, and future extension lookup without freezing internal C++ implementation details.
 
@@ -81,6 +85,24 @@ The ``zpc.runtime.host_submit.v1`` extension documents that:
 This is a pragmatic first implementation step: it exercises the stable engine boundary with a real
 runtime underneath it while keeping richer backend-native or validation transport surfaces available
 for future queried extensions.
+
+Validation Report Extension
+---------------------------
+
+The ``zpc.runtime.validation_report.v1`` extension now defines the first stable validation export
+surface on the deployable runtime ABI.
+
+It exposes three narrow operations:
+
+* query the latest published validation summary through ``zpc_runtime_validation_summary_v1_t``
+* query the latest deterministic JSON report as a ``zpc_runtime_string_view_t``
+* query the latest CLI-oriented text summary as a ``zpc_runtime_string_view_t``
+
+The adapter-side helpers ``publish_async_runtime_validation_report()`` and
+``clear_async_runtime_validation_report()`` let in-tree runtime integrations publish the existing
+``ValidationSuiteReport`` model without freezing the internal schema structures directly into the C
+ABI. That keeps the deployable surface transport-friendly while reusing the already established
+validation schema and formatting stack.
 
 Upgrade Discipline
 ------------------
@@ -120,5 +142,6 @@ Testing
 -------
 
 ``test/async_runtime_abi.cpp`` now validates the version header, compatibility checks, engine
-function-table contract, host-submit extension discovery, completed host submission, and suspended
-task cancellation through the concrete ``AsyncRuntime`` adapter.
+function-table contract, host-submit extension discovery, completed host submission, suspended task
+cancellation, validation extension discovery, and validation summary or JSON or text export through
+the concrete ``AsyncRuntime`` adapter.

@@ -117,6 +117,31 @@ extern "C" {
     uint64_t reserved[6];
   } zpc_runtime_host_submit_extension_v1_t;
 
+  typedef struct zpc_runtime_validation_summary_v1_t {
+    zpc_runtime_abi_header_t header;
+    zpc_runtime_string_view_t schema_version;
+    zpc_runtime_string_view_t suite;
+    uint64_t total;
+    uint64_t passed;
+    uint64_t failed;
+    uint64_t skipped;
+    uint64_t errored;
+    uint64_t reserved[4];
+  } zpc_runtime_validation_summary_v1_t;
+
+  typedef int32_t (*zpc_runtime_validation_query_summary_fn)(
+      zpc_runtime_engine_handle_t *engine, zpc_runtime_validation_summary_v1_t *summary);
+  typedef int32_t (*zpc_runtime_validation_query_blob_fn)(zpc_runtime_engine_handle_t *engine,
+                                                          zpc_runtime_string_view_t *view);
+
+  typedef struct zpc_runtime_validation_extension_v1_t {
+    zpc_runtime_abi_header_t header;
+    zpc_runtime_validation_query_summary_fn query_summary;
+    zpc_runtime_validation_query_blob_fn query_json;
+    zpc_runtime_validation_query_blob_fn query_text;
+    void *reserved[8];
+  } zpc_runtime_validation_extension_v1_t;
+
   typedef int32_t (*zpc_runtime_query_engine_desc_fn)(zpc_runtime_engine_handle_t *engine,
                                                       zpc_runtime_engine_desc_t *desc);
   typedef int32_t (*zpc_runtime_submit_fn)(zpc_runtime_engine_handle_t *engine,
@@ -185,11 +210,14 @@ extern "C" {
 
 #include <memory>
 #include "zensim/execution/AsyncRuntime.hpp"
+#include "zensim/execution/ValidationFormat.hpp"
 
 namespace zs {
 
   inline constexpr const char *zpc_runtime_host_submit_extension_name =
       "zpc.runtime.host_submit.v1";
+  inline constexpr const char *zpc_runtime_validation_extension_name =
+      "zpc.runtime.validation_report.v1";
   inline constexpr uint32_t zpc_runtime_host_submit_payload_slot = 0u;
 
   inline zpc_runtime_string_view_t zpc_runtime_make_string_view(const char *text) noexcept {
@@ -248,7 +276,8 @@ namespace zs {
   struct AsyncRuntimeAbiEngineConfig {
     SmallString engineName{"zpc-async-runtime"};
     SmallString buildId{"local"};
-    uint64_t capabilityMask{ZPC_RUNTIME_ABI_CAP_ASYNC_SUBMIT | ZPC_RUNTIME_ABI_CAP_HOT_UPGRADE};
+    uint64_t capabilityMask{ZPC_RUNTIME_ABI_CAP_ASYNC_SUBMIT | ZPC_RUNTIME_ABI_CAP_VALIDATION
+                            | ZPC_RUNTIME_ABI_CAP_HOT_UPGRADE};
     size_t workerCount{1};
   };
 
@@ -266,14 +295,39 @@ namespace zs {
     }
   };
 
+  struct AsyncRuntimeAbiValidationState {
+    ValidationSuiteReport report{};
+    std::string json{};
+    std::string text{};
+    bool available{false};
+
+    void publish(ValidationSuiteReport nextReport) {
+      nextReport.refresh_summary();
+      report = zs::move(nextReport);
+      json = format_validation_report_json(report);
+      text = format_validation_summary_text(report);
+      available = true;
+    }
+
+    void clear() noexcept {
+      report = ValidationSuiteReport{};
+      json.clear();
+      text.clear();
+      available = false;
+    }
+  };
+
 }  // namespace zs
 
 struct zpc_runtime_engine_handle_t {
   std::unique_ptr<zs::AsyncRuntime> runtime{};
   zs::SmallString engine_name{"zpc-async-runtime"};
   zs::SmallString build_id{"local"};
-  uint64_t capability_mask{ZPC_RUNTIME_ABI_CAP_ASYNC_SUBMIT | ZPC_RUNTIME_ABI_CAP_HOT_UPGRADE};
+  uint64_t capability_mask{ZPC_RUNTIME_ABI_CAP_ASYNC_SUBMIT | ZPC_RUNTIME_ABI_CAP_VALIDATION
+                           | ZPC_RUNTIME_ABI_CAP_HOT_UPGRADE};
   zpc_runtime_host_submit_extension_v1_t host_submit_extension{};
+  zpc_runtime_validation_extension_v1_t validation_extension{};
+  zs::AsyncRuntimeAbiValidationState validation_state{};
   zpc_runtime_engine_v1_t table{};
 };
 
@@ -333,16 +387,62 @@ namespace zs {
     const int32_t compatibility = zpc_runtime_is_abi_compatible(
         &extension_desc->header, (uint32_t)sizeof(zpc_runtime_extension_desc_t));
     if (compatibility != ZPC_RUNTIME_ABI_OK) return compatibility;
-    if (!zpc_runtime_string_view_equals(extension_name, zpc_runtime_host_submit_extension_name))
-      return ZPC_RUNTIME_ABI_UNSUPPORTED_OPERATION;
 
     extension_desc->header = zpc_runtime_make_header((uint32_t)sizeof(zpc_runtime_extension_desc_t));
-    extension_desc->extension_name =
-        zpc_runtime_make_string_view(zpc_runtime_host_submit_extension_name);
-    extension_desc->extension_version_major = 1;
-    extension_desc->extension_version_minor = 0;
-    extension_desc->function_table = &engine->host_submit_extension;
+    if (zpc_runtime_string_view_equals(extension_name, zpc_runtime_host_submit_extension_name)) {
+      extension_desc->extension_name =
+          zpc_runtime_make_string_view(zpc_runtime_host_submit_extension_name);
+      extension_desc->extension_version_major = 1;
+      extension_desc->extension_version_minor = 0;
+      extension_desc->function_table = &engine->host_submit_extension;
+    } else if (zpc_runtime_string_view_equals(extension_name,
+                                              zpc_runtime_validation_extension_name)) {
+      extension_desc->extension_name =
+          zpc_runtime_make_string_view(zpc_runtime_validation_extension_name);
+      extension_desc->extension_version_major = 1;
+      extension_desc->extension_version_minor = 0;
+      extension_desc->function_table = &engine->validation_extension;
+    } else {
+      return ZPC_RUNTIME_ABI_UNSUPPORTED_OPERATION;
+    }
     for (auto &slot : extension_desc->reserved) slot = 0;
+    return ZPC_RUNTIME_ABI_OK;
+  }
+
+  inline int32_t zpc_runtime_validation_query_summary(zpc_runtime_engine_handle_t *engine,
+                                                      zpc_runtime_validation_summary_v1_t *summary) {
+    if (!engine || !summary) return ZPC_RUNTIME_ABI_ERROR;
+    const int32_t compatibility = zpc_runtime_is_abi_compatible(
+        &summary->header, (uint32_t)sizeof(zpc_runtime_validation_summary_v1_t));
+    if (compatibility != ZPC_RUNTIME_ABI_OK) return compatibility;
+    if (!engine->validation_state.available) return ZPC_RUNTIME_ABI_UNSUPPORTED_OPERATION;
+
+    const auto &report = engine->validation_state.report;
+    summary->header = zpc_runtime_make_header((uint32_t)sizeof(zpc_runtime_validation_summary_v1_t));
+    summary->schema_version = zpc_runtime_make_string_view(report.schemaVersion.asChars());
+    summary->suite = zpc_runtime_make_string_view(report.suite.asChars());
+    summary->total = report.summary.total;
+    summary->passed = report.summary.passed;
+    summary->failed = report.summary.failed;
+    summary->skipped = report.summary.skipped;
+    summary->errored = report.summary.errored;
+    for (auto &slot : summary->reserved) slot = 0;
+    return ZPC_RUNTIME_ABI_OK;
+  }
+
+  inline int32_t zpc_runtime_validation_query_json(zpc_runtime_engine_handle_t *engine,
+                                                   zpc_runtime_string_view_t *view) {
+    if (!engine || !view) return ZPC_RUNTIME_ABI_ERROR;
+    if (!engine->validation_state.available) return ZPC_RUNTIME_ABI_UNSUPPORTED_OPERATION;
+    *view = zpc_runtime_make_string_view(engine->validation_state.json.c_str());
+    return ZPC_RUNTIME_ABI_OK;
+  }
+
+  inline int32_t zpc_runtime_validation_query_text(zpc_runtime_engine_handle_t *engine,
+                                                   zpc_runtime_string_view_t *view) {
+    if (!engine || !view) return ZPC_RUNTIME_ABI_ERROR;
+    if (!engine->validation_state.available) return ZPC_RUNTIME_ABI_UNSUPPORTED_OPERATION;
+    *view = zpc_runtime_make_string_view(engine->validation_state.text.c_str());
     return ZPC_RUNTIME_ABI_OK;
   }
 
@@ -423,6 +523,13 @@ namespace zs {
     engine->host_submit_extension.reserved0 = 0;
     for (auto &slot : engine->host_submit_extension.reserved) slot = 0;
 
+    engine->validation_extension.header =
+      zpc_runtime_make_header((uint32_t)sizeof(zpc_runtime_validation_extension_v1_t));
+    engine->validation_extension.query_summary = &zpc_runtime_validation_query_summary;
+    engine->validation_extension.query_json = &zpc_runtime_validation_query_json;
+    engine->validation_extension.query_text = &zpc_runtime_validation_query_text;
+    for (auto &slot : engine->validation_extension.reserved) slot = nullptr;
+
     engine->table.header = zpc_runtime_make_header((uint32_t)sizeof(zpc_runtime_engine_v1_t));
     engine->table.query_engine_desc = &zpc_runtime_async_query_engine_desc;
     engine->table.submit = &zpc_runtime_async_submit;
@@ -443,6 +550,18 @@ namespace zs {
     return engine ? &engine->table : nullptr;
   }
 
+  inline void publish_async_runtime_validation_report(zpc_runtime_engine_handle_t *engine,
+                                                      ValidationSuiteReport report) {
+    if (!engine) return;
+    engine->validation_state.publish(zs::move(report));
+    engine->capability_mask |= ZPC_RUNTIME_ABI_CAP_VALIDATION;
+  }
+
+  inline void clear_async_runtime_validation_report(zpc_runtime_engine_handle_t *engine) noexcept {
+    if (!engine) return;
+    engine->validation_state.clear();
+  }
+
   static_assert(sizeof(zpc_runtime_abi_header_t) == 16, "ABI header layout must remain fixed");
   static_assert(sizeof(zpc_runtime_string_view_t) == 16, "ABI string view layout must remain fixed");
   static_assert(offsetof(zpc_runtime_engine_v1_t, header) == 0,
@@ -451,9 +570,14 @@ namespace zs {
                 "Engine ABI function table order must remain append-only");
   static_assert(sizeof(zpc_runtime_host_task_context_t) == 72,
                 "Host task context layout must remain fixed");
+  static_assert(sizeof(zpc_runtime_validation_summary_v1_t) == 96,
+                "Validation summary layout must remain fixed");
   static_assert(offsetof(zpc_runtime_host_submit_payload_t, task)
                     == sizeof(zpc_runtime_abi_header_t),
                 "Host submit payload function pointer order must remain append-only");
+  static_assert(offsetof(zpc_runtime_validation_extension_v1_t, query_summary)
+                    == sizeof(zpc_runtime_abi_header_t),
+                "Validation extension function table order must remain append-only");
 
 }  // namespace zs
 #endif
