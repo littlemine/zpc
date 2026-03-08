@@ -33,6 +33,48 @@ target_link_libraries(paraprim PRIVATE zpc)
 add_test(ZsParallelPrimitive paraprim)
 add_dependencies(zensim paraprim)
 
+# async runtime
+add_executable(asyncruntime async_runtime.cpp)
+target_link_libraries(asyncruntime PRIVATE zpc)
+
+add_test(ZsAsyncRuntime asyncruntime)
+add_dependencies(zensim asyncruntime)
+
+# async foundation
+add_executable(asyncfoundation async_foundation.cpp)
+target_link_libraries(asyncfoundation PRIVATE zpc)
+
+add_test(ZsAsyncFoundation asyncfoundation)
+add_dependencies(zensim asyncfoundation)
+
+# async backend contract
+add_executable(asyncbackendcontract async_backend_contract.cpp)
+target_link_libraries(asyncbackendcontract PRIVATE zpc)
+
+add_test(ZsAsyncBackendContract asyncbackendcontract)
+add_dependencies(zensim asyncbackendcontract)
+
+# validation schema
+add_executable(validationschema validation_schema.cpp)
+target_link_libraries(validationschema PRIVATE zpc)
+
+add_test(ZsValidationSchema validationschema)
+add_dependencies(zensim validationschema)
+
+# validation format
+add_executable(validationformat validation_format.cpp)
+target_link_libraries(validationformat PRIVATE zpc)
+
+add_test(ZsValidationFormat validationformat)
+add_dependencies(zensim validationformat)
+
+# validation compare
+add_executable(validationcompare validation_compare.cpp)
+target_link_libraries(validationcompare PRIVATE zpc)
+
+add_test(ZsValidationCompare validationcompare)
+add_dependencies(zensim validationcompare)
+
 # binary search
 add_executable(binarysearchtest binary_search.cpp)
 target_link_libraries(binarysearchtest PRIVATE zpc)

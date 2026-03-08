@@ -6,6 +6,7 @@ This repo is going through rapid changes, and we do not promise ABI compatibilit
 ## **Document**
 See [git wiki](https://github.com/zensim-dev/zpc/wiki) page for more build details.
 See [Specification](Specification.md) for more usage info.
+See [docs/roadmap.rst](docs/roadmap.rst) for the platform direction and delivery priorities.
 
 ## **Compilation**
 This is a cross-platform C++/CUDA cmake project. The minimum version requirement of cmake is 3.18, yet the latest version is generally recommended. Please install cmake through official website or python3-pip, since the cmake version in apt repo is behind.

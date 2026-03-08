@@ -7,6 +7,7 @@ set(ZENSIM_LIBRARY_CORE_SOURCE_FILES
   execution/Stacktrace.cpp
   # execution/ExecutionPolicy.cpp
   execution/ConcurrencyPrimitive.cpp
+  execution/ManagedThread.cpp
   types/Iterator.cpp
   Logger.cpp
   io/IO.cpp
@@ -116,6 +117,11 @@ set(ZENSIM_LIBRARY_CORE_INCLUDE_FILES
 
   # execution
   execution/Concurrency.h
+  execution/AsyncRuntime.hpp
+  execution/ManagedThread.hpp
+  execution/ValidationCompare.hpp
+  execution/ValidationFormat.hpp
+  execution/ValidationSchema.hpp
   execution/ExecutionPolicy.hpp
   execution/Stacktrace.hpp
   execution/Atomics.hpp
@@ -186,6 +192,7 @@ set(ZENSIM_LIBRARY_CORE_INCLUDE_FILES
   Logger.hpp
   Platform.hpp
   Reflection.h
+  ZpcAsync.hpp
   # Singleton.h
   TypeAlias.hpp
 
@@ -365,6 +372,7 @@ target_sources(zpcbase
   INTERFACE
 
   ZpcBuiltin.hpp
+  ZpcAsync.hpp
   ZpcFunction.hpp
   ZpcFunctional.hpp
   ZpcImplPattern.hpp

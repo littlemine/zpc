@@ -3,6 +3,8 @@
    :maxdepth: 2
 
    overview
+   roadmap
+   validation_schema
 
 .. toctree::
    :caption: APIs
