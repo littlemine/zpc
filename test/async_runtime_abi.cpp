@@ -19,6 +19,8 @@ namespace {
     void *signalHandle{reinterpret_cast<void *>(static_cast<uintptr_t>(0xBBBB))};
     int syncCount{0};
     int recordCount{0};
+    int waitCount{0};
+    void *lastForeignSignal{nullptr};
   };
 
   zpc_runtime_host_task_result_e counting_task(void *user_data,
@@ -68,6 +70,13 @@ namespace {
 
   int32_t fake_native_record(void *binding) {
     ++static_cast<FakeNativeQueueState *>(binding)->recordCount;
+    return 1;
+  }
+
+  int32_t fake_native_wait(void *binding, void *foreignSignal) {
+    auto *state = static_cast<FakeNativeQueueState *>(binding);
+    ++state->waitCount;
+    state->lastForeignSignal = foreignSignal;
     return 1;
   }
 
@@ -200,6 +209,7 @@ int main() {
     nativePayload.signal_handle = &fake_native_signal_handle;
     nativePayload.sync = &fake_native_sync;
     nativePayload.record = &fake_native_record;
+    nativePayload.wait = &fake_native_wait;
 
     CountingTaskState nativeTaskState{};
     zpc_runtime_host_submit_payload_t nativeHostPayload{};
@@ -230,6 +240,10 @@ int main() {
     assert(nativeEvent.status_code == static_cast<uint64_t>(zs::AsyncTaskStatus::completed));
     assert(nativeEvent.native_signal_token
            == static_cast<uint64_t>(reinterpret_cast<uintptr_t>(nativeState.signalHandle)));
+        assert(nativeExtension->wait(&nativePayload, nativeEvent.native_signal_token)
+          == ZPC_RUNTIME_ABI_OK);
+        assert(nativeState.waitCount == 1);
+        assert(nativeState.lastForeignSignal == nativeState.signalHandle);
     assert(engineTable->release_submission(nativeSubmission) == ZPC_RUNTIME_ABI_OK);
 
     SuspendedTaskState suspendedState{};

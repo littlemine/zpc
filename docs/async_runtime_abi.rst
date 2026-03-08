@@ -122,6 +122,9 @@ The current host-validated shape exposes:
 	lookup, synchronization, record, and wait hooks
 * a native submit entry point that reuses the existing host task payload for the task body while
 	routing execution through ``AsyncNativeQueueExecutor``
+* a native wait entry point that consumes a foreign signal token through the same stable payload
+	hook table, so signaling is both observable and consumable without widening the base engine
+	table
 
 This keeps task definition and queue binding separate: host-callable task logic remains on the
 existing host-submit payload contract, while backend-native synchronization and signaling stay on
@@ -167,4 +170,5 @@ Testing
 ``test/async_runtime_abi.cpp`` now validates the version header, compatibility checks, engine
 function-table contract, host-submit extension discovery, completed host submission, suspended task
 cancellation, validation extension discovery, validation summary or JSON or text export, and a
-host-only fake native queue submission path through the concrete ``AsyncRuntime`` adapter.
+host-only fake native queue submission and wait-signal path through the concrete ``AsyncRuntime``
+adapter.

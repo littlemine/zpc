@@ -178,10 +178,13 @@ extern "C" {
       const zpc_runtime_native_queue_payload_t *queue_payload,
       const zpc_runtime_submission_desc_t *submission_desc,
       zpc_runtime_submission_handle_t **submission);
+  typedef int32_t (*zpc_runtime_native_wait_signal_fn)(
+      const zpc_runtime_native_queue_payload_t *queue_payload, uint64_t foreign_signal_token);
 
   typedef struct zpc_runtime_native_queue_extension_v1_t {
     zpc_runtime_abi_header_t header;
     zpc_runtime_native_submit_fn submit;
+    zpc_runtime_native_wait_signal_fn wait;
     void *reserved[8];
   } zpc_runtime_native_queue_extension_v1_t;
 
@@ -649,6 +652,20 @@ namespace zs {
     return ZPC_RUNTIME_ABI_OK;
   }
 
+  inline int32_t zpc_runtime_native_queue_wait_signal(
+      const zpc_runtime_native_queue_payload_t *queue_payload, uint64_t foreign_signal_token) {
+    if (!queue_payload) return ZPC_RUNTIME_ABI_ERROR;
+    const int32_t payloadCompatibility = zpc_runtime_is_abi_compatible(
+        &queue_payload->header, (uint32_t)sizeof(zpc_runtime_native_queue_payload_t));
+    if (payloadCompatibility != ZPC_RUNTIME_ABI_OK) return payloadCompatibility;
+    if (!queue_payload->wait) return ZPC_RUNTIME_ABI_UNSUPPORTED_OPERATION;
+    return queue_payload->wait(queue_payload->binding,
+                               reinterpret_cast<void *>(static_cast<uintptr_t>(foreign_signal_token)))
+               != 0
+           ? ZPC_RUNTIME_ABI_OK
+           : ZPC_RUNTIME_ABI_ERROR;
+  }
+
   inline int32_t zpc_runtime_async_submit(zpc_runtime_engine_handle_t *engine,
                                           const zpc_runtime_submission_desc_t *desc,
                                           zpc_runtime_submission_handle_t **submission) {
@@ -736,6 +753,7 @@ namespace zs {
     engine->native_queue_extension.header =
       zpc_runtime_make_header((uint32_t)sizeof(zpc_runtime_native_queue_extension_v1_t));
     engine->native_queue_extension.submit = &zpc_runtime_native_queue_submit;
+    engine->native_queue_extension.wait = &zpc_runtime_native_queue_wait_signal;
     for (auto &slot : engine->native_queue_extension.reserved) slot = nullptr;
 
     engine->table.header = zpc_runtime_make_header((uint32_t)sizeof(zpc_runtime_engine_v1_t));
@@ -789,6 +807,9 @@ namespace zs {
   static_assert(offsetof(zpc_runtime_native_queue_extension_v1_t, submit)
                     == sizeof(zpc_runtime_abi_header_t),
                 "Native queue extension function table order must remain append-only");
+  static_assert(offsetof(zpc_runtime_native_queue_extension_v1_t, wait)
+                    == sizeof(zpc_runtime_abi_header_t) + sizeof(zpc_runtime_native_submit_fn),
+                "Native queue extension wait entry must remain append-only");
 
 }  // namespace zs
 #endif
