@@ -234,6 +234,63 @@ set(ZENSIM_LIBRARY_CORE_INCLUDE_FILES
 
   io/Filesystem.hpp
 )
+set(ZENSIM_LIBRARY_FOUNDATION_INCLUDE_FILES
+  execution/Concurrency.h
+  execution/ManagedThread.hpp
+  execution/ExecutionPolicy.hpp
+  execution/Stacktrace.hpp
+  execution/Atomics.hpp
+  execution/Intrinsics.hpp
+  io/Filesystem.hpp
+  io/IO.h
+  Logger.hpp
+  Platform.hpp
+  TypeAlias.hpp
+  ZpcAsync.hpp
+  ZpcCoroutine.hpp
+  ZpcFunction.hpp
+  ZpcResource.hpp
+  ZpcTaskGraph.hpp
+  container/ConcurrentQueue.hpp
+  math/bit/Bits.h
+  math/Hash.hpp
+  math/MathUtils.h
+  math/RandomNumber.hpp
+  math/Rotation.hpp
+  math/Tensor.hpp
+  math/Vec.h
+  math/VecInterface.hpp
+  memory/Allocator.h
+  memory/MemOps.hpp
+  memory/MemoryResource.h
+  meta/Functional.h
+  meta/Meta.h
+  profile/CppTimers.hpp
+  types/BuilderBase.hpp
+  types/Iterator.h
+  types/Optional.h
+  types/Pointers.hpp
+  types/Polymorphism.h
+  types/Property.h
+  types/SmallVector.hpp
+  types/SourceLocation.hpp
+  types/Tuple.h
+  visitors/ObjectVisitor.hpp
+)
+set(ZENSIM_LIBRARY_VALIDATION_CORE_INCLUDE_FILES
+  execution/ValidationCompare.hpp
+  execution/ValidationFormat.hpp
+  execution/ValidationSchema.hpp
+)
+set(ZENSIM_LIBRARY_ASYNC_RUNTIME_CORE_INCLUDE_FILES
+  execution/AsyncAwaitables.hpp
+  execution/AsyncBackendProfile.hpp
+  execution/AsyncMemoryPool.hpp
+  execution/AsyncNativeQueueAdapter.hpp
+  execution/AsyncRuntime.hpp
+  execution/AsyncRuntimeAbi.hpp
+  execution/AsyncScheduler.hpp
+)
 set(ZENSIM_LIBRARY_IO_INCLUDE_FILES
   io/IO.h
   io/MeshIO.hpp
@@ -415,6 +472,30 @@ target_include_directories(zpcbase INTERFACE
 )
 target_link_libraries(zpcbase INTERFACE zpc_cxx_deps)
 
+# Milestone 1 extraction starts by making lower-layer boundaries explicit in CMake while compiled
+# ownership still resides in zpccore. This enables gradual test or downstream narrowing before the
+# heavier source migration lands.
+add_library(zpccore_foundation INTERFACE)
+target_sources(zpccore_foundation
+  INTERFACE
+  ${ZENSIM_LIBRARY_FOUNDATION_INCLUDE_FILES}
+)
+target_link_libraries(zpccore_foundation INTERFACE zpcbase)
+
+add_library(zpc_validation_core INTERFACE)
+target_sources(zpc_validation_core
+  INTERFACE
+  ${ZENSIM_LIBRARY_VALIDATION_CORE_INCLUDE_FILES}
+)
+target_link_libraries(zpc_validation_core INTERFACE zpcbase)
+
+add_library(zpc_async_runtime_core INTERFACE)
+target_sources(zpc_async_runtime_core
+  INTERFACE
+  ${ZENSIM_LIBRARY_ASYNC_RUNTIME_CORE_INCLUDE_FILES}
+)
+target_link_libraries(zpc_async_runtime_core INTERFACE zpccore_foundation zpc_validation_core)
+
 # ############
 # zpc: core #
 # ############
@@ -443,7 +524,7 @@ if(ZS_ENABLE_PCH)
   )
 endif(ZS_ENABLE_PCH)
 
-target_link_libraries(zpccore PUBLIC zpcbase)
+target_link_libraries(zpccore PUBLIC zpcbase zpccore_foundation zpc_validation_core zpc_async_runtime_core)
 target_link_libraries(zpccore PRIVATE zswhereami)
 # if (WIN32)
 #   target_link_libraries(zpccore PUBLIC synchronization)

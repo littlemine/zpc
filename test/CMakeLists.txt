@@ -48,7 +48,7 @@ target_compile_features(asyncatomicbenchmark PRIVATE cxx_std_20)
 add_dependencies(zensim asyncatomicbenchmark)
 
 add_executable(smartpointertest smart_pointers.cpp)
-target_link_libraries(smartpointertest PRIVATE zpc)
+target_link_libraries(smartpointertest PRIVATE zpcbase)
 
 add_test(ZsSmartPointers smartpointertest)
 add_dependencies(zensim smartpointertest)
@@ -69,7 +69,7 @@ add_dependencies(zensim asyncbackendcontract)
 
 # async backend profile
 add_executable(asyncbackendprofile async_backend_profile.cpp)
-target_link_libraries(asyncbackendprofile PRIVATE zpc)
+target_link_libraries(asyncbackendprofile PRIVATE zpc_async_runtime_core)
 
 add_test(ZsAsyncBackendProfile asyncbackendprofile)
 add_dependencies(zensim asyncbackendprofile)
@@ -95,21 +95,21 @@ add_dependencies(zensim asyncruntimeabidemo)
 
 # validation schema
 add_executable(validationschema validation_schema.cpp)
-target_link_libraries(validationschema PRIVATE zpc)
+target_link_libraries(validationschema PRIVATE zpc_validation_core)
 
 add_test(ZsValidationSchema validationschema)
 add_dependencies(zensim validationschema)
 
 # validation format
 add_executable(validationformat validation_format.cpp)
-target_link_libraries(validationformat PRIVATE zpc)
+target_link_libraries(validationformat PRIVATE zpc_validation_core)
 
 add_test(ZsValidationFormat validationformat)
 add_dependencies(zensim validationformat)
 
 # validation compare
 add_executable(validationcompare validation_compare.cpp)
-target_link_libraries(validationcompare PRIVATE zpc)
+target_link_libraries(validationcompare PRIVATE zpc_validation_core)
 
 add_test(ZsValidationCompare validationcompare)
 add_dependencies(zensim validationcompare)
