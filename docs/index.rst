@@ -5,6 +5,7 @@
    overview
    async_backend_profiles
    async_native_queue_adapter
+   async_runtime_abi
    roadmap
    validation_schema
 
