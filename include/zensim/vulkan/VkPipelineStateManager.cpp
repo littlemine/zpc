@@ -41,10 +41,10 @@ namespace zs {
     }
 
     // Create the Vulkan driver-level pipeline cache (loads .pso blob from disk)
-    _psoCache = std::make_unique<PipelineCacheManager>(_ctx, tfm, tag);
+    _psoCache = zs::make_unique<PipelineCacheManager>(_ctx, tfm, tag);
 
     // Create the descriptor-level cache (loads .bin/.json desc files)
-    _diskCache = std::make_unique<DescriptorCache>(tfm, tag);
+    _diskCache = zs::make_unique<DescriptorCache>(tfm, tag);
   }
 
   void PipelineStateManager::disableDiskCache() noexcept {

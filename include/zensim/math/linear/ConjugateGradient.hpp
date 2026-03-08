@@ -1,5 +1,6 @@
 #pragma once
 #include <cmath>
+#include <iostream>
 
 #include "LinearOperators.hpp"
 
@@ -53,8 +54,8 @@ namespace zs {
     }
 
     template <typename DV> void print(DV&& dv) {
-      for (size_t i = 0; i != dv.size(); ++i) fmt::print("{} ", dv.get(i));
-      fmt::print("\n");
+      for (size_t i = 0; i != dv.size(); ++i) std::cout << dv.get(i) << ' ';
+      std::cout << '\n';
     }
 
     template <class ExecutionPolicy, typename DofViewA, typename DofViewB>
@@ -84,75 +85,87 @@ namespace zs {
       int iter = 0;
       auto condition = [&iter]() { return iter >= 1; };
       auto shouldPrint = [](bool v = true) { return v; };
-      auto checkVector = [&policy, this](auto&& v, fmt::color c = fmt::color::white) {
+      auto checkVector = [&policy, this](auto&& v) {
         auto res = dotProduct(policy, v, v);
-        fmt::print(fg(c), "\tchecking result dotprod: {}\n", res);
+        std::cout << "\tchecking result dotprod: " << res << '\n';
       };
       T alpha, beta, residualPreconditionedNorm, zTrk, zTrkLast;
 
-      checkVector(b, fmt::color::light_yellow);
+      checkVector(b);
       A.multiply(policy, x, temp);
       DofCompwiseOp{minus<void>{}}(policy, b, temp, r);  // r = b - temp;
       if (shouldPrint()) {
-        fmt::print("pre loop, b - Ax -> r\n");
-        checkVector(r, fmt::color::yellow);
+        std::cout << "pre loop, b - Ax -> r\n";
+        checkVector(r);
       }
       A.project(policy, r);
       if (shouldPrint()) {
-        fmt::print("pre loop, project r\n");
-        checkVector(r, fmt::color::yellow);
+        std::cout << "pre loop, project r\n";
+        checkVector(r);
       }
 
       A.precondition(policy, r, q);  // NOTE: requires that preconditioning matrix is projected
       if (shouldPrint()) {
-        fmt::print("pre loop, Mr -> q\n");
-        checkVector(q, fmt::color::brown);
+        std::cout << "pre loop, Mr -> q\n";
+        checkVector(q);
       }
       policy(range(numDofs), DofAssign{q, p});  // p = q;
       if (shouldPrint()) {
-        auto res = dotProduct(policy, p, p);
-        fmt::print("pre loop, q -> p\n");
-        checkVector(p, fmt::color::brown);
+        std::cout << "pre loop, q -> p\n";
+        checkVector(p);
       }
 
       zTrk = dotProduct(policy, r, q);  // zTrk = std::abs(dotProduct(r, q));
-      fmt::print(fg(fmt::color::blue), "pre loop, zTrk {} (r.dot(q))\n", zTrk);
+      std::cout << "pre loop, zTrk " << zTrk << " (r.dot(q))\n";
       residualPreconditionedNorm = std::sqrt(zTrk);
       T localTol = std::min(relTol * residualPreconditionedNorm, tol);
       for (; iter != maxIters; ++iter) {
         if (shouldPrint(condition()))
-          fmt::print("iter: {}, norm: {}, tol {}\n", iter, residualPreconditionedNorm, localTol);
+          std::cout << "iter: " << iter << ", norm: " << residualPreconditionedNorm
+                    << ", tol " << localTol << '\n';
         if (residualPreconditionedNorm <= localTol) break;
         A.multiply(policy, p, temp);
-        if (shouldPrint(condition()))
-          fmt::print("iter: {}, Ap -> temp\n", iter), checkVector(temp, fmt::color::yellow);
+        if (shouldPrint(condition())) {
+          std::cout << "iter: " << iter << ", Ap -> temp\n";
+          checkVector(temp);
+        }
         A.project(policy, temp);
-        if (shouldPrint(condition()))
-          fmt::print("iter: {}, project temp\n", iter), checkVector(temp, fmt::color::yellow);
+        if (shouldPrint(condition())) {
+          std::cout << "iter: " << iter << ", project temp\n";
+          checkVector(temp);
+        }
         alpha = zTrk / dotProduct(policy, temp, p);  // alpha = zTrk / dotProduct(temp, p);
-        if (shouldPrint(condition())) fmt::print("iter: {}, alpha {}\n", iter, alpha);
+        if (shouldPrint(condition())) std::cout << "iter: " << iter << ", alpha " << alpha << '\n';
 
         DofCompwiseOp{LinearCombineOp(alpha)}(policy, p, x, x);  // x = x + alpha * p;
-        if (shouldPrint(condition()))
-          fmt::print("iter: {}, x += a * p\n", iter), checkVector(x, fmt::color::green);
+        if (shouldPrint(condition())) {
+          std::cout << "iter: " << iter << ", x += a * p\n";
+          checkVector(x);
+        }
         DofCompwiseOp{LinearCombineOp(-alpha)}(policy, temp, r, r);  // r = r - alpha * temp;
-        if (shouldPrint(condition()))
-          fmt::print("iter: {}, r -= a * temp\n", iter), checkVector(r, fmt::color::yellow);
+        if (shouldPrint(condition())) {
+          std::cout << "iter: " << iter << ", r -= a * temp\n";
+          checkVector(r);
+        }
         A.precondition(policy, r, q);  // NOTE: requires that preconditioning matrix is projected
-        if (shouldPrint(condition()))
-          fmt::print("iter: {}, Mr -> q\n", iter), checkVector(q, fmt::color::brown);
+        if (shouldPrint(condition())) {
+          std::cout << "iter: " << iter << ", Mr -> q\n";
+          checkVector(q);
+        }
 
         zTrkLast = zTrk;
         zTrk = dotProduct(policy, q, r);  // zTrk = dotProduct(q, r);
         if (shouldPrint(condition()))
-          fmt::print(fg(fmt::color::blue), "iter: {}, ztrk(dot(q, r)) {} -> {}\n", iter, zTrkLast,
-                     zTrk);
+          std::cout << "iter: " << iter << ", ztrk(dot(q, r)) " << zTrkLast << " -> "
+                    << zTrk << '\n';
         beta = zTrk / zTrkLast;
-        if (shouldPrint(condition())) fmt::print("iter: {}, beta {}\n", iter, beta);
+        if (shouldPrint(condition())) std::cout << "iter: " << iter << ", beta " << beta << '\n';
 
         DofCompwiseOp{LinearCombineOp(beta)}(policy, p, q, p);  // p = q + beta * p;
-        if (shouldPrint(condition()))
-          fmt::print("iter: {}, p = q + beta * p\n", iter), checkVector(p, fmt::color::brown);
+        if (shouldPrint(condition())) {
+          std::cout << "iter: " << iter << ", p = q + beta * p\n";
+          checkVector(p);
+        }
 
         residualPreconditionedNorm = std::sqrt(zTrk);
         if (iter >= 1) getchar();

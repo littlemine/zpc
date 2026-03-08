@@ -36,9 +36,22 @@ add_dependencies(zensim paraprim)
 # async runtime
 add_executable(asyncruntime async_runtime.cpp)
 target_link_libraries(asyncruntime PRIVATE zpc)
+target_compile_features(asyncruntime PRIVATE cxx_std_20)
 
 add_test(ZsAsyncRuntime asyncruntime)
 add_dependencies(zensim asyncruntime)
+
+add_executable(asyncatomicbenchmark async_atomic_benchmark.cpp)
+target_link_libraries(asyncatomicbenchmark PRIVATE zpc)
+target_compile_features(asyncatomicbenchmark PRIVATE cxx_std_20)
+
+add_dependencies(zensim asyncatomicbenchmark)
+
+add_executable(smartpointertest smart_pointers.cpp)
+target_link_libraries(smartpointertest PRIVATE zpc)
+
+add_test(ZsSmartPointers smartpointertest)
+add_dependencies(zensim smartpointertest)
 
 # async foundation
 add_executable(asyncfoundation async_foundation.cpp)

@@ -1056,7 +1056,7 @@ namespace zs {
     memory.mem = mem;
     memory.memSize = memRequirements.size;
     memory.memoryPropertyFlags = memoryProperties.memoryTypes[memoryTypeIndex].propertyFlags;
-    buffer.pmem = std::make_shared<VkMemory>(std::move(memory));
+    buffer.pmem = zs::make_shared<VkMemory>(std::move(memory));
 #endif
 
     return buffer;
@@ -1166,7 +1166,7 @@ namespace zs {
     memory.mem = mem;
     memory.memSize = memRequirements.size;
     memory.memoryPropertyFlags = memoryProperties.memoryTypes[memoryTypeIndex].propertyFlags;
-    image.pmem = std::make_shared<VkMemory>(std::move(memory));
+    image.pmem = zs::make_shared<VkMemory>(std::move(memory));
 #endif
     if (createView) {
       image.pview = device.createImageView(

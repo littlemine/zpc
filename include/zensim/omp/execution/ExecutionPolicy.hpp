@@ -12,10 +12,10 @@
 #endif
 
 #include <sstream>
-#include <thread>
 
 #include "zensim/ZpcFunction.hpp"
 #include "zensim/execution/ExecutionPolicy.hpp"
+#include "zensim/execution/ManagedThread.hpp"
 #include "zensim/math/bit/Bits.h"
 #include "zensim/omp/Omp.h"
 #include "zensim/types/Iterator.h"
@@ -888,6 +888,45 @@ namespace zs {
       merge_sort_impl(FWD(first), FWD(last), FWD(compOp), true_c, loc);  // stable
     }
 
+    template <typename T, typename = void> struct radix_encoded_key;
+    template <typename T>
+    struct radix_encoded_key<T, enable_if_type<is_integral_v<T>, void>> {
+      using type = make_unsigned_t<remove_cv_t<T>>;
+    };
+    template <typename T>
+    struct radix_encoded_key<
+        T, enable_if_type<is_floating_point_v<T> && sizeof(T) == sizeof(float), void>> {
+      using type = u32;
+    };
+    template <typename T>
+    struct radix_encoded_key<
+        T, enable_if_type<is_floating_point_v<T> && sizeof(T) == sizeof(double), void>> {
+      using type = u64;
+    };
+    template <typename T>
+    using radix_encoded_key_t = typename radix_encoded_key<remove_cv_t<T>>::type;
+
+    template <typename T>
+    static constexpr radix_encoded_key_t<T> encode_radix_key(T value) noexcept {
+      using EncodedT = radix_encoded_key_t<T>;
+      static_assert(is_integral_v<T>
+                        || (is_floating_point_v<T>
+                            && (sizeof(T) == sizeof(float) || sizeof(T) == sizeof(double))),
+                    "radix sort only supports integral and 32/64-bit floating point types");
+      constexpr auto signMask = EncodedT{1} << (sizeof(T) * 8 - 1);
+      if constexpr (is_integral_v<T>) {
+        const auto bits = reinterpret_bits<EncodedT>(value);
+        if constexpr (is_signed_v<T>)
+          return bits ^ signMask;
+        else
+          return bits;
+      } else {
+        const auto bits = reinterpret_bits<EncodedT>(value);
+        if ((bits & ~signMask) == 0) return signMask;
+        return (bits & signMask) ? ~bits : (bits ^ signMask);
+      }
+    }
+
     /// radix sort
     template <class InputIt, class OutputIt>
     void radix_sort_impl(std::random_access_iterator_tag, InputIt &&first, InputIt &&last,
@@ -897,11 +936,16 @@ namespace zs {
       using DiffT = typename std::iterator_traits<IterT>::difference_type;
       using InputValueT = typename std::iterator_traits<IterT>::value_type;
       using ValueT = typename std::iterator_traits<DstIterT>::value_type;
+      using EncodedT = radix_encoded_key_t<InputValueT>;
       static_assert(
           std::is_convertible_v<DiffT, typename std::iterator_traits<DstIterT>::difference_type>,
           "diff type not compatible");
       static_assert(std::is_convertible_v<InputValueT, ValueT>, "value type not compatible");
-      static_assert(is_integral_v<ValueT>, "value type not integral");
+      static_assert(is_integral_v<InputValueT>
+                        || (is_floating_point_v<InputValueT>
+                            && (sizeof(InputValueT) == sizeof(float)
+                                || sizeof(InputValueT) == sizeof(double))),
+                    "value type not supported by radix sort");
 
       CppTimer timer;
       if (shouldProfile()) timer.tick();
@@ -919,16 +963,16 @@ namespace zs {
       std::vector<Vector<DiffT>> binSizes{};
 
       /// double buffer strategy
-      Vector<InputValueT> buffers[2] = {{allocator, (size_t)dist}, {allocator, (size_t)dist}};
-      InputValueT *cur{buffers[0].data()}, *next{buffers[1].data()};
+      Vector<EncodedT> keyBuffers[2] = {{allocator, (size_t)dist}, {allocator, (size_t)dist}};
+      Vector<InputValueT> valueBuffers[2] = {{allocator, (size_t)dist}, {allocator, (size_t)dist}};
+      EncodedT *cur{keyBuffers[0].data()}, *next{keyBuffers[1].data()};
+      InputValueT *curVals{valueBuffers[0].data()}, *nextVals{valueBuffers[1].data()};
 
-      /// move to local buffer first (bit hack for signed type)
+      /// move to local buffer first using an order-preserving encoded key
 #pragma omp parallel for if (_dop < dist) num_threads(_dop)
       for (DiffT i = 0; i < dist; ++i) {
-        if constexpr (is_signed_v<InputValueT>)
-          cur[i] = *(first + i) ^ ((InputValueT)1 << (sizeof(InputValueT) * 8 - 1));
-        else
-          cur[i] = *(first + i);
+        cur[i] = encode_radix_key(*(first + i));
+        curVals[i] = *(first + i);
       }
 
       /// LSB style (outmost loop)
@@ -940,143 +984,7 @@ namespace zs {
 
         /// init
 #pragma omp parallel if (_dop < dist) num_threads(_dop) \
-    shared(skip, nths, nwork, binSizes, binGlobalSizes, binOffsets, cur, next)
-        {
-#pragma omp single
-          {
-            nths = omp_get_num_threads();
-            nwork = (dist + nths - 1) / nths;
-            binSizes.resize(nths);
-            for (auto &v : binSizes) v = Vector<DiffT>{allocator, (size_t)0};
-            skip = false;
-          }
-#pragma omp barrier
-          /// work block partition
-          DiffT tid = omp_get_thread_num();
-          DiffT l = nwork * tid;
-          DiffT r = l + nwork;
-          if (r > dist) r = dist;
-          /// init
-          binSizes[tid].resize(binCount);
-
-          /// local count
-          for (DiffT i = 0; i < binCount; ++i) binSizes[tid][i] = 0;
-          if (l < dist)
-            for (auto i = l; i < r; ++i) binSizes[tid][(cur[i] >> st) & binMask]++;
-
-#pragma omp barrier
-
-#pragma omp single
-          {
-            /// reduce binSizes from all threads
-            for (int i = 0; i < binCount; ++i) {
-              binGlobalSizes[i] = 0;
-              for (int j = 0; j < nths; ++j) binGlobalSizes[i] += binSizes[j][i];
-              if (binGlobalSizes[i] == dist) {
-                skip = true;
-                break;
-              }
-            }
-
-            if (!skip) {
-              /// exclusive scan
-              binOffsets[0] = 0;
-              for (int i = 1; i < binCount; ++i)
-                binOffsets[i] = binOffsets[i - 1] + binGlobalSizes[i - 1];
-
-              /// update local offsets
-              for (int i = 0; i < binCount; i++) {
-                binSizes[0][i] += binOffsets[i];
-                for (int j = 1; j < nths; j++) binSizes[j][i] += binSizes[j - 1][i];
-              }
-            }
-          }
-
-          if (!skip) {
-/// distribute
-#pragma omp barrier
-            if (l < dist)
-              for (auto i = r - 1; i >= l; --i)
-                next[--binSizes[tid][(cur[i] >> st) & binMask]] = cur[i];
-#pragma omp barrier
-#pragma omp single
-            { std::swap(cur, next); }
-          }
-#pragma omp barrier
-        }
-      }
-
-#pragma omp parallel for if (_dop < dist) num_threads(_dop)
-      for (DiffT i = 0; i < dist; ++i) {
-        if constexpr (is_signed_v<InputValueT>)
-          *(d_first + i) = cur[i] ^ ((InputValueT)1 << (sizeof(InputValueT) * 8 - 1));
-        else
-          *(d_first + i) = cur[i];
-      }
-      if (shouldProfile())
-        timer.tock(std::string("[Omp Exec | File ") + loc.file_name() + ", Ln "
-                   + std::to_string(loc.line()) + ", Col " + std::to_string(loc.column()) + "]");
-    }
-    template <class InputIt, class OutputIt> void radix_sort(
-        InputIt &&first, InputIt &&last, OutputIt &&d_first, int sbit = 0,
-        int ebit = sizeof(typename std::iterator_traits<remove_cvref_t<InputIt>>::value_type) * 8,
-        const source_location &loc = source_location::current()) const {
-      static_assert(is_ra_iter_v<remove_cvref_t<InputIt>> && is_ra_iter_v<remove_cvref_t<OutputIt>>,
-                    "Input iterator pointer different from output iterator\'s");
-      radix_sort_impl(std::random_access_iterator_tag{}, FWD(first), FWD(last), FWD(d_first), sbit,
-                      ebit, loc);
-    }
-
-    template <class KeyIter, class ValueIter, typename Tn>
-    void radix_sort_pair_impl(std::random_access_iterator_tag, KeyIter &&keysIn, ValueIter &&valsIn,
-                              KeyIter &&keysOut, ValueIter &&valsOut, Tn count, int sbit, int ebit,
-                              const source_location &loc) const {
-      using KeyT = typename std::iterator_traits<remove_reference_t<KeyIter>>::value_type;
-      using ValueT = typename std::iterator_traits<remove_reference_t<ValueIter>>::value_type;
-      using DiffT = typename std::iterator_traits<remove_reference_t<KeyIter>>::difference_type;
-      static_assert(is_integral_v<KeyT>, "key type not integral");
-
-      CppTimer timer;
-      if (shouldProfile()) timer.tick();
-      const auto dist = count;
-      DiffT nths{}, nwork{};
-      // const int binBits = bit_length(_dop);
-      bool skip = false;
-      constexpr int binBits = 8;  // by byte
-      int binCount = 1 << binBits;
-      int binMask = binCount - 1;
-
-      auto allocator = get_temporary_memory_source(*this);
-      Vector<DiffT> binGlobalSizes{allocator, (size_t)binCount};
-      Vector<DiffT> binOffsets{allocator, (size_t)binCount};
-      std::vector<Vector<DiffT>> binSizes{};
-
-      /// double buffer strategy
-      Vector<KeyT> keyBuffers[2] = {{allocator, (size_t)count}, {allocator, (size_t)count}};
-      Vector<ValueT> valBuffers[2] = {{allocator, (size_t)count}, {allocator, (size_t)count}};
-      KeyT *cur{keyBuffers[0].data()}, *next{keyBuffers[1].data()};
-      ValueT *curVals{valBuffers[0].data()}, *nextVals{valBuffers[1].data()};
-
-      /// move to local buffer first (bit hack for signed type)
-#pragma omp parallel for if (_dop < dist) num_threads(_dop)
-      for (DiffT i = 0; i < dist; ++i) {
-        if constexpr (is_signed_v<KeyT>)
-          cur[i] = *(keysIn + i) ^ ((KeyT)1 << (sizeof(KeyT) * 8 - 1));
-        else
-          cur[i] = *(keysIn + i);
-        curVals[i] = *(valsIn + i);
-      }
-
-      /// LSB style (outmost loop)
-      for (int st = sbit; st < ebit; st += binBits) {
-        if (st + binBits > ebit) {
-          binMask >>= (st + binBits - ebit);
-          binCount >>= (st + binBits - ebit);
-        }
-
-        /// init
-#pragma omp parallel if (_dop < dist) num_threads(_dop) \
-    shared(skip, nths, nwork, binSizes, binGlobalSizes, binOffsets, cur, next, curVals, nextVals)
+  shared(skip, nths, nwork, binSizes, binGlobalSizes, binOffsets, cur, next, curVals, nextVals)
         {
 #pragma omp single
           {
@@ -1149,11 +1057,151 @@ namespace zs {
       }
 
 #pragma omp parallel for if (_dop < dist) num_threads(_dop)
+      for (DiffT i = 0; i < dist; ++i) *(d_first + i) = curVals[i];
+      if (shouldProfile())
+        timer.tock(std::string("[Omp Exec | File ") + loc.file_name() + ", Ln "
+                   + std::to_string(loc.line()) + ", Col " + std::to_string(loc.column()) + "]");
+    }
+    template <class InputIt, class OutputIt> void radix_sort(
+        InputIt &&first, InputIt &&last, OutputIt &&d_first, int sbit = 0,
+        int ebit = sizeof(typename std::iterator_traits<remove_cvref_t<InputIt>>::value_type) * 8,
+        const source_location &loc = source_location::current()) const {
+      static_assert(is_ra_iter_v<remove_cvref_t<InputIt>> && is_ra_iter_v<remove_cvref_t<OutputIt>>,
+                    "Input iterator pointer different from output iterator\'s");
+      radix_sort_impl(std::random_access_iterator_tag{}, FWD(first), FWD(last), FWD(d_first), sbit,
+                      ebit, loc);
+    }
+
+    template <class KeyIter, class ValueIter, typename Tn>
+    void radix_sort_pair_impl(std::random_access_iterator_tag, KeyIter &&keysIn, ValueIter &&valsIn,
+                              KeyIter &&keysOut, ValueIter &&valsOut, Tn count, int sbit, int ebit,
+                              const source_location &loc) const {
+      using KeyT = typename std::iterator_traits<remove_reference_t<KeyIter>>::value_type;
+      using ValueT = typename std::iterator_traits<remove_reference_t<ValueIter>>::value_type;
+      using DiffT = typename std::iterator_traits<remove_reference_t<KeyIter>>::difference_type;
+      using EncodedKeyT = radix_encoded_key_t<KeyT>;
+      static_assert(is_integral_v<KeyT>
+                        || (is_floating_point_v<KeyT>
+                            && (sizeof(KeyT) == sizeof(float) || sizeof(KeyT) == sizeof(double))),
+                    "key type not supported by radix sort");
+
+      CppTimer timer;
+      if (shouldProfile()) timer.tick();
+      const auto dist = count;
+      DiffT nths{}, nwork{};
+      // const int binBits = bit_length(_dop);
+      bool skip = false;
+      constexpr int binBits = 8;  // by byte
+      int binCount = 1 << binBits;
+      int binMask = binCount - 1;
+
+      auto allocator = get_temporary_memory_source(*this);
+      Vector<DiffT> binGlobalSizes{allocator, (size_t)binCount};
+      Vector<DiffT> binOffsets{allocator, (size_t)binCount};
+      std::vector<Vector<DiffT>> binSizes{};
+
+      /// double buffer strategy
+      Vector<EncodedKeyT> keyBuffers[2] = {{allocator, (size_t)count}, {allocator, (size_t)count}};
+      Vector<KeyT> outKeyBuffers[2] = {{allocator, (size_t)count}, {allocator, (size_t)count}};
+      Vector<ValueT> valBuffers[2] = {{allocator, (size_t)count}, {allocator, (size_t)count}};
+      EncodedKeyT *cur{keyBuffers[0].data()}, *next{keyBuffers[1].data()};
+      KeyT *curKeys{outKeyBuffers[0].data()}, *nextKeys{outKeyBuffers[1].data()};
+      ValueT *curVals{valBuffers[0].data()}, *nextVals{valBuffers[1].data()};
+
+      /// move to local buffer first using an order-preserving encoded key
+#pragma omp parallel for if (_dop < dist) num_threads(_dop)
       for (DiffT i = 0; i < dist; ++i) {
-        if constexpr (is_signed_v<KeyT>)
-          *(keysOut + i) = cur[i] ^ ((KeyT)1 << (sizeof(KeyT) * 8 - 1));
-        else
-          *(keysOut + i) = cur[i];
+        cur[i] = encode_radix_key(*(keysIn + i));
+        curKeys[i] = *(keysIn + i);
+        curVals[i] = *(valsIn + i);
+      }
+
+      /// LSB style (outmost loop)
+      for (int st = sbit; st < ebit; st += binBits) {
+        if (st + binBits > ebit) {
+          binMask >>= (st + binBits - ebit);
+          binCount >>= (st + binBits - ebit);
+        }
+
+        /// init
+#pragma omp parallel if (_dop < dist) num_threads(_dop) \
+  shared(skip, nths, nwork, binSizes, binGlobalSizes, binOffsets, cur, next, curKeys, nextKeys, curVals, nextVals)
+        {
+#pragma omp single
+          {
+            nths = omp_get_num_threads();
+            nwork = (dist + nths - 1) / nths;
+            binSizes.resize(nths);
+            for (auto &v : binSizes) v = Vector<DiffT>{allocator, (size_t)0};
+            skip = false;
+          }
+#pragma omp barrier
+          /// work block partition
+          DiffT tid = omp_get_thread_num();
+          DiffT l = nwork * tid;
+          DiffT r = l + nwork;
+          if (r > dist) r = dist;
+          /// init
+          binSizes[tid].resize(binCount);
+
+          /// local count
+          for (DiffT i = 0; i < binCount; ++i) binSizes[tid][i] = 0;
+          if (l < dist)
+            for (auto i = l; i < r; ++i) binSizes[tid][(cur[i] >> st) & binMask]++;
+
+#pragma omp barrier
+
+#pragma omp single
+          {
+            /// reduce binSizes from all threads
+            for (int i = 0; i < binCount; ++i) {
+              binGlobalSizes[i] = 0;
+              for (int j = 0; j < nths; ++j) binGlobalSizes[i] += binSizes[j][i];
+              if (binGlobalSizes[i] == dist) {
+                skip = true;
+                break;
+              }
+            }
+
+            if (!skip) {
+              /// exclusive scan
+              binOffsets[0] = 0;
+              for (int i = 1; i < binCount; ++i)
+                binOffsets[i] = binOffsets[i - 1] + binGlobalSizes[i - 1];
+
+              /// update local offsets
+              for (int i = 0; i < binCount; i++) {
+                binSizes[0][i] += binOffsets[i];
+                for (int j = 1; j < nths; j++) binSizes[j][i] += binSizes[j - 1][i];
+              }
+            }
+          }
+
+          if (!skip) {
+/// distribute
+#pragma omp barrier
+            if (l < dist)
+              for (auto i = r - 1; i >= l; --i) {
+                const auto loc = --binSizes[tid][(cur[i] >> st) & binMask];
+                next[loc] = cur[i];
+                nextKeys[loc] = curKeys[i];
+                nextVals[loc] = curVals[i];
+              }
+#pragma omp barrier
+#pragma omp single
+            {
+              std::swap(cur, next);
+              std::swap(curKeys, nextKeys);
+              std::swap(curVals, nextVals);
+            }
+          }
+#pragma omp barrier
+        }
+      }
+
+#pragma omp parallel for if (_dop < dist) num_threads(_dop)
+      for (DiffT i = 0; i < dist; ++i) {
+        *(keysOut + i) = curKeys[i];
         *(valsOut + i) = curVals[i];
       }
       if (shouldProfile())
@@ -1190,12 +1238,16 @@ namespace zs {
   constexpr bool is_backend_available(OmpExecutionPolicy) noexcept { return true; }
   constexpr bool is_backend_available(omp_exec_tag) noexcept { return true; }
 
-  inline uint get_hardware_concurrency() noexcept { return std::thread::hardware_concurrency(); }
+  inline uint get_hardware_concurrency() noexcept { return ManagedThread::hardware_concurrency(); }
+  inline uint default_omp_threads() noexcept {
+    const auto concurrency = get_hardware_concurrency();
+    return concurrency > 1 ? concurrency - 1 : 1;
+  }
   inline OmpExecutionPolicy omp_exec() noexcept {
-    return OmpExecutionPolicy{}.threads(get_hardware_concurrency() - 1);
+    return OmpExecutionPolicy{}.threads(default_omp_threads());
   }
   inline OmpExecutionPolicy par_exec(omp_exec_tag) noexcept {
-    return OmpExecutionPolicy{}.threads(get_hardware_concurrency() - 1);
+    return OmpExecutionPolicy{}.threads(default_omp_threads());
   }
 
 }  // namespace zs

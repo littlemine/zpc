@@ -1,6 +1,5 @@
 #pragma once
 
-#include <memory>
 #include <string>
 
 #include "zensim/execution/AsyncBackendProfile.hpp"
@@ -57,7 +56,7 @@ namespace zs {
   };
 
   struct AsyncNativeQueueBinding {
-    std::shared_ptr<void> storage{};
+    Shared<void> storage{};
     void *opaque{nullptr};
     AsyncNativeQueueOps ops{};
 
@@ -108,12 +107,12 @@ namespace zs {
     const AsyncNativeQueueDescriptor &descriptor() const noexcept { return _descriptor; }
     const AsyncNativeQueueBinding &binding() const noexcept { return _binding; }
 
-    AsyncEvent submit(std::shared_ptr<AsyncSubmissionState> state) override {
+    AsyncEvent submit(Shared<AsyncSubmissionState> state) override {
       if (!state) return AsyncEvent{};
       state->endpoint = make_native_queue_endpoint(_descriptor, _binding, state->desc.label);
       if (state->cancellation.stop_requested() || state->cancellation.interrupt_requested()) {
         state->event.mark_cancelled();
-        state->inFlight.store(false, std::memory_order_release);
+        state->inFlight.store(false);
         return state->event;
       }
 
@@ -129,18 +128,8 @@ namespace zs {
           backendOk = _binding.sync();
       }
 
-      if (!backendOk)
-        state->event.mark_failed();
-      else if (poll == AsyncPollStatus::suspend)
-        state->event.mark_suspended();
-      else if (poll == AsyncPollStatus::completed)
-        state->event.mark_completed();
-      else if (poll == AsyncPollStatus::cancelled)
-        state->event.mark_cancelled();
-      else
-        state->event.mark_failed();
-
-      state->inFlight.store(false, std::memory_order_release);
+      detail::finalize_async_submission(state,
+                                        backendOk ? poll : AsyncPollStatus::failed);
       return state->event;
     }
 
@@ -150,11 +139,11 @@ namespace zs {
     AsyncNativeQueueBinding _binding{};
   };
 
-  inline std::shared_ptr<AsyncNativeQueueExecutor> make_native_queue_executor(
+  inline Shared<AsyncNativeQueueExecutor> make_native_queue_executor(
       std::string executorName, AsyncNativeQueueDescriptor descriptor,
       AsyncNativeQueueBinding binding) {
-    return std::make_shared<AsyncNativeQueueExecutor>(std::move(executorName), descriptor,
-                                                      std::move(binding));
+    return zs::make_shared<AsyncNativeQueueExecutor>(std::move(executorName), descriptor,
+                             std::move(binding));
   }
 
 #if defined(ZS_ENABLE_CUDA) && ZS_ENABLE_CUDA
@@ -197,7 +186,7 @@ namespace zs {
 
   inline AsyncNativeQueueBinding bind_cuda_native_queue(Cuda::CudaContext &context,
                                                         StreamID streamId = 0) {
-    auto storage = std::make_shared<AsyncCudaNativeQueueState>();
+    auto storage = zs::make_shared<AsyncCudaNativeQueueState>();
     storage->context = &context;
     storage->streamId = streamId;
     AsyncNativeQueueBinding binding{};
@@ -252,7 +241,7 @@ namespace zs {
   inline AsyncNativeQueueBinding bind_vulkan_native_queue(VulkanContext &context,
                                                           vk_queue_e queueFamily = vk_queue_e::graphics,
                                                           u32 queueIndex = 0) {
-    auto storage = std::make_shared<AsyncVulkanNativeQueueState>();
+    auto storage = zs::make_shared<AsyncVulkanNativeQueueState>();
     storage->context = &context;
     storage->queueFamily = queueFamily;
     storage->queueIndex = queueIndex;

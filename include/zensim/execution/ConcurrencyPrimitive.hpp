@@ -6,6 +6,9 @@
 
 namespace zs {
 
+  template <typename T>
+  class Atomic;
+
   namespace detail {
     enum UnparkControl { RetainContinue, RemoveContinue, RetainBreak, RemoveBreak };
     enum ParkResult { Skip, Unpark, Timeout };
@@ -30,12 +33,23 @@ namespace zs {
     // to check if you wanna wake up this thread or keep it sleeping
     ZPC_CORE_API static FutexResult wait(std::atomic<u32> *v, u32 expected,
                                          u32 waitMask = 0xffffffff);
+    ZPC_CORE_API static FutexResult wait(u32 *v, u32 expected, u32 waitMask = 0xffffffff);
+    ZPC_CORE_API static FutexResult wait(Atomic<u32> *v, u32 expected,
+                       u32 waitMask = 0xffffffff);
     /// @note duration in milli-seconds
     ZPC_CORE_API static FutexResult wait_for(std::atomic<u32> *v, u32 expected, i64 duration = -1,
                                              u32 waitMask = 0xffffffff);
+    ZPC_CORE_API static FutexResult wait_for(u32 *v, u32 expected, i64 duration = -1,
+                         u32 waitMask = 0xffffffff);
+    ZPC_CORE_API static FutexResult wait_for(Atomic<u32> *v, u32 expected, i64 duration = -1,
+                         u32 waitMask = 0xffffffff);
     // wake up the thread if (wakeMask & waitMask == true)
     ZPC_CORE_API static int wake(std::atomic<u32> *v, int count = detail::deduce_numeric_max<int>(),
                                  u32 wakeMask = 0xffffffff);
+    ZPC_CORE_API static int wake(u32 *v, int count = detail::deduce_numeric_max<int>(),
+                   u32 wakeMask = 0xffffffff);
+    ZPC_CORE_API static int wake(Atomic<u32> *v, int count = detail::deduce_numeric_max<int>(),
+                   u32 wakeMask = 0xffffffff);
   };
 
   ZPC_CORE_API void await_change(std::atomic<u32> &v, u32 cur);

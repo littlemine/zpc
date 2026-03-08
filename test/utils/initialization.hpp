@@ -24,7 +24,7 @@ namespace zs {
 #if ZS_ENABLE_OPENMP
     return omp_exec();
 #else
-    return host_exec();
+    return seq_exec();
 #endif
   }
 

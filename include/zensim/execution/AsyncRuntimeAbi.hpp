@@ -405,7 +405,7 @@ namespace zs {
 }  // namespace zs
 
 struct zpc_runtime_engine_handle_t {
-  std::unique_ptr<zs::AsyncRuntime> runtime{};
+  zs::Unique<zs::AsyncRuntime> runtime{};
   zs::SmallString engine_name{"zpc-async-runtime"};
   zs::SmallString build_id{"local"};
   uint64_t capability_mask{ZPC_RUNTIME_ABI_CAP_ASYNC_SUBMIT | ZPC_RUNTIME_ABI_CAP_NATIVE_QUEUE
@@ -423,7 +423,7 @@ struct zpc_runtime_submission_handle_t {
   zpc_runtime_engine_handle_t *engine{nullptr};
   zs::AsyncSubmissionHandle handle{};
   uint64_t native_signal_token{0};
-  std::shared_ptr<zs::AsyncRuntimeAbiSubmissionState> state{};
+  zs::Shared<zs::AsyncRuntimeAbiSubmissionState> state{};
 };
 
 namespace zs {
@@ -617,7 +617,7 @@ namespace zs {
 
   inline AsyncNativeQueueBinding zpc_runtime_make_native_queue_binding(
       const zpc_runtime_native_queue_payload_t &payload) noexcept {
-    auto storage = std::make_shared<AsyncRuntimeAbiNativeQueueBindingState>();
+    auto storage = zs::make_shared<AsyncRuntimeAbiNativeQueueBindingState>();
     storage->binding = payload.binding;
     storage->queueHandle = payload.queue_handle;
     storage->signalHandle = payload.signal_handle;
@@ -697,7 +697,7 @@ namespace zs {
 
     auto *submission_handle = new zpc_runtime_submission_handle_t{};
     submission_handle->engine = engine;
-    submission_handle->state = std::make_shared<AsyncRuntimeAbiSubmissionState>();
+    submission_handle->state = zs::make_shared<AsyncRuntimeAbiSubmissionState>();
     submission_handle->state->desc = *submission_desc;
     submission_handle->state->executorName = "abi_native_queue";
     submission_handle->state->taskLabel = zpc_runtime_small_string_from_view(submission_desc->task_label);
@@ -799,7 +799,7 @@ namespace zs {
 
     auto *submission_handle = new zpc_runtime_submission_handle_t{};
     submission_handle->engine = engine;
-    submission_handle->state = std::make_shared<AsyncRuntimeAbiSubmissionState>();
+    submission_handle->state = zs::make_shared<AsyncRuntimeAbiSubmissionState>();
     submission_handle->state->desc = *desc;
     submission_handle->state->executorName = zpc_runtime_small_string_from_view(desc->executor_name);
     submission_handle->state->taskLabel = zpc_runtime_small_string_from_view(desc->task_label);
@@ -850,7 +850,7 @@ namespace zs {
   inline zpc_runtime_engine_handle_t *make_async_runtime_abi_engine(
       const AsyncRuntimeAbiEngineConfig &config = {}) {
     auto *engine = new zpc_runtime_engine_handle_t{};
-    engine->runtime = std::make_unique<AsyncRuntime>(config.workerCount);
+    engine->runtime = zs::make_unique<AsyncRuntime>(config.workerCount);
     engine->engine_name = config.engineName;
     engine->build_id = config.buildId;
     engine->capability_mask = config.capabilityMask;

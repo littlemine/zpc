@@ -9,6 +9,7 @@
 
 #include "VdbLevelSet.h"
 #include "zensim/Logger.hpp"
+#include "zensim/ZpcResource.hpp"
 #include "zensim/container/Vector.hpp"
 #include "zensim/execution/Concurrency.h"
 #include "zensim/execution/ExecutionPolicy.hpp"
@@ -41,12 +42,11 @@ namespace zs {
 
     VdbConverter(const std::vector<unsigned int> &nodeCnts, SmallString propTag)
         : cnts(nodeCnts),
-          ag(std::make_shared<ZSGridT>()),
-          success{std::make_shared<bool>()},
+          ag(zs::make_shared<ZSGridT>()),
+          success{zs::make_shared<bool>()},
           propTag{propTag} {
       // for each level, initialize allocations
       using namespace zs;
-      // fmt::print("nodes per level: {}, {}, {}\n", cnts[0], cnts[1], cnts[2]);
       ag->level(dim_c<0>) = RM_CVREF_T(ag->level(dim_c<0>))({{propTag, dim_v}}, nodeCnts[0]);
       ag->level(dim_c<1>) = RM_CVREF_T(ag->level(dim_c<1>))({{propTag, dim_v}}, nodeCnts[1]);
       ag->level(dim_c<2>) = RM_CVREF_T(ag->level(dim_c<2>))({{propTag, dim_v}}, nodeCnts[2]);
@@ -162,8 +162,8 @@ namespace zs {
     }
 
     std::vector<unsigned int> cnts;
-    std::shared_ptr<ZSGridT> ag;
-    std::shared_ptr<bool> success;
+    SharedPtr<ZSGridT> ag;
+    SharedPtr<bool> success;
     SmallString propTag;
   };
 

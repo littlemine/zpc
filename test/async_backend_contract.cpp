@@ -1,8 +1,5 @@
 #include <atomic>
 #include <cassert>
-#include <chrono>
-#include <memory>
-
 #include "zensim/execution/AsyncRuntime.hpp"
 
 namespace {
@@ -14,7 +11,7 @@ namespace {
     zs::AsyncBackend backend() const noexcept override { return backendValue; }
     std::string_view name() const noexcept override { return executorName; }
 
-    zs::AsyncEvent submit(std::shared_ptr<zs::AsyncSubmissionState> state) override {
+    zs::AsyncEvent submit(zs::Shared<zs::AsyncSubmissionState> state) override {
       ++submitCount;
       observedBackend = state->endpoint.backend;
       observedQueue = state->endpoint.queue;
@@ -51,7 +48,7 @@ int main() {
 
   AsyncRuntime runtime{1};
 
-  auto vkExecutor = std::make_shared<RecordingExecutor>("vk_record", AsyncBackend::vulkan);
+  auto vkExecutor = zs::make_shared<RecordingExecutor>("vk_record", AsyncBackend::vulkan);
   runtime.register_executor("vk_record", vkExecutor);
   assert(runtime.contains_executor("vk_record"));
 
@@ -71,7 +68,7 @@ int main() {
         return AsyncPollStatus::completed;
       }});
 
-  assert(vkHandle.event().wait_for(std::chrono::seconds(2)));
+  assert(vkHandle.event().wait_for(2000));
   assert(vkHandle.status() == AsyncTaskStatus::completed);
   assert(vkExecutor->submitCount.load() == 1);
   assert(vkExecutor->observedBackend == AsyncBackend::vulkan);
@@ -82,7 +79,7 @@ int main() {
   assert(vkExecutor->observedLabel == "vk-main");
   assert(vkExecutor->observedSubmissionId == vkHandle.id());
 
-  auto cudaExecutor = std::make_shared<RecordingExecutor>("cuda_record", AsyncBackend::cuda);
+  auto cudaExecutor = zs::make_shared<RecordingExecutor>("cuda_record", AsyncBackend::cuda);
   runtime.register_executor("cuda_record", cudaExecutor);
 
   void *cudaStream = reinterpret_cast<void *>(static_cast<uintptr_t>(0x5678));
@@ -101,7 +98,7 @@ int main() {
         return AsyncPollStatus::completed;
       }});
 
-  assert(cudaHandle.event().wait_for(std::chrono::seconds(2)));
+  assert(cudaHandle.event().wait_for(2000));
   assert(cudaHandle.status() == AsyncTaskStatus::completed);
   assert(cudaExecutor->submitCount.load() == 1);
   assert(cudaExecutor->observedBackend == AsyncBackend::cuda);

@@ -1,5 +1,6 @@
 #pragma once
 #include <cmath>
+#include <iostream>
 
 #include "LinearOperators.hpp"
 #include "zensim/math/matrix/Givens.hpp"
@@ -66,8 +67,8 @@ namespace zs {
     }
 
     template <typename DV> void print(DV&& dv) {
-      for (size_t i = 0; i != dv.size(); ++i) fmt::print("{} ", dv.get(i));
-      fmt::print("\n");
+      for (size_t i = 0; i != dv.size(); ++i) std::cout << dv.get(i) << ' ';
+      std::cout << '\n';
     }
 
     template <class ExecutionPolicy, typename DofViewA, typename DofViewB>
@@ -149,8 +150,6 @@ namespace zs {
       last_two_components_of_givens_transformed_least_squares_rhs
           = TV2{residualPreconditionedNorm, 0};
       for (; iter != maxIters; ++iter) {
-        // fmt::print("iter {}, residualNorm: {} ({})\n", iter, residualPreconditionedNorm,
-        // localTol);
         if (residualPreconditionedNorm < localTol) break;
 
         // use mk to store zk to save storage

@@ -1,6 +1,4 @@
 #include <cassert>
-#include <memory>
-
 #include "zensim/execution/AsyncNativeQueueAdapter.hpp"
 
 namespace {
@@ -44,7 +42,7 @@ namespace {
 int main() {
   using namespace zs;
 
-  auto storage = std::make_shared<FakeNativeQueueState>();
+  auto storage = zs::make_shared<FakeNativeQueueState>();
   AsyncNativeQueueBinding binding{};
   binding.storage = storage;
   binding.opaque = storage.get();

@@ -1,11 +1,12 @@
 #pragma once
-#include <memory>
 #include <type_traits>
+
+#include "zensim/ZpcResource.hpp"
 
 namespace zs {
 
   /// this impl only accounts for single object
-  template <class T, typename Deleter = std::default_delete<T>> class copyable_ptr {
+  template <class T, typename Deleter = DefaultDelete<T>> class copyable_ptr {
   public:
     static_assert(!std::is_array_v<T>, "copyable_ptr does not support array");
     static_assert(std::is_copy_constructible_v<T>, "T should be copy-constructible");
@@ -36,18 +37,18 @@ namespace zs {
 
     /// override copy (assignment) ctor
     constexpr copyable_ptr(const copyable_ptr &o) noexcept(std::is_nothrow_copy_constructible_v<T>)
-        : _ptr{std::unique_ptr<T, Deleter>(new T(*o), o.get_deleter())} {}
+        : _ptr{UniquePtr<T, Deleter>(new T(*o), o.get_deleter())} {}
     copyable_ptr &operator=(const copyable_ptr &o) noexcept(
         std::is_nothrow_copy_constructible_v<T>) {
-      _ptr = std::unique_ptr<T, Deleter>(new T(*o), o.get_deleter());
+      _ptr = UniquePtr<T, Deleter>(new T(*o), o.get_deleter());
       return *this;
     }
-    constexpr copyable_ptr(const std::unique_ptr<T, Deleter> &o) noexcept(
+    constexpr copyable_ptr(const UniquePtr<T, Deleter> &o) noexcept(
         std::is_nothrow_copy_constructible_v<T>)
-        : _ptr{std::unique_ptr<T, Deleter>(new T(*o), o.get_deleter())} {}
-    copyable_ptr &operator=(const std::unique_ptr<T, Deleter> &o) noexcept(
+        : _ptr{UniquePtr<T, Deleter>(new T(*o), o.get_deleter())} {}
+    copyable_ptr &operator=(const UniquePtr<T, Deleter> &o) noexcept(
         std::is_nothrow_copy_constructible_v<T>) {
-      _ptr = std::unique_ptr<T, Deleter>(new T(*o), o.get_deleter());
+      _ptr = UniquePtr<T, Deleter>(new T(*o), o.get_deleter());
       return *this;
     }
     /// delegate move conversion (assignment) ctor
@@ -60,11 +61,11 @@ namespace zs {
     copyable_ptr(copyable_ptr<U, E> &&o) noexcept : _ptr{std::move(o._ptr)} {}
     template <typename U, typename E,
               enable_if_type<
-                  __safe_conversion_up<U, E, std::unique_ptr>()
+            __safe_conversion_up<U, E, UniquePtr>()
                       && std::conditional_t<std::is_reference_v<Deleter>, std::is_same<E, Deleter>,
                                             std::is_convertible<E, Deleter>>::value,
                   int> = 0>
-    copyable_ptr(std::unique_ptr<U, E> &&o) noexcept : _ptr{std::move(o)} {}
+    copyable_ptr(UniquePtr<U, E> &&o) noexcept : _ptr{std::move(o)} {}
 
     template <typename U, typename E,
               enable_if_type<
@@ -78,11 +79,11 @@ namespace zs {
     }
     template <typename U, typename E,
               enable_if_type<
-                  __safe_conversion_up<U, E, std::unique_ptr>()
+                  __safe_conversion_up<U, E, UniquePtr>()
                       && std::conditional_t<std::is_reference_v<Deleter>, std::is_same<E, Deleter>,
                                             std::is_convertible<E, Deleter>>::value,
                   int> = 0>
-    copyable_ptr &operator=(std::unique_ptr<U, E> &&o) noexcept {
+    copyable_ptr &operator=(UniquePtr<U, E> &&o) noexcept {
       _ptr = std::move(o);
       return *this;
     }
@@ -103,12 +104,12 @@ namespace zs {
     /// modifier delegation
     pointer release() noexcept { return _ptr.release(); }
     void reset(pointer p = pointer()) noexcept { _ptr.reset(std::move(p)); }
-    void swap(std::unique_ptr<T, Deleter> &o) noexcept { _ptr.swap(o); }
+    void swap(UniquePtr<T, Deleter> &o) noexcept { _ptr.swap(o); }
     void swap(copyable_ptr &o) noexcept { _ptr.swap(o._ptr); }
 
-    operator std::unique_ptr<T, Deleter> &() noexcept { return _ptr; }
-    operator const std::unique_ptr<T, Deleter> &() const noexcept { return _ptr; }
+    operator UniquePtr<T, Deleter> &() noexcept { return _ptr; }
+    operator const UniquePtr<T, Deleter> &() const noexcept { return _ptr; }
 
-    std::unique_ptr<T, Deleter> _ptr;
+    UniquePtr<T, Deleter> _ptr;
   };
 }  // namespace zs

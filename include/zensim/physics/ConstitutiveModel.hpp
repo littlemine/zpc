@@ -1,4 +1,5 @@
 #pragma once
+#include <iostream>
 #include <tuple>
 
 #include "zensim/math/Vec.h"
@@ -6,7 +7,6 @@
 #include "zensim/math/matrix/Eigen.hpp"
 #include "zensim/math/matrix/SVD.hpp"
 #include "zensim/types/Polymorphism.h"
-#include "zensim/zpc_tpls/fmt/core.h"
 
 namespace zs {
 
@@ -161,9 +161,6 @@ namespace zs {
           make_pd(B1);
           make_pd(B2);
         }
-        // fmt::print("B0: [{}, {}], [{}, {}]\n", B0(0, 0), B0(0, 1), B0(1, 0), B0(1, 1));
-        // fmt::print("B1: [{}, {}], [{}, {}]\n", B1(0, 0), B1(0, 1), B1(1, 0), B1(1, 1));
-        // fmt::print("B2: [{}, {}], [{}, {}]\n", B2(0, 0), B2(0, 1), B2(1, 0), B2(1, 1));
         // [A_00, 0,      0] [0,      A_01, 0     ] [0,       0,      A_02]
         // [0,    B12_00, 0] [B12_01, 0,    0     ] [0,       0,      0   ]
         // [0,    0, B13_11] [0,      0,    0     ] [B13_10,  0,      0   ]
@@ -796,33 +793,42 @@ namespace zs {
   inline void displayConfig(ConstitutiveModelConfig& config) {
     match(
         [](EquationOfStateConfig& config) {
-          fmt::print("rho {}, volume {}, dim {}\n", config.rho, config.volume, config.dim);
-          fmt::print("bulk {}, gamma {}, viscosity{}\n", config.bulk, config.gamma,
-                     config.viscosity);
+          std::cout << "rho " << config.rho << ", volume " << config.volume << ", dim "
+                    << config.dim << '\n';
+          std::cout << "bulk " << config.bulk << ", gamma " << config.gamma << ", viscosity "
+                    << config.viscosity << '\n';
         },
         [](NeoHookeanConfig& config) {
-          fmt::print("rho {}, volume {}, dim {}\n", config.rho, config.volume, config.dim);
-          fmt::print("E {}, nu {}\n", config.E, config.nu);
+          std::cout << "rho " << config.rho << ", volume " << config.volume << ", dim "
+                    << config.dim << '\n';
+          std::cout << "E " << config.E << ", nu " << config.nu << '\n';
         },
         [](FixedCorotatedConfig& config) {
-          fmt::print("rho {}, volume {}, dim {}\n", config.rho, config.volume, config.dim);
-          fmt::print("E {}, nu {}\n", config.E, config.nu);
+          std::cout << "rho " << config.rho << ", volume " << config.volume << ", dim "
+                    << config.dim << '\n';
+          std::cout << "E " << config.E << ", nu " << config.nu << '\n';
         },
         [](VonMisesFixedCorotatedConfig& config) {
-          fmt::print("rho {}, volume {}, dim {}\n", config.rho, config.volume, config.dim);
-          fmt::print("E {}, nu {}, yieldStress {}\n", config.E, config.nu, config.yieldStress);
+          std::cout << "rho " << config.rho << ", volume " << config.volume << ", dim "
+                    << config.dim << '\n';
+          std::cout << "E " << config.E << ", nu " << config.nu << ", yieldStress "
+                    << config.yieldStress << '\n';
         },
         [](DruckerPragerConfig& config) {
-          fmt::print("rho {}, volume {}, dim {}\n", config.rho, config.volume, config.dim);
-          fmt::print("E {}, nu {}, logJp0 {}, fric_angle {}, cohesion {}, beta, yieldSurface {}\n",
-                     config.E, config.nu, config.logJp0, config.fa, config.cohesion, config.beta,
-                     config.yieldSurface);
+          std::cout << "rho " << config.rho << ", volume " << config.volume << ", dim "
+                    << config.dim << '\n';
+          std::cout << "E " << config.E << ", nu " << config.nu << ", logJp0 "
+                    << config.logJp0 << ", fric_angle " << config.fa << ", cohesion "
+                    << config.cohesion << ", beta " << config.beta << ", yieldSurface "
+                    << config.yieldSurface << '\n';
         },
         [](NACCConfig& config) {
-          fmt::print("rho {}, volume {}, dim {}\n", config.rho, config.volume, config.dim);
-          fmt::print("E {}, nu {}, logJp0 {}, fric_angle {}, xi {}, beta {}, mohrColumbFric {}\n",
-                     config.E, config.nu, config.logJp0, config.fa, config.xi, config.beta,
-                     config.mohrColumbFriction());
+          std::cout << "rho " << config.rho << ", volume " << config.volume << ", dim "
+                    << config.dim << '\n';
+          std::cout << "E " << config.E << ", nu " << config.nu << ", logJp0 "
+                    << config.logJp0 << ", fric_angle " << config.fa << ", xi " << config.xi
+                    << ", beta " << config.beta << ", mohrColumbFric "
+                    << config.mohrColumbFriction() << '\n';
         })(config);
   }
 

@@ -1,10 +1,5 @@
 #pragma once
 
-#include <atomic>
-#include <chrono>
-#include <condition_variable>
-#include <deque>
-#include <memory>
 #include <mutex>
 #include <string>
 #include <unordered_map>
@@ -12,7 +7,11 @@
 
 #include "zensim/ZpcAsync.hpp"
 #include "zensim/ZpcFunction.hpp"
+#include "zensim/container/ConcurrentQueue.hpp"
+#include "zensim/execution/ConcurrencyPrimitive.hpp"
+#include "zensim/execution/Intrinsics.hpp"
 #include "zensim/execution/ManagedThread.hpp"
+#include "zensim/types/ImplPattern.hpp"
 
 namespace zs {
 
@@ -119,31 +118,33 @@ namespace zs {
   public:
     using callback_t = function<void()>;
 
-    AsyncEvent() : _state{std::make_shared<SharedState>()} {}
+    AsyncEvent() : _state{zs::make_shared<SharedState>()} {}
+
+    static AsyncEvent create() { return AsyncEvent{}; }
 
     void wait() const {
-      std::unique_lock<std::mutex> lock(_state->mutex);
-      _state->cv.wait(lock, [state = _state.get()] { return is_terminal(state->status); });
+      _state->cv.wait(_state->mutex,
+                      [state = _state.get()] { return is_terminal(state->status.load()); });
     }
 
-    template <typename Rep, typename Period>
-    bool wait_for(const std::chrono::duration<Rep, Period> &duration) const {
-      std::unique_lock<std::mutex> lock(_state->mutex);
-      return _state->cv.wait_for(lock, duration,
-                                 [state = _state.get()] { return is_terminal(state->status); });
+    bool wait_for(i64 timeoutMs) const {
+      return _state->cv.wait_for(_state->mutex, timeoutMs,
+                                 [state = _state.get()] { return is_terminal(state->status.load()); });
     }
 
     AsyncTaskStatus status() const noexcept {
-      return _state->status.load(std::memory_order_acquire);
+      return _state->status.load();
     }
 
     bool ready() const noexcept { return is_terminal(status()); }
 
+    void complete(AsyncTaskStatus status = AsyncTaskStatus::completed) const { transition(status); }
+
     void on_complete(callback_t callback) const {
       bool invokeNow = false;
       {
-        std::lock_guard<std::mutex> lock(_state->mutex);
-        if (is_terminal(_state->status.load(std::memory_order_acquire)))
+        std::lock_guard<Mutex> lock(_state->mutex);
+        if (is_terminal(_state->status.load()))
           invokeNow = true;
         else
           _state->callbacks.push_back(zs::move(callback));
@@ -153,19 +154,19 @@ namespace zs {
 
   private:
     struct SharedState {
-      mutable std::mutex mutex{};
-      std::condition_variable cv{};
-      std::atomic<AsyncTaskStatus> status{AsyncTaskStatus::pending};
+      mutable Mutex mutex{};
+      ConditionVariable cv{};
+      Atomic<AsyncTaskStatus> status{AsyncTaskStatus::pending};
       std::vector<callback_t> callbacks{};
     };
 
     void transition(AsyncTaskStatus next) const {
       std::vector<callback_t> callbacks;
       {
-        std::lock_guard<std::mutex> lock(_state->mutex);
-        const auto previous = _state->status.load(std::memory_order_acquire);
+        std::lock_guard<Mutex> lock(_state->mutex);
+        const auto previous = _state->status.load();
         if (is_terminal(previous)) return;
-        _state->status.store(next, std::memory_order_release);
+        _state->status.store(next);
         if (is_terminal(next)) callbacks.swap(_state->callbacks);
       }
       _state->cv.notify_all();
@@ -178,7 +179,7 @@ namespace zs {
     void mark_cancelled() const { transition(AsyncTaskStatus::cancelled); }
     void mark_failed() const { transition(AsyncTaskStatus::failed); }
 
-    std::shared_ptr<SharedState> _state;
+    Shared<SharedState> _state;
 
     friend class AsyncExecutor;
     friend class AsyncInlineExecutor;
@@ -214,7 +215,7 @@ namespace zs {
 
     virtual AsyncBackend backend() const noexcept = 0;
     virtual std::string_view name() const noexcept = 0;
-    virtual AsyncEvent submit(std::shared_ptr<AsyncSubmissionState> state) = 0;
+    virtual AsyncEvent submit(Shared<AsyncSubmissionState> state) = 0;
   };
 
   struct AsyncSubmissionState {
@@ -225,8 +226,23 @@ namespace zs {
     AsyncStopToken cancellation{};
     AsyncStep step{};
     AsyncEvent event{};
-    std::atomic_bool inFlight{false};
+    atomic_bool inFlight{false};
   };
+
+  namespace detail {
+    inline void finalize_async_submission(const Shared<AsyncSubmissionState> &state,
+                                          AsyncPollStatus poll) {
+      if (poll == AsyncPollStatus::suspend)
+        state->event.complete(AsyncTaskStatus::suspended);
+      else if (poll == AsyncPollStatus::completed)
+        state->event.complete(AsyncTaskStatus::completed);
+      else if (poll == AsyncPollStatus::cancelled)
+        state->event.complete(AsyncTaskStatus::cancelled);
+      else
+        state->event.complete(AsyncTaskStatus::failed);
+      state->inFlight.store(false);
+    }
+  }  // namespace detail
 
   class AsyncSubmissionHandle {
   public:
@@ -240,10 +256,10 @@ namespace zs {
     bool valid() const noexcept { return static_cast<bool>(_state); }
 
   private:
-    explicit AsyncSubmissionHandle(std::shared_ptr<AsyncSubmissionState> state)
+    explicit AsyncSubmissionHandle(Shared<AsyncSubmissionState> state)
         : _state{std::move(state)} {}
 
-    std::shared_ptr<AsyncSubmissionState> _state{};
+    Shared<AsyncSubmissionState> _state{};
 
     friend class AsyncRuntime;
   };
@@ -255,7 +271,7 @@ namespace zs {
 
     AsyncBackend backend() const noexcept override { return AsyncBackend::inline_host; }
     std::string_view name() const noexcept override { return _name; }
-    AsyncEvent submit(std::shared_ptr<AsyncSubmissionState> state) override;
+    AsyncEvent submit(Shared<AsyncSubmissionState> state) override;
 
   private:
     std::string _name;
@@ -271,18 +287,25 @@ namespace zs {
 
     AsyncBackend backend() const noexcept override { return AsyncBackend::thread_pool; }
     std::string_view name() const noexcept override { return _name; }
-    AsyncEvent submit(std::shared_ptr<AsyncSubmissionState> state) override;
+    AsyncEvent submit(Shared<AsyncSubmissionState> state) override;
     void shutdown() noexcept;
 
   private:
+    struct WorkItem {
+      Shared<AsyncSubmissionState> state{};
+    };
+
     void worker_loop(ManagedThread &thread);
+    void wake_one() noexcept;
+    void wake_all() noexcept;
 
     std::string _name;
     AsyncStopSource _stop{};
-    std::mutex _mutex{};
-    std::condition_variable _cv{};
-    std::deque<std::shared_ptr<AsyncSubmissionState>> _queue{};
-    std::vector<std::unique_ptr<ManagedThread>> _workers{};
+    atomic_bool _running{true};
+    Atomic<u32> _signal{0};
+    size_t _workerCount{0};
+    ConcurrentQueue<WorkItem, 4096> _queue{};
+    std::vector<Unique<ManagedThread>> _workers{};
   };
 
   class AsyncRuntime {
@@ -291,47 +314,40 @@ namespace zs {
 
     bool contains_executor(const char *name) const;
     bool contains_executor(const std::string &name) const;
-    void register_executor(std::string name, std::shared_ptr<AsyncExecutor> executor);
+    void register_executor(std::string name, Shared<AsyncExecutor> executor);
     AsyncSubmissionHandle submit(AsyncSubmission submission);
     bool resume(const AsyncSubmissionHandle &handle);
-    static AsyncPollStatus run_step(const std::shared_ptr<AsyncSubmissionState> &state);
+    static AsyncPollStatus run_step(const Shared<AsyncSubmissionState> &state);
 
   private:
-    std::shared_ptr<AsyncExecutor> get_executor(const SmallString &name) const;
-    void dispatch(const std::shared_ptr<AsyncSubmissionState> &state,
-                  const std::shared_ptr<AsyncExecutor> &executor) const;
+    Shared<AsyncExecutor> get_executor(const SmallString &name) const;
+    void dispatch(const Shared<AsyncSubmissionState> &state,
+                  const Shared<AsyncExecutor> &executor) const;
 
     mutable std::mutex _mutex{};
-    std::unordered_map<std::string, std::shared_ptr<AsyncExecutor>> _executors{};
-    std::atomic<u64> _nextSubmissionId{0};
+    std::unordered_map<std::string, Shared<AsyncExecutor>> _executors{};
+    Atomic<u64> _nextSubmissionId{0};
   };
 
-  inline AsyncEvent AsyncInlineExecutor::submit(std::shared_ptr<AsyncSubmissionState> state) {
+  inline AsyncEvent AsyncInlineExecutor::submit(Shared<AsyncSubmissionState> state) {
     if (state->cancellation.stop_requested() || state->cancellation.interrupt_requested()) {
       state->event.mark_cancelled();
-      state->inFlight.store(false, std::memory_order_release);
+      state->inFlight.store(false);
       return state->event;
     }
     state->event.mark_running();
-    const auto poll = AsyncRuntime::run_step(state);
-    if (poll == AsyncPollStatus::suspend)
-      state->event.mark_suspended();
-    else if (poll == AsyncPollStatus::completed)
-      state->event.mark_completed();
-    else if (poll == AsyncPollStatus::cancelled)
-      state->event.mark_cancelled();
-    else
-      state->event.mark_failed();
-    state->inFlight.store(false, std::memory_order_release);
+    detail::finalize_async_submission(state, AsyncRuntime::run_step(state));
     return state->event;
   }
 
   inline AsyncThreadPoolExecutor::AsyncThreadPoolExecutor(std::string executorName, size_t workerCount)
       : _name{std::move(executorName)} {
     if (workerCount == 0) workerCount = 1;
+    if (workerCount > 16) workerCount = 16;
+    _workerCount = workerCount;
     _workers.reserve(workerCount);
     for (size_t i = 0; i != workerCount; ++i) {
-      auto worker = std::make_unique<ManagedThread>();
+      auto worker = zs::make_unique<ManagedThread>();
       worker->start([this](ManagedThread &thread) { worker_loop(thread); }, "async-worker");
       _workers.push_back(std::move(worker));
     }
@@ -340,58 +356,98 @@ namespace zs {
   inline AsyncThreadPoolExecutor::~AsyncThreadPoolExecutor() { shutdown(); }
 
   inline void AsyncThreadPoolExecutor::shutdown() noexcept {
+    if (!_running.exchange(false)) return;
     _stop.request_stop();
-    _cv.notify_all();
+    wake_all();
     for (auto &worker : _workers)
       if (worker && worker->joinable()) worker->join();
     _workers.clear();
   }
 
-  inline AsyncEvent AsyncThreadPoolExecutor::submit(std::shared_ptr<AsyncSubmissionState> state) {
-    {
-      std::lock_guard<std::mutex> lock(_mutex);
-      _queue.push_back(state);
+  inline AsyncEvent AsyncThreadPoolExecutor::submit(Shared<AsyncSubmissionState> state) {
+    if (!state) return {};
+    if (!_running.load()) {
+      state->event.mark_failed();
+      state->inFlight.store(false);
+      return state->event;
     }
-    _cv.notify_one();
+
+    if (state->cancellation.stop_requested() || state->cancellation.interrupt_requested()) {
+      state->event.mark_cancelled();
+      state->inFlight.store(false);
+      return state->event;
+    }
+
+    WorkItem item{state};
+    size_t enqueueAttempts = 0;
+    while (!_queue.try_enqueue(zs::move(item))) {
+      if (!_running.load() || _stop.stop_requested()) {
+        state->event.mark_failed();
+        state->inFlight.store(false);
+        return state->event;
+      }
+      if (enqueueAttempts < 64)
+        pause_cpu();
+      else
+        ManagedThread::yield_current();
+      ++enqueueAttempts;
+    }
+    wake_one();
     return state->event;
   }
 
+  inline void AsyncThreadPoolExecutor::wake_one() noexcept {
+    _signal.fetch_add(1);
+    Futex::wake(&_signal, 1);
+  }
+
+  inline void AsyncThreadPoolExecutor::wake_all() noexcept {
+    _signal.fetch_add(1);
+    Futex::wake(&_signal);
+  }
+
   inline void AsyncThreadPoolExecutor::worker_loop(ManagedThread &thread) {
+    size_t idleAttempts = 0;
     for (;;) {
-      std::shared_ptr<AsyncSubmissionState> state;
-      {
-        std::unique_lock<std::mutex> lock(_mutex);
-        _cv.wait(lock, [this, &thread] {
-          return _stop.stop_requested() || thread.stop_requested() || !_queue.empty();
-        });
-        if ((_stop.stop_requested() || thread.stop_requested()) && _queue.empty()) return;
-        state = std::move(_queue.front());
-        _queue.pop_front();
+      WorkItem item;
+      if (!_queue.try_dequeue(item)) {
+        if ((_stop.stop_requested() || thread.stop_requested()) && _queue.empty_approx()) return;
+        if (idleAttempts < 64) {
+          ++idleAttempts;
+          pause_cpu();
+          continue;
+        }
+        if (idleAttempts < 128) {
+          ++idleAttempts;
+          ManagedThread::yield_current();
+          continue;
+        }
+        const auto currentSignal = _signal.load();
+        if (_queue.empty_approx() && !_stop.stop_requested() && !thread.stop_requested())
+          Futex::wait_for(&_signal, currentSignal, 10);
+        idleAttempts = 0;
+        continue;
       }
+      idleAttempts = 0;
+
+      auto &state = item.state;
+      if (!state) continue;
 
       if (state->cancellation.stop_requested() || state->cancellation.interrupt_requested()) {
         state->event.mark_cancelled();
-        state->inFlight.store(false, std::memory_order_release);
+        state->inFlight.store(false);
         continue;
       }
 
       state->event.mark_running();
-      const auto poll = AsyncRuntime::run_step(state);
-      if (poll == AsyncPollStatus::suspend)
-        state->event.mark_suspended();
-      else if (poll == AsyncPollStatus::completed)
-        state->event.mark_completed();
-      else if (poll == AsyncPollStatus::cancelled)
-        state->event.mark_cancelled();
-      else
-        state->event.mark_failed();
-      state->inFlight.store(false, std::memory_order_release);
+      detail::finalize_async_submission(state, AsyncRuntime::run_step(state));
     }
   }
 
   inline AsyncRuntime::AsyncRuntime(size_t workerCount) {
-    register_executor("inline", std::make_shared<AsyncInlineExecutor>());
-    register_executor("thread_pool", std::make_shared<AsyncThreadPoolExecutor>("thread_pool", workerCount));
+    register_executor("inline", zs::make_shared<AsyncInlineExecutor>());
+    register_executor("thread_pool",
+              zs::make_shared<AsyncThreadPoolExecutor>("thread_pool", workerCount));
   }
 
   inline bool AsyncRuntime::contains_executor(const char *name) const {
@@ -404,18 +460,18 @@ namespace zs {
   }
 
   inline void AsyncRuntime::register_executor(std::string name,
-                                              std::shared_ptr<AsyncExecutor> executor) {
+                                              Shared<AsyncExecutor> executor) {
     std::lock_guard<std::mutex> lock(_mutex);
     _executors.insert_or_assign(std::move(name), std::move(executor));
   }
 
-  inline std::shared_ptr<AsyncExecutor> AsyncRuntime::get_executor(const SmallString &name) const {
+  inline Shared<AsyncExecutor> AsyncRuntime::get_executor(const SmallString &name) const {
     std::lock_guard<std::mutex> lock(_mutex);
     if (auto it = _executors.find(name.asChars()); it != _executors.end()) return it->second;
     return {};
   }
 
-  inline AsyncPollStatus AsyncRuntime::run_step(const std::shared_ptr<AsyncSubmissionState> &state) {
+  inline AsyncPollStatus AsyncRuntime::run_step(const Shared<AsyncSubmissionState> &state) {
     try {
       AsyncExecutionContext ctx{state->id, &state->desc, &state->endpoint, state->cancellation};
       if (!state->step) return AsyncPollStatus::failed;
@@ -425,10 +481,10 @@ namespace zs {
     }
   }
 
-  inline void AsyncRuntime::dispatch(const std::shared_ptr<AsyncSubmissionState> &state,
-                                     const std::shared_ptr<AsyncExecutor> &executor) const {
+  inline void AsyncRuntime::dispatch(const Shared<AsyncSubmissionState> &state,
+                                     const Shared<AsyncExecutor> &executor) const {
     bool expected = false;
-    if (!state->inFlight.compare_exchange_strong(expected, true, std::memory_order_acq_rel)) return;
+    if (!state->inFlight.compare_exchange_strong(expected, true)) return;
     executor->submit(state);
   }
 
@@ -436,8 +492,8 @@ namespace zs {
     auto executor = get_executor(submission.executor);
     if (!executor) throw StaticException();
 
-    auto state = std::make_shared<AsyncSubmissionState>();
-    state->id = _nextSubmissionId.fetch_add(1, std::memory_order_relaxed) + 1;
+    auto state = zs::make_shared<AsyncSubmissionState>();
+    state->id = _nextSubmissionId.fetch_add(1) + 1;
     state->executor = submission.executor;
     state->desc = submission.desc;
     state->endpoint = submission.endpoint;
@@ -451,13 +507,13 @@ namespace zs {
     }
 
     struct DependencyState {
-      std::atomic_size_t remaining{0};
-      std::atomic_bool failed{false};
-      std::atomic_bool cancelled{false};
+      atomic_size_t remaining{0};
+      atomic_bool failed{false};
+      atomic_bool cancelled{false};
     };
 
-    auto dependencyState = std::make_shared<DependencyState>();
-    dependencyState->remaining.store(submission.prerequisites.size(), std::memory_order_release);
+    auto dependencyState = zs::make_shared<DependencyState>();
+    dependencyState->remaining.store(submission.prerequisites.size());
 
     for (const auto &prerequisite : submission.prerequisites) {
       prerequisite.on_complete([prerequisite, dependencyState, state, executor, this,
@@ -465,15 +521,15 @@ namespace zs {
         if (stopOnFailure) {
           const auto prerequisiteStatus = prerequisite.status();
           if (prerequisiteStatus == AsyncTaskStatus::failed)
-            dependencyState->failed.store(true, std::memory_order_release);
+            dependencyState->failed.store(true);
           else if (prerequisiteStatus == AsyncTaskStatus::cancelled)
-            dependencyState->cancelled.store(true, std::memory_order_release);
+            dependencyState->cancelled.store(true);
         }
 
-        if (dependencyState->remaining.fetch_sub(1, std::memory_order_acq_rel) == 1) {
-          if (dependencyState->failed.load(std::memory_order_acquire))
+        if (dependencyState->remaining.fetch_sub(1) == 1) {
+          if (dependencyState->failed.load())
             state->event.mark_failed();
-          else if (dependencyState->cancelled.load(std::memory_order_acquire))
+          else if (dependencyState->cancelled.load())
             state->event.mark_cancelled();
           else
             dispatch(state, executor);

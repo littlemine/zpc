@@ -1,6 +1,7 @@
 #pragma once
 #include <iostream>
 #include <set>
+#include <sstream>
 #include <unordered_map>
 #include <vector>
 
@@ -14,9 +15,26 @@
 #include "zensim/Reflection.h"
 #include "zensim/profile/CppTimers.hpp"
 #include "zensim/types/SourceLocation.hpp"
-#include "zensim/zpc_tpls/fmt/format.h"
 
 namespace zs {
+
+  namespace detail {
+    inline std::string build_musa_location_message(const source_location &loc) {
+      std::ostringstream stream;
+      stream << "# File: \"" << loc.file_name() << "\"\n"
+             << "# Ln " << loc.line() << ", Col " << loc.column() << "\n"
+             << "# Func: \"" << loc.function_name() << "\"";
+      return stream.str();
+    }
+
+    inline std::string build_musa_exec_message(int devid, const void *stream_handle,
+                                               const source_location &loc) {
+      std::ostringstream stream;
+      stream << "[Musa Exec [Device " << devid << ", Stream " << stream_handle << "] | File "
+             << loc.file_name() << ", Ln " << loc.line() << ", Col " << loc.column() << "]";
+      return stream.str();
+    }
+  }  // namespace detail
 
   struct Musa {
   private:
@@ -134,8 +152,7 @@ namespace zs {
       struct StreamExecutionTimer {
         StreamExecutionTimer(MusaContext *ctx, void *stream, const source_location &loc)
             : ctx{ctx}, stream{stream} {
-          msg = fmt::format("[Musa Exec [Device {}, Stream {}] | File {}, Ln {}, Col {}]",
-                            ctx->getDevId(), stream, loc.file_name(), loc.line(), loc.column());
+          msg = detail::build_musa_exec_message(ctx->getDevId(), stream, loc);
           timer.tick();
         }
         ~StreamExecutionTimer() { timer.tock(msg); }
@@ -194,13 +211,10 @@ namespace zs {
                                                std::string_view msg,
                                                std::string_view errorString) noexcept {
     if (error != 0) {
-      const auto fileInfo = fmt::format("# File: \"{:<50}\"", loc.file_name());
-      const auto locInfo = fmt::format("# Ln {}, Col {}", loc.line(), loc.column());
-      const auto funcInfo = fmt::format("# Func: \"{}\"", loc.function_name());
-
-      std::cerr << fmt::format("\nMusa Driver Api Error {}: {}\n{:=^60}\n{}\n{}\n{}\n{:=^60}\n\n",
-                               msg, errorString, " error location ", fileInfo, locInfo, funcInfo,
-                               "=");
+      std::cerr << "\nMusa Driver Api Error " << msg << ": " << errorString
+                << "\n================== error location ==================\n"
+                << detail::build_musa_location_message(loc)
+                << "\n====================================================\n\n";
       return false;
     }
     return true;
@@ -208,12 +222,10 @@ namespace zs {
   [[maybe_unused]] inline bool checkMuApiError(u32 error, const source_location &loc,
                                                std::string_view msg) noexcept {
     if (error != 0) {
-      const auto fileInfo = fmt::format("# File: \"{:<50}\"", loc.file_name());
-      const auto locInfo = fmt::format("# Ln {}, Col {}", loc.line(), loc.column());
-      const auto funcInfo = fmt::format("# Func: \"{}\"", loc.function_name());
-
-      std::cerr << fmt::format("\nMusa Driver Api Error {}\n{:=^60}\n{}\n{}\n{}\n{:=^60}\n\n", msg,
-                               " error location ", fileInfo, locInfo, funcInfo, "=");
+      std::cerr << "\nMusa Driver Api Error " << msg
+                << "\n================== error location ==================\n"
+                << detail::build_musa_location_message(loc)
+                << "\n====================================================\n\n";
       return false;
     }
     return true;
@@ -228,16 +240,14 @@ namespace zs {
                                        std::string_view streamInfo,
                                        const source_location &loc) noexcept {
     if (error != 0) {
-      const auto fileInfo = fmt::format("# File: \"{:<50}\"", loc.file_name());
-      const auto locInfo = fmt::format("# Ln {}, Col {}", loc.line(), loc.column());
-      const auto funcInfo = fmt::format("# Func: \"{}\"", loc.function_name());
       if (ctx.errorStatus) return;  // there already exists a preceding musa error
       ctx.errorStatus = true;
 
-      std::cerr << fmt::format(
-          "\nMusa Error on Device {}, Stream {}: {}\n{:=^60}\n{}\n{}\n{}\n{:=^60}\n\n",
-          ctx.getDevId(), streamInfo, Musa::get_musa_rt_error_string(error),
-          " kernel error location ", fileInfo, locInfo, funcInfo, "=");
+      std::cerr << "\nMusa Error on Device " << ctx.getDevId() << ", Stream " << streamInfo
+                << ": " << Musa::get_musa_rt_error_string(error)
+                << "\n=============== kernel error location ===============\n"
+                << detail::build_musa_location_message(loc)
+                << "\n====================================================\n\n";
     }
   }
 

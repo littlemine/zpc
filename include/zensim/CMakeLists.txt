@@ -117,10 +117,13 @@ set(ZENSIM_LIBRARY_CORE_INCLUDE_FILES
 
   # execution
   execution/Concurrency.h
+  execution/AsyncAwaitables.hpp
   execution/AsyncBackendProfile.hpp
+  execution/AsyncMemoryPool.hpp
   execution/AsyncNativeQueueAdapter.hpp
   execution/AsyncRuntimeAbi.hpp
   execution/AsyncRuntime.hpp
+  execution/AsyncScheduler.hpp
   execution/ManagedThread.hpp
   execution/ValidationCompare.hpp
   execution/ValidationFormat.hpp
@@ -195,9 +198,12 @@ set(ZENSIM_LIBRARY_CORE_INCLUDE_FILES
   Logger.hpp
   Platform.hpp
   Reflection.h
+  ZpcCoroutine.hpp
+  ZpcTaskGraph.hpp
   ZpcAsync.hpp
   # Singleton.h
   TypeAlias.hpp
+  container/ConcurrentQueue.hpp
 
   # simulation
   physics/constitutive_models/AnisotropicArap.hpp

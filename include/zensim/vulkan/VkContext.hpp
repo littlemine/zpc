@@ -1,5 +1,6 @@
 #pragma once
 #include <memory>
+#include <sstream>
 #include <string>
 #include <vector>
 //
@@ -11,7 +12,6 @@
 //
 #include "zensim/types/SourceLocation.hpp"
 #include "zensim/vulkan/VkUtils.hpp"
-#include "zensim/zpc_tpls/fmt/format.h"
 
 #define ZS_VULKAN_USE_VMA 1
 
@@ -591,7 +591,11 @@ namespace zs {
         submit.setCommandBufferCount(count).setPCommandBuffers(cmds);
         if (auto res = queue.submit(1, &submit, fence, pctx->dispatcher);
             res != vk::Result::eSuccess)
-          throw std::runtime_error(fmt::format("failed to submit {} commands to queue.", count));
+          throw std::runtime_error([count] {
+            std::ostringstream stream;
+            stream << "failed to submit " << count << " commands to queue.";
+            return stream.str();
+          }());
         if (usage == vk_cmd_usage_e::single_use) {
           if (pctx->device.waitForFences({fence}, VK_TRUE, UINT64_MAX,
                                           pctx->dispatcher)
@@ -616,8 +620,12 @@ namespace zs {
 
     PoolFamily &pools(vk_queue_e e = vk_queue_e::graphics) {
       if (ctx.queueFamilyMaps[e] >= poolFamilies.size() || ctx.queueFamilyMaps[e] < 0)
-        throw std::runtime_error(fmt::format("accessing {}-th pool while there are {} in total.",
-                                             ctx.queueFamilyMaps[e], poolFamilies.size()));
+        throw std::runtime_error([this, e] {
+          std::ostringstream stream;
+          stream << "accessing " << ctx.queueFamilyMaps[e] << "-th pool while there are "
+                 << poolFamilies.size() << " in total.";
+          return stream.str();
+        }());
       return poolFamilies[ctx.queueFamilyMaps[e]];
     }
     void resetCmds(vk_cmd_usage_e usage, vk_queue_e e = vk_queue_e::graphics) {

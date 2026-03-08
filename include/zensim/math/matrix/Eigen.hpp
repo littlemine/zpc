@@ -3,7 +3,6 @@
 #include "Utility.h"
 #include "zensim/ZpcFunctional.hpp"
 #include "zensim/math/Vec.h"
-#include "zensim/zpc_tpls/fmt/core.h"
 
 namespace zs {
 

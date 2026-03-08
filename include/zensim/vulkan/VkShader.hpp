@@ -1,4 +1,5 @@
 #pragma once
+#include "zensim/ZpcResource.hpp"
 #include "zensim/vulkan/VkContext.hpp"
 #include "zensim/vulkan/VkDescriptor.hpp"
 #include "zensim/vulkan/VkUtils.hpp"
@@ -52,7 +53,7 @@ namespace zs {
     //
     std::map<u32, DescriptorSetLayout> setLayouts;       // descriptor set layouts
     std::map<u32, AttributeDescriptor> inputAttributes;  // input bindings/attribs
-    std::unique_ptr<void, void (*)(void const*)> compiled, resources;
+    UniquePtr<void, void (*)(void const*)> compiled, resources;
     // inherent data
     vk::ShaderModule shaderModule;
     vk::ShaderStageFlagBits stageFlag;

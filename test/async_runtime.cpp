@@ -1,19 +1,164 @@
-#include <atomic>
 #include <cassert>
 #include <chrono>
+#include <cstdio>
 #include <thread>
 
+#include "zensim/ZpcAsync.hpp"
+#include "zensim/ZpcCoroutine.hpp"
+#include "zensim/ZpcTaskGraph.hpp"
+#include "zensim/container/ConcurrentQueue.hpp"
+#include "zensim/execution/AsyncAwaitables.hpp"
 #include "zensim/execution/AsyncRuntime.hpp"
+#include "zensim/execution/AsyncScheduler.hpp"
 
-int main() {
-  using namespace zs;
+using namespace zs;
 
+static void test_static_vector() {
+  StaticVector<int, 8> v;
+  assert(v.empty());
+  assert(v.size() == 0);
+
+  v.push_back(10);
+  v.push_back(20);
+  v.push_back(30);
+  assert(v.size() == 3);
+  assert(v.front() == 10);
+  assert(v.back() == 30);
+
+  v.pop_back();
+  assert(v.size() == 2);
+  assert(v.back() == 20);
+}
+
+static void test_stop_tokens() {
+  AsyncStopSource source;
+  auto token = source.token();
+  auto token2 = token;
+
+  assert(!token.stop_requested());
+  assert(!token2.stop_requested());
+  source.request_stop();
+  assert(token.stop_requested());
+  assert(token2.stop_requested());
+  assert(source.stop_requested());
+
+  assert(!token.interrupt_requested());
+  source.request_interrupt();
+  assert(token.interrupt_requested());
+}
+
+static void test_async_routine() {
+  struct CountingRoutine : AsyncRoutineBase<CountingRoutine> {
+    explicit CountingRoutine(int *v) : value{v} {}
+
+    AsyncPollStatus operator()(AsyncStopToken cancellation) {
+      ZS_ASYNC_ROUTINE_BEGIN(this);
+      *value += 1;
+      ZS_ASYNC_ROUTINE_SUSPEND(this);
+      ZS_ASYNC_ROUTINE_CANCEL_IF_STOPPED(this, cancellation);
+      *value += 2;
+      ZS_ASYNC_ROUTINE_END(this);
+    }
+
+    int *value;
+  };
+
+  int value = 0;
+  CountingRoutine routine{&value};
+  AsyncStopToken none{};
+  assert(routine(none) == AsyncPollStatus::suspend);
+  assert(value == 1);
+  assert(routine(none) == AsyncPollStatus::completed);
+  assert(value == 3);
+  assert(routine.done());
+
+  int cancelledValue = 0;
+  CountingRoutine cancelled{&cancelledValue};
+  AsyncStopSource stop;
+  auto token = stop.token();
+  assert(cancelled(token) == AsyncPollStatus::suspend);
+  stop.request_stop();
+  assert(cancelled(token) == AsyncPollStatus::cancelled);
+  assert(cancelledValue == 1);
+}
+
+static void test_managed_thread() {
+  atomic<int> counter{0};
+  Mutex seenMutex{};
+  int seenWorker = 0;
+  int enteredWorker = 0;
+  int stopBeforeLoop = 0;
+  ManagedThread thread;
+  const bool started = thread.start(
+      [&](ManagedThread &self) {
+        seenMutex.lock();
+        enteredWorker = 1;
+        stopBeforeLoop = self.stop_requested() ? 1 : 0;
+        seenMutex.unlock();
+        while (!self.stop_requested()) {
+          seenMutex.lock();
+          seenWorker += 1;
+          seenMutex.unlock();
+          counter.fetch_add(1);
+          std::this_thread::yield();
+        }
+      },
+      "managed");
+  assert(started);
+
+  assert(thread.joinable());
+  size_t spins = 0;
+  while (counter.load() < 10 && spins++ < 5'000'000) std::this_thread::yield();
+  seenMutex.lock();
+  const int seenSnapshot = seenWorker;
+  const int enteredSnapshot = enteredWorker;
+  const int stopSnapshot = stopBeforeLoop;
+  seenMutex.unlock();
+  assert(counter.load() >= 10);
+  assert(enteredSnapshot == 1);
+  assert(stopSnapshot == 0);
+  assert(seenSnapshot >= 10);
+
+  thread.request_stop();
+  assert(thread.join());
+  assert(counter.load() >= 10);
+}
+
+static void test_concurrent_queue() {
+  ConcurrentQueue<int, 64> queue;
+  assert(queue.empty_approx());
+  assert(queue.try_enqueue(1));
+  assert(queue.try_enqueue(2));
+  assert(queue.try_enqueue(3));
+  assert(queue.size_approx() == 3);
+
+  int value = 0;
+  assert(queue.try_dequeue(value) && value == 1);
+  assert(queue.try_dequeue(value) && value == 2);
+  assert(queue.try_dequeue(value) && value == 3);
+  assert(!queue.try_dequeue(value));
+}
+
+static void test_async_event() {
+  auto event = AsyncEvent::create();
+  assert(!event.ready());
+  assert(event.status() == AsyncTaskStatus::pending);
+
+  bool callbackFired = false;
+  event.on_complete([&]() { callbackFired = true; });
+  event.complete(AsyncTaskStatus::completed);
+  assert(event.ready());
+  assert(event.status() == AsyncTaskStatus::completed);
+  assert(callbackFired);
+}
+
+static void test_async_runtime() {
   AsyncRuntime runtime{2};
   assert(runtime.contains_executor("inline"));
   assert(runtime.contains_executor("thread_pool"));
 
   int order[4] = {0, 0, 0, 0};
-  std::atomic<int> orderIndex{0};
+  atomic<int> orderIndex{0};
 
   auto first = runtime.submit(AsyncSubmission{
       "inline",
@@ -23,6 +168,8 @@ int main() {
         order[orderIndex.fetch_add(1)] = 1;
         return AsyncPollStatus::completed;
       }});
+  assert(first.valid());
+  assert(first.event().ready());
 
   AsyncSubmission secondSubmission{};
   secondSubmission.executor = "thread_pool";
@@ -36,14 +183,18 @@ int main() {
   secondSubmission.prerequisites.push_back(first.event());
   auto second = runtime.submit(zs::move(secondSubmission));
 
-  assert(second.event().wait_for(std::chrono::seconds(2)));
+  assert(second.event().wait_for(2000));
   assert(second.status() == AsyncTaskStatus::completed);
   assert(orderIndex.load() == 2);
   assert(order[0] == 1);
   assert(order[1] == 2);
+}
 
-  struct CountingRoutine : AsyncRoutineBase<CountingRoutine> {
-    explicit CountingRoutine(int *v) : value{v} {}
+static void test_resumable_routine() {
+  AsyncRuntime runtime{1};
+
+  struct StepRoutine : AsyncRoutineBase<StepRoutine> {
+    explicit StepRoutine(int *v) : value{v} {}
 
     AsyncPollStatus operator()(AsyncExecutionContext &ctx) {
       ZS_ASYNC_ROUTINE_BEGIN(this);
@@ -58,51 +209,179 @@ int main() {
   };
 
   int routineValue = 0;
-  CountingRoutine routine{&routineValue};
-  auto routineHandle = runtime.submit(AsyncSubmission{
+  StepRoutine routine{&routineValue};
+  auto handle = runtime.submit(AsyncSubmission{
       "inline",
       AsyncTaskDesc{"routine", AsyncDomain::control, AsyncQueueClass::control},
       make_host_endpoint(),
       [routine](AsyncExecutionContext &ctx) mutable { return routine(ctx); }});
 
-  assert(routineHandle.status() == AsyncTaskStatus::suspended);
+  assert(handle.status() == AsyncTaskStatus::suspended);
   assert(routineValue == 1);
-  assert(runtime.resume(routineHandle));
-  assert(routineHandle.event().wait_for(std::chrono::seconds(2)));
-  assert(routineHandle.status() == AsyncTaskStatus::completed);
+  assert(runtime.resume(handle));
+  assert(handle.event().wait_for(2000));
+  assert(handle.status() == AsyncTaskStatus::completed);
   assert(routineValue == 3);
+}
 
-  AsyncStopSource stop;
-  int cancelledValue = 0;
-  CountingRoutine cancelledRoutine{&cancelledValue};
-  auto cancelledHandle = runtime.submit(AsyncSubmission{
-      "inline",
-      AsyncTaskDesc{"cancelled", AsyncDomain::control, AsyncQueueClass::control},
-      make_host_endpoint(),
-      [cancelledRoutine](AsyncExecutionContext &ctx) mutable { return cancelledRoutine(ctx); },
-      {}, stop.token()});
+static void test_coroutines() {
+  auto simpleTask = []() -> Task {
+    co_return;
+  };
+  auto task = simpleTask();
+  assert(!task.isDone());
+  task.resume();
+  assert(task.isDone());
 
-  stop.request_stop();
-  assert(runtime.resume(cancelledHandle));
-  assert(cancelledHandle.event().wait_for(std::chrono::seconds(2)));
-  assert(cancelledHandle.status() == AsyncTaskStatus::cancelled);
-  assert(cancelledValue == 1);
+  auto add = [](int a, int b) -> Future<int> {
+    co_return a + b;
+  };
+  auto future = add(3, 4);
+  future.resume();
+  assert(future.isDone());
+  assert(future.get() == 7);
 
-  std::atomic<int> threadCounter{0};
-  ManagedThread thread;
-  assert(thread.start(
-      [&](ManagedThread &self) {
-        while (!self.stop_requested()) {
-          threadCounter.fetch_add(1);
-          std::this_thread::yield();
-        }
-      },
-      "managed"));
+  auto outer = []() -> Future<int> {
+    auto inner = []() -> Future<int> {
+      co_return 42;
+    };
+    int value = co_await inner();
+    co_return value * 2;
+  };
+  assert(sync_wait(outer()) == 84);
+}
 
-  assert(thread.joinable());
-  thread.request_stop();
-  assert(thread.join());
-  assert(threadCounter.load() > 0);
+static void test_generator() {
+  auto range = [](int start, int end) -> Generator<int> {
+    for (int i = start; i < end; ++i) co_yield i;
+  };
 
+  int expected = 0;
+  for (auto &value : range(0, 5)) {
+    assert(value == expected++);
+  }
+  assert(expected == 5);
+}
+
+static void test_scheduler() {
+  AsyncScheduler scheduler{4};
+  atomic<int> counter{0};
+  constexpr int N = 100;
+
+  for (int i = 0; i < N; ++i) {
+    scheduler.enqueue([&counter]() { counter.fetch_add(1); });
+  }
+
+  size_t spins = 0;
+  while (counter.load() < N && scheduler.numJobsRemaining() != 0 && spins++ < 5'000'000)
+    std::this_thread::yield();
+  std::printf("[async-test] scheduler counter=%d jobs=%zu spins=%zu\n", counter.load(),
+              scheduler.numJobsRemaining(), spins);
+  std::fflush(stdout);
+
+  scheduler.wait();
+  assert(counter.load() == N);
+}
+
+static void test_scheduler_pressure() {
+  AsyncScheduler scheduler{4};
+  atomic<int> counter{0};
+  constexpr int N = 4096;
+
+  for (int i = 0; i < N; ++i) {
+    scheduler.enqueue([&counter]() { counter.fetch_add(1); });
+  }
+
+  size_t spins = 0;
+  while (counter.load() < N && scheduler.numJobsRemaining() != 0 && spins++ < 10'000'000)
+    std::this_thread::yield();
+  std::printf("[async-test] scheduler_pressure counter=%d jobs=%zu spins=%zu\n",
+              counter.load(), scheduler.numJobsRemaining(), spins);
+  std::fflush(stdout);
+
+  scheduler.wait();
+  assert(counter.load() == N);
+}
+
+static void test_scheduler_runtime_interop() {
+  AsyncScheduler scheduler{2};
+  AsyncRuntime runtime{2};
+  atomic<int> produced{0};
+
+  auto flow = [&]() -> Future<int> {
+    co_await schedule_on(scheduler);
+
+    auto handle = runtime.submit(AsyncSubmission{
+        "thread_pool",
+        AsyncTaskDesc{"interop", AsyncDomain::thread, AsyncQueueClass::compute},
+        make_host_endpoint(AsyncBackend::thread_pool, AsyncQueueClass::compute, "interop"),
+        [&](AsyncExecutionContext &) {
+          produced.store(21);
+          return AsyncPollStatus::completed;
+        }});
+
+    auto status = co_await co_await_submission(handle);
+    assert(status == AsyncTaskStatus::completed);
+    co_return produced.load() * 2;
+  };
+
+  auto future = flow();
+  future.resume();
+  while (!future.isDone()) {
+    scheduler.wait();
+    std::this_thread::yield();
+  }
+
+  assert(future.get() == 42);
+}
+
+static void test_task_graph() {
+  AsyncScheduler scheduler{2};
+  atomic<int> order{0};
+  int results[3] = {0, 0, 0};
+
+  TaskGraph graph;
+  auto *a = graph.addNode([&]() { results[0] = order.fetch_add(1) + 1; }, "A");
+  auto *b = graph.addNode([&]() { results[1] = order.fetch_add(1) + 1; }, "B");
+  auto *c = graph.addNode([&]() { results[2] = order.fetch_add(1) + 1; }, "C");
+  assert(graph.numNodes() == 3);
+  assert(a != nullptr);
+  assert(b != nullptr);
+  assert(c != nullptr);
+  graph.addEdge(a, c);
+  graph.addEdge(b, c);
+
+  graph.submit(scheduler);
+  graph.wait(scheduler);
+
+  assert(graph.allDone());
+  assert(results[2] == 3);
+  assert(results[0] < results[2]);
+  assert(results[1] < results[2]);
+}
+
+int main() {
+  auto run = [](const char *name, auto &&fn) {
+    std::printf("[async-test] %s\n", name);
+    std::fflush(stdout);
+    fn();
+  };
+
+  run("static_vector", test_static_vector);
+  run("stop_tokens", test_stop_tokens);
+  run("async_routine", test_async_routine);
+  run("managed_thread", test_managed_thread);
+  run("concurrent_queue", test_concurrent_queue);
+  run("async_event", test_async_event);
+  run("async_runtime", test_async_runtime);
+  run("resumable_routine", test_resumable_routine);
+  run("coroutines", test_coroutines);
+  run("generator", test_generator);
+  run("scheduler", test_scheduler);
+  run("scheduler_pressure", test_scheduler_pressure);
+  run("scheduler_runtime_interop", test_scheduler_runtime_interop);
+  run("task_graph", test_task_graph);
+
+  std::puts("All async runtime tests passed.");
   return 0;
 }

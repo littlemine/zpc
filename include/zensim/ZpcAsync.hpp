@@ -1,8 +1,7 @@
 #pragma once
 
-#include <atomic>
-
 #include "zensim/TypeAlias.hpp"
+#include "zensim/execution/Atomics.hpp"
 #include "zensim/ZpcImplPattern.hpp"
 
 namespace zs {
@@ -32,6 +31,12 @@ namespace zs {
     void push_back(const T &value) { (void)emplace_back(value); }
     void push_back(T &&value) { (void)emplace_back(zs::move(value)); }
 
+    void pop_back() noexcept {
+      if (_size == 0) return;
+      --_size;
+      zs::destroy_at(reinterpret_cast<T *>(_storage[_size].data<void>()));
+    }
+
     void clear() noexcept {
       while (_size) {
         --_size;
@@ -41,11 +46,26 @@ namespace zs {
 
     size_t size() const noexcept { return _size; }
     bool empty() const noexcept { return _size == 0; }
+    bool full() const noexcept { return _size == Capacity; }
+
+    T *data() noexcept { return reinterpret_cast<T *>(_storage[0].data<void>()); }
+    const T *data() const noexcept {
+      return reinterpret_cast<const T *>(_storage[0].data<const void>());
+    }
 
     T &operator[](size_t i) noexcept { return *reinterpret_cast<T *>(_storage[i].data<void>()); }
     const T &operator[](size_t i) const noexcept {
       return *reinterpret_cast<const T *>(_storage[i].data<const void>());
     }
+    T &front() noexcept { return (*this)[0]; }
+    const T &front() const noexcept { return (*this)[0]; }
+    T &back() noexcept { return (*this)[_size - 1]; }
+    const T &back() const noexcept { return (*this)[_size - 1]; }
+
+    T *begin() noexcept { return data(); }
+    T *end() noexcept { return data() + _size; }
+    const T *begin() const noexcept { return data(); }
+    const T *end() const noexcept { return data() + _size; }
 
   private:
     InplaceStorage<sizeof(T), alignof(T)> _storage[Capacity]{};
@@ -53,8 +73,8 @@ namespace zs {
   };
 
   struct AsyncStopState {
-    std::atomic<u32> refs{1};
-    std::atomic<u32> flags{0};
+    Atomic<u32> refs{1};
+    Atomic<u32> flags{0};
   };
 
   class AsyncStopToken {
@@ -80,18 +100,18 @@ namespace zs {
     ~AsyncStopToken() noexcept { release(); }
 
     bool stop_requested() const noexcept {
-      return _state && ((_state->flags.load(std::memory_order_acquire) & 1u) != 0u);
+      return _state && ((_state->flags.load(memory_order_acquire) & 1u) != 0u);
     }
     bool interrupt_requested() const noexcept {
-      return _state && ((_state->flags.load(std::memory_order_acquire) & 2u) != 0u);
+      return _state && ((_state->flags.load(memory_order_acquire) & 2u) != 0u);
     }
 
   private:
     void retain() noexcept {
-      if (_state) _state->refs.fetch_add(1, std::memory_order_relaxed);
+      if (_state) _state->refs.fetch_add(1, memory_order_relaxed);
     }
     void release() noexcept {
-      if (_state && _state->refs.fetch_sub(1, std::memory_order_acq_rel) == 1) delete _state;
+      if (_state && _state->refs.fetch_sub(1, memory_order_acq_rel) == 1) delete _state;
       _state = nullptr;
     }
 
@@ -117,18 +137,28 @@ namespace zs {
 
     AsyncStopToken token() const noexcept { return AsyncStopToken{_state}; }
     void request_stop() noexcept {
-      if (_state) _state->flags.fetch_or(1u, std::memory_order_release);
+      if (_state) {
+        u32 expected = _state->flags.load(memory_order_relaxed);
+        while (!_state->flags.compare_exchange_weak(expected, expected | 1u, memory_order_release,
+                                                    memory_order_relaxed)) {
+        }
+      }
     }
     void request_interrupt() noexcept {
-      if (_state) _state->flags.fetch_or(2u, std::memory_order_release);
+      if (_state) {
+        u32 expected = _state->flags.load(memory_order_relaxed);
+        while (!_state->flags.compare_exchange_weak(expected, expected | 2u, memory_order_release,
+                                                    memory_order_relaxed)) {
+        }
+      }
     }
     bool stop_requested() const noexcept {
-      return _state && ((_state->flags.load(std::memory_order_acquire) & 1u) != 0u);
+      return _state && ((_state->flags.load(memory_order_acquire) & 1u) != 0u);
     }
 
   private:
     void reset() noexcept {
-      if (_state && _state->refs.fetch_sub(1, std::memory_order_acq_rel) == 1) delete _state;
+      if (_state && _state->refs.fetch_sub(1, memory_order_acq_rel) == 1) delete _state;
       _state = nullptr;
     }
 
@@ -140,6 +170,8 @@ namespace zs {
   template <typename Derived> struct AsyncRoutineBase {
     void reset_routine() noexcept { _zsAsyncState = 0; }
     bool finished_routine() const noexcept { return _zsAsyncState < 0; }
+    void reset() noexcept { reset_routine(); }
+    bool done() const noexcept { return finished_routine(); }
 
   protected:
     int _zsAsyncState{0};

@@ -1,9 +1,9 @@
 #pragma once
 #include <cstdint>
-#include <memory>
 #include <unordered_map>
 
 #include "zensim/ZpcImplPattern.hpp"
+#include "zensim/ZpcResource.hpp"
 #include "zensim/vulkan/VkPipeline.hpp"
 #include "zensim/vulkan/VkShaderManager.hpp"
 
@@ -117,8 +117,8 @@ namespace zs {
 
     VulkanContext& _ctx;
     std::unordered_map<uint64_t, Owner<Pipeline>> _cache;
-    std::unique_ptr<DescriptorCache> _diskCache;
-    std::unique_ptr<PipelineCacheManager> _psoCache;
+    UniquePtr<DescriptorCache> _diskCache;
+    UniquePtr<PipelineCacheManager> _psoCache;
   };
 
 }  // namespace zs

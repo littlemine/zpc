@@ -1,7 +1,5 @@
 #pragma once
 
-#include <atomic>
-
 #include "zensim/Platform.hpp"
 #include "zensim/ZpcAsync.hpp"
 #include "zensim/ZpcFunction.hpp"
@@ -29,34 +27,27 @@ namespace zs {
     void request_interrupt() noexcept { _stop.request_interrupt(); }
     bool stop_requested() const noexcept { return _stop.stop_requested(); }
     AsyncStopToken stop_token() const noexcept { return _stop.token(); }
-    bool joinable() const noexcept { return _joinable.load(std::memory_order_acquire) != 0; }
-    bool running() const noexcept { return _running.load(std::memory_order_acquire) != 0; }
+    bool joinable() const noexcept { return _joinable.load() != 0; }
+    bool running() const noexcept { return _running.load() != 0; }
     u64 id() const noexcept { return _id; }
     SmallString label() const noexcept { return _label; }
     void *native_handle() const noexcept { return _handle; }
+    static void yield_current() noexcept;
+    static u32 hardware_concurrency() noexcept;
+    static void thread_entry_(ManagedThread *self) noexcept;
 
   private:
-    struct StartBlock {
-      ManagedThread *self;
-      entry_fn entry;
-    };
-
-    static void run_entry(ManagedThread &self, entry_fn &entry) noexcept;
-
-#if defined(ZS_PLATFORM_WINDOWS)
-    static unsigned __stdcall thread_proc(void *arg);
-#else
-    static void *thread_proc(void *arg);
-#endif
+    static void run_entry(ManagedThread &self) noexcept;
 
     void release_handle() noexcept;
 
+    entry_fn _entry{};
     void *_handle{nullptr};
     u64 _id{0};
     SmallString _label{};
     AsyncStopSource _stop{};
-    std::atomic<u32> _joinable{0};
-    std::atomic<u32> _running{0};
+    Atomic<u32> _joinable{0};
+    Atomic<u32> _running{0};
   };
 
 }  // namespace zs

@@ -171,7 +171,7 @@ namespace zs {
 
 #if 1
         puts("begin parallel sampling!");
-        const auto nworkers = std::thread::hardware_concurrency();
+        const auto nworkers = ManagedThread::hardware_concurrency();
         std::vector<std::vector<std::array<T, dim>>> localSamples(nworkers);
 #  if ZS_ENABLE_OPENMP
         omp_set_num_threads(nworkers);

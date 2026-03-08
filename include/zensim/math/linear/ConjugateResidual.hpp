@@ -1,5 +1,6 @@
 #pragma once
 #include <cmath>
+#include <iostream>
 
 #include "LinearOperators.hpp"
 
@@ -52,8 +53,8 @@ namespace zs {
     }
 
     template <typename DV> void print(DV&& dv) {
-      for (size_t i = 0; i != dv.size(); ++i) fmt::print("{} ", dv.get(i));
-      fmt::print("\n");
+      for (size_t i = 0; i != dv.size(); ++i) std::cout << dv.get(i) << ' ';
+      std::cout << '\n';
     }
 
     template <class ExecutionPolicy, typename DofViewA, typename DofViewB>
@@ -88,21 +89,22 @@ namespace zs {
       DofCompwiseOp{minus<void>{}}(policy, b, Ap, rr);
       if (shouldPrint()) {
         auto res = dotProduct(policy, rr, rr);
-        fmt::print("(after minus Ax) normSqr rhs: {}\n", res);
+        std::cout << "(after minus Ax) normSqr rhs: " << res << '\n';
       }
-      fmt::print("check num dofs: {}, r dofs: {}\n", x.numEntries(), r.numEntries());
+      std::cout << "check num dofs: " << x.numEntries() << ", r dofs: " << r.numEntries()
+                << '\n';
       A.project(policy, rr);
       if (shouldPrint()) {
         auto res = dotProduct(policy, r, r);
-        fmt::print("(after proj) normSqr rhs: {}\n", res);
+        std::cout << "(after proj) normSqr rhs: " << res << '\n';
       }
 
       A.precondition(policy, rr, r);
       if (shouldPrint()) {
         auto res = dotProduct(policy, r, r);
-        fmt::print("(after precondition) normSqr rhs: {}\n", res);
+        std::cout << "(after precondition) normSqr rhs: " << res << '\n';
       }
-      fmt::print("done precondition, r dofs: {}\n", r.numEntries());
+      std::cout << "done precondition, r dofs: " << r.numEntries() << '\n';
       policy(range(numDofs), DofAssign{r, p});
 
       A.multiply(policy, r, Ap);
@@ -112,7 +114,7 @@ namespace zs {
       for (; iter != maxIters; ++iter) {
         cn = dotProduct(policy, rr, rr);
         if (shouldPrint(iter % 10 == 9)) {
-          fmt::print("iter: {}, norm: {}, tol: {}\n", iter, cn, tol);
+          std::cout << "iter: " << iter << ", norm: " << cn << ", tol: " << tol << '\n';
           getchar();
         }
         if (cn <= tol) {
@@ -120,12 +122,12 @@ namespace zs {
           break;
         }
         A.multiply(policy, r, Ar);
-        if (shouldPrint(iter % 10 == 9)) fmt::print("iter: {}, done multiply\n", iter);
+        if (shouldPrint(iter % 10 == 9)) std::cout << "iter: " << iter << ", done multiply\n";
         A.project(policy, Ar);
-        if (shouldPrint(iter % 10 == 9)) fmt::print("iter: {}, done project\n", iter);
+        if (shouldPrint(iter % 10 == 9)) std::cout << "iter: " << iter << ", done project\n";
 
         rAr = dotProduct(policy, r, Ar);
-        if (shouldPrint(iter % 10 == 9)) fmt::print("iter: {}, alpha {}\n", iter, rAr);
+        if (shouldPrint(iter % 10 == 9)) std::cout << "iter: " << iter << ", alpha " << rAr << '\n';
         if (rAr == 0) break;
 
         if (rArprev != 0) {
