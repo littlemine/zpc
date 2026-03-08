@@ -59,6 +59,10 @@ The next queried extension layer now also begins exposing backend-native queue s
 ``zpc.runtime.native_queue.v1`` so queue or stream-oriented backends can reuse the deployable ABI
 without flattening backend-specific signaling hooks into the base engine table.
 
+Submission descriptors now also reserve ``reserved[1]`` for an append-only
+``zpc_runtime_dependency_list_v1_t`` payload so dependency propagation can grow without widening
+the base engine table.
+
 This is intentionally narrow. It is enough to support runtime discovery, submission, lifecycle
 control, and future extension lookup without freezing internal C++ implementation details.
 
@@ -81,10 +85,21 @@ The ``zpc.runtime.host_submit.v1`` extension documents that:
 
 * ``zpc_runtime_submission_desc_t::reserved[0]`` carries a
 	``zpc_runtime_host_submit_payload_t`` pointer
+* ``zpc_runtime_submission_desc_t::reserved[1]`` may carry a
+	``zpc_runtime_dependency_list_v1_t`` pointer describing prerequisite submission events
 * the payload contains a stable C callback and opaque user-data pointer
 * the callback receives a ``zpc_runtime_host_task_context_t`` with submission id and current stop
 	state so suspend or cancellation-aware host tasks can be expressed without leaking internal C++
 	runtime types across the ABI boundary
+
+The dependency list is append-only and currently supports two token kinds:
+
+* ``ZPC_RUNTIME_DEPENDENCY_SUBMISSION_EVENT`` for runtime-managed prerequisite submissions
+* ``ZPC_RUNTIME_DEPENDENCY_NATIVE_SIGNAL`` for foreign backend signal handles
+
+Plain host submission currently accepts only runtime submission-event dependencies. Foreign native
+signals remain unsupported on that path because there is no native queue binding available to wait
+on them.
 
 This is a pragmatic first implementation step: it exercises the stable engine boundary with a real
 runtime underneath it while keeping richer backend-native or validation transport surfaces available
@@ -125,6 +140,17 @@ The current host-validated shape exposes:
 * a native wait entry point that consumes a foreign signal token through the same stable payload
 	hook table, so signaling is both observable and consumable without widening the base engine
 	table
+
+The native queue extension now uses minor version ``1`` to reflect that submissions may also carry
+``zpc_runtime_dependency_list_v1_t`` through ``reserved[1]``. On this path:
+
+* ``ZPC_RUNTIME_DEPENDENCY_SUBMISSION_EVENT`` tokens are translated into ``AsyncRuntime``
+	prerequisite events
+* ``ZPC_RUNTIME_DEPENDENCY_NATIVE_SIGNAL`` tokens are passed to the stable queue-binding wait hook
+	before the submitted task body runs
+
+This lets runtime-managed dependency chaining and backend-native pre-wait signaling coexist on one
+append-only ABI contract.
 
 This keeps task definition and queue binding separate: host-callable task logic remains on the
 existing host-submit payload contract, while backend-native synchronization and signaling stay on
@@ -171,4 +197,6 @@ Testing
 function-table contract, host-submit extension discovery, completed host submission, suspended task
 cancellation, validation extension discovery, validation summary or JSON or text export, and a
 host-only fake native queue submission and wait-signal path through the concrete ``AsyncRuntime``
-adapter.
+adapter. It also validates dependency-list propagation for runtime submission-event prerequisites,
+rejection of unsupported native-signal dependencies on plain host submission, and mixed runtime or
+native prerequisite handling on the native queue path.

@@ -1,5 +1,6 @@
 #include <iostream>
 #include <string>
+#include <vector>
 
 #include "zensim/execution/AsyncRuntimeAbi.hpp"
 
@@ -15,6 +16,7 @@ namespace {
     int syncCount{0};
     int recordCount{0};
     int waitCount{0};
+    std::vector<void *> waitedSignals{};
   };
 
   zpc_runtime_host_task_result_e demo_task(void *user_data,
@@ -47,8 +49,10 @@ namespace {
     return 1;
   }
 
-  int32_t demo_wait(void *binding, void *) {
-    ++static_cast<DemoNativeQueueState *>(binding)->waitCount;
+  int32_t demo_wait(void *binding, void *foreignSignal) {
+    auto *state = static_cast<DemoNativeQueueState *>(binding);
+    ++state->waitCount;
+    state->waitedSignals.push_back(foreignSignal);
     return 1;
   }
 
@@ -79,7 +83,9 @@ int main() {
   hostExtensionDesc.header = zpc_runtime_make_header((uint32_t)sizeof(zpc_runtime_extension_desc_t));
   engineTable->query_extension(engine, zpc_runtime_make_string_view(zpc_runtime_host_submit_extension_name),
                                &hostExtensionDesc);
-  std::cout << "extension: " << to_string(hostExtensionDesc.extension_name) << "\n";
+  std::cout << "extension: " << to_string(hostExtensionDesc.extension_name)
+            << " version=" << hostExtensionDesc.extension_version_major
+            << "." << hostExtensionDesc.extension_version_minor << "\n";
 
   DemoTaskState hostTaskState{};
   zpc_runtime_host_submit_payload_t hostPayload{};
@@ -108,6 +114,34 @@ int main() {
             << " token=" << hostEvent.native_signal_token
             << " calls=" << hostTaskState.callCount << "\n";
   engineTable->release_submission(hostSubmission);
+
+    DemoTaskState dependentHostTaskState{};
+    zpc_runtime_host_submit_payload_t dependentHostPayload{};
+    dependentHostPayload.header =
+      zpc_runtime_make_header((uint32_t)sizeof(zpc_runtime_host_submit_payload_t));
+    dependentHostPayload.task = &demo_task;
+    dependentHostPayload.user_data = &dependentHostTaskState;
+
+    zpc_runtime_dependency_token_v1_t dependentHostToken{};
+    dependentHostToken.token = hostEvent.native_signal_token;
+    dependentHostToken.kind = ZPC_RUNTIME_DEPENDENCY_SUBMISSION_EVENT;
+    zpc_runtime_dependency_list_v1_t dependentHostList{};
+    dependentHostList.header = zpc_runtime_make_header((uint32_t)sizeof(zpc_runtime_dependency_list_v1_t));
+    dependentHostList.items = &dependentHostToken;
+    dependentHostList.count = 1;
+
+    zpc_runtime_submission_desc_t dependentHostDesc = submitDesc;
+    dependentHostDesc.task_label = zpc_runtime_make_string_view("demo-dependent-host-task");
+    dependentHostDesc.reserved[zpc_runtime_host_submit_payload_slot] =
+      reinterpret_cast<uint64_t>(&dependentHostPayload);
+    dependentHostDesc.reserved[zpc_runtime_dependency_list_payload_slot] =
+      reinterpret_cast<uint64_t>(&dependentHostList);
+
+    zpc_runtime_submission_handle_t *dependentHostSubmission = nullptr;
+    engineTable->submit(engine, &dependentHostDesc, &dependentHostSubmission);
+    std::cout << "dependent host: prerequisite_token=" << dependentHostToken.token
+        << " calls=" << dependentHostTaskState.callCount << "\n";
+    engineTable->release_submission(dependentHostSubmission);
 
   ValidationSuiteReport report{};
   report.suite = "abi-demo";
@@ -182,8 +216,23 @@ int main() {
   engineTable->query_extension(engine,
                                zpc_runtime_make_string_view(zpc_runtime_native_queue_extension_name),
                                &nativeExtensionDesc);
+    std::cout << "extension: " << to_string(nativeExtensionDesc.extension_name)
+        << " version=" << nativeExtensionDesc.extension_version_major
+        << "." << nativeExtensionDesc.extension_version_minor << "\n";
   const auto *nativeExtension =
       static_cast<const zpc_runtime_native_queue_extension_v1_t *>(nativeExtensionDesc.function_table);
+
+    zpc_runtime_dependency_token_v1_t nativeDependencyTokens[2]{};
+    nativeDependencyTokens[0].token = hostEvent.native_signal_token;
+    nativeDependencyTokens[0].kind = ZPC_RUNTIME_DEPENDENCY_SUBMISSION_EVENT;
+    nativeDependencyTokens[1].token = 0x1234u;
+    nativeDependencyTokens[1].kind = ZPC_RUNTIME_DEPENDENCY_NATIVE_SIGNAL;
+    zpc_runtime_dependency_list_v1_t nativeDependencyList{};
+    nativeDependencyList.header = zpc_runtime_make_header((uint32_t)sizeof(zpc_runtime_dependency_list_v1_t));
+    nativeDependencyList.items = nativeDependencyTokens;
+    nativeDependencyList.count = 2;
+    nativeSubmitDesc.reserved[zpc_runtime_dependency_list_payload_slot] =
+      reinterpret_cast<uint64_t>(&nativeDependencyList);
 
   zpc_runtime_submission_handle_t *nativeSubmission = nullptr;
   nativeExtension->submit(engine, &nativeDesc, &nativePayload, &nativeSubmitDesc, &nativeSubmission);
@@ -196,7 +245,16 @@ int main() {
             << " signal=" << nativeEvent.native_signal_token
             << " syncs=" << nativeState.syncCount
             << " records=" << nativeState.recordCount
-            << " waits=" << nativeState.waitCount << "\n";
+            << " waits=" << nativeState.waitCount
+            << " first_wait="
+            << static_cast<uint64_t>(reinterpret_cast<uintptr_t>(nativeState.waitedSignals.empty()
+                                                                   ? nullptr
+                                                                   : nativeState.waitedSignals.front()))
+            << " last_wait="
+            << static_cast<uint64_t>(reinterpret_cast<uintptr_t>(nativeState.waitedSignals.empty()
+                                                                   ? nullptr
+                                                                   : nativeState.waitedSignals.back()))
+            << "\n";
   engineTable->release_submission(nativeSubmission);
 
   destroy_async_runtime_abi_engine(engine);

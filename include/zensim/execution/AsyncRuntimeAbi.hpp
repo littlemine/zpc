@@ -68,6 +68,25 @@ extern "C" {
     uint64_t reserved[4];
   } zpc_runtime_submission_desc_t;
 
+  typedef enum zpc_runtime_dependency_kind_e {
+    ZPC_RUNTIME_DEPENDENCY_SUBMISSION_EVENT = 1,
+    ZPC_RUNTIME_DEPENDENCY_NATIVE_SIGNAL = 2
+  } zpc_runtime_dependency_kind_e;
+
+  typedef struct zpc_runtime_dependency_token_v1_t {
+    uint64_t token;
+    uint32_t kind;
+    uint32_t flags;
+    uint64_t reserved[2];
+  } zpc_runtime_dependency_token_v1_t;
+
+  typedef struct zpc_runtime_dependency_list_v1_t {
+    zpc_runtime_abi_header_t header;
+    const zpc_runtime_dependency_token_v1_t *items;
+    size_t count;
+    uint64_t reserved[4];
+  } zpc_runtime_dependency_list_v1_t;
+
   typedef struct zpc_runtime_host_event_t {
     zpc_runtime_abi_header_t header;
     uint64_t status_code;
@@ -268,6 +287,7 @@ namespace zs {
   inline constexpr const char *zpc_runtime_native_queue_extension_name =
       "zpc.runtime.native_queue.v1";
   inline constexpr uint32_t zpc_runtime_host_submit_payload_slot = 0u;
+    inline constexpr uint32_t zpc_runtime_dependency_list_payload_slot = 1u;
 
   inline zpc_runtime_string_view_t zpc_runtime_make_string_view(const char *text) noexcept {
     zpc_runtime_string_view_t view{};
@@ -337,11 +357,18 @@ namespace zs {
     zpc_runtime_host_task_fn task{};
     void *userData{nullptr};
     AsyncStopSource cancellation{};
+    std::vector<uint64_t> foreignSignalTokens{};
+    bool foreignSignalsSatisfied{false};
 
     void refresh_views() noexcept {
       desc.executor_name = zpc_runtime_make_string_view(executorName.asChars());
       desc.task_label = zpc_runtime_make_string_view(taskLabel.asChars());
     }
+  };
+
+  struct AsyncRuntimeAbiSubmissionDependencies {
+    std::vector<AsyncEvent> prerequisites{};
+    std::vector<uint64_t> foreignSignalTokens{};
   };
 
   struct AsyncRuntimeAbiValidationState {
@@ -383,6 +410,8 @@ struct zpc_runtime_engine_handle_t {
   zs::SmallString build_id{"local"};
   uint64_t capability_mask{ZPC_RUNTIME_ABI_CAP_ASYNC_SUBMIT | ZPC_RUNTIME_ABI_CAP_NATIVE_QUEUE
                            | ZPC_RUNTIME_ABI_CAP_VALIDATION | ZPC_RUNTIME_ABI_CAP_HOT_UPGRADE};
+  std::mutex signal_registry_mutex{};
+  std::unordered_map<uint64_t, zs::AsyncEvent> signal_registry{};
   zpc_runtime_host_submit_extension_v1_t host_submit_extension{};
   zpc_runtime_validation_extension_v1_t validation_extension{};
   zpc_runtime_native_queue_extension_v1_t native_queue_extension{};
@@ -441,6 +470,64 @@ namespace zs {
     return ZPC_RUNTIME_ABI_OK;
   }
 
+  inline void zpc_runtime_register_submission_signal(
+      zpc_runtime_engine_handle_t *engine, uint64_t token, AsyncEvent event) {
+    if (!engine || !token) return;
+    std::lock_guard<std::mutex> lock(engine->signal_registry_mutex);
+    engine->signal_registry[token] = zs::move(event);
+  }
+
+  inline bool zpc_runtime_lookup_submission_event(zpc_runtime_engine_handle_t *engine,
+                                                  uint64_t token,
+                                                  AsyncEvent *event) {
+    if (!engine || !token || !event) return false;
+    std::lock_guard<std::mutex> lock(engine->signal_registry_mutex);
+    const auto found = engine->signal_registry.find(token);
+    if (found == engine->signal_registry.end()) return false;
+    *event = found->second;
+    return true;
+  }
+
+  inline int32_t zpc_runtime_collect_submission_dependencies(
+      zpc_runtime_engine_handle_t *engine, const zpc_runtime_submission_desc_t *submission_desc,
+      bool allow_foreign_signals, AsyncRuntimeAbiSubmissionDependencies *dependencies) {
+    if (!submission_desc || !dependencies) return ZPC_RUNTIME_ABI_ERROR;
+    dependencies->prerequisites.clear();
+    dependencies->foreignSignalTokens.clear();
+
+    const auto *dependency_list = reinterpret_cast<const zpc_runtime_dependency_list_v1_t *>(
+        submission_desc->reserved[zpc_runtime_dependency_list_payload_slot]);
+    if (!dependency_list) return ZPC_RUNTIME_ABI_OK;
+
+    const int32_t dependencyCompatibility = zpc_runtime_is_abi_compatible(
+        &dependency_list->header, (uint32_t)sizeof(zpc_runtime_dependency_list_v1_t));
+    if (dependencyCompatibility != ZPC_RUNTIME_ABI_OK) return dependencyCompatibility;
+    if (dependency_list->count != 0 && !dependency_list->items) return ZPC_RUNTIME_ABI_ERROR;
+
+    dependencies->prerequisites.reserve(dependency_list->count);
+    dependencies->foreignSignalTokens.reserve(dependency_list->count);
+    for (size_t index = 0; index != dependency_list->count; ++index) {
+      const auto &item = dependency_list->items[index];
+      switch (item.kind) {
+        case ZPC_RUNTIME_DEPENDENCY_SUBMISSION_EVENT: {
+          AsyncEvent prerequisite{};
+          if (!zpc_runtime_lookup_submission_event(engine, item.token, &prerequisite))
+            return ZPC_RUNTIME_ABI_UNSUPPORTED_OPERATION;
+          dependencies->prerequisites.push_back(prerequisite);
+          break;
+        }
+        case ZPC_RUNTIME_DEPENDENCY_NATIVE_SIGNAL:
+          if (!allow_foreign_signals) return ZPC_RUNTIME_ABI_UNSUPPORTED_OPERATION;
+          dependencies->foreignSignalTokens.push_back(item.token);
+          break;
+        default:
+          return ZPC_RUNTIME_ABI_UNSUPPORTED_OPERATION;
+      }
+    }
+
+    return ZPC_RUNTIME_ABI_OK;
+  }
+
   inline int32_t zpc_runtime_async_query_extension(zpc_runtime_engine_handle_t *engine,
                                                    zpc_runtime_string_view_t extension_name,
                                                    zpc_runtime_extension_desc_t *extension_desc) {
@@ -461,7 +548,7 @@ namespace zs {
       extension_desc->extension_name =
           zpc_runtime_make_string_view(zpc_runtime_native_queue_extension_name);
       extension_desc->extension_version_major = 1;
-      extension_desc->extension_version_minor = 0;
+      extension_desc->extension_version_minor = 1;
       extension_desc->function_table = &engine->native_queue_extension;
     } else if (zpc_runtime_string_view_equals(extension_name,
                                               zpc_runtime_validation_extension_name)) {
@@ -590,6 +677,15 @@ namespace zs {
         &submission_desc->header, (uint32_t)sizeof(zpc_runtime_submission_desc_t));
     if (submissionCompatibility != ZPC_RUNTIME_ABI_OK) return submissionCompatibility;
 
+    AsyncRuntimeAbiSubmissionDependencies dependencies{};
+    const int32_t dependencyCompatibility = zpc_runtime_collect_submission_dependencies(
+      engine, submission_desc, true, &dependencies);
+    if (dependencyCompatibility != ZPC_RUNTIME_ABI_OK) return dependencyCompatibility;
+    if (!dependencies.foreignSignalTokens.empty()
+      && (((queue_desc->capability_mask & async_native_capability_wait) == 0)
+        || !queue_payload->wait))
+      return ZPC_RUNTIME_ABI_UNSUPPORTED_OPERATION;
+
     const auto *hostPayload = reinterpret_cast<const zpc_runtime_host_submit_payload_t *>(
         submission_desc->reserved[zpc_runtime_host_submit_payload_slot]);
     if (!hostPayload) return ZPC_RUNTIME_ABI_UNSUPPORTED_OPERATION;
@@ -607,6 +703,7 @@ namespace zs {
     submission_handle->state->taskLabel = zpc_runtime_small_string_from_view(submission_desc->task_label);
     submission_handle->state->task = hostPayload->task;
     submission_handle->state->userData = hostPayload->user_data;
+    submission_handle->state->foreignSignalTokens = dependencies.foreignSignalTokens;
     submission_handle->state->refresh_views();
 
     auto descriptor = zpc_runtime_make_native_queue_descriptor(*queue_desc);
@@ -628,9 +725,18 @@ namespace zs {
                                                    async_submission.desc.queue,
                                                    submission_handle->state->taskLabel);
     async_submission.cancellation = submission_handle->state->cancellation.token();
+    async_submission.prerequisites = dependencies.prerequisites;
 
     auto state = submission_handle->state;
-    async_submission.step = [state](AsyncExecutionContext &ctx) {
+    async_submission.step = [state, binding](AsyncExecutionContext &ctx) {
+      if (!state->foreignSignalsSatisfied) {
+        for (const auto token : state->foreignSignalTokens)
+          if (token != 0
+              && !binding.wait(reinterpret_cast<void *>(static_cast<uintptr_t>(token))))
+            return AsyncPollStatus::failed;
+        state->foreignSignalsSatisfied = true;
+      }
+
       zpc_runtime_host_task_context_t host_context{};
       host_context.header = zpc_runtime_make_header((uint32_t)sizeof(zpc_runtime_host_task_context_t));
       host_context.submission_id = ctx.submissionId;
@@ -647,6 +753,9 @@ namespace zs {
       delete submission_handle;
       return ZPC_RUNTIME_ABI_ERROR;
     }
+
+    zpc_runtime_register_submission_signal(engine, submission_handle->handle.id(),
+                         submission_handle->handle.event());
 
     *submission = submission_handle;
     return ZPC_RUNTIME_ABI_OK;
@@ -673,6 +782,11 @@ namespace zs {
     const int32_t compatibility =
         zpc_runtime_is_abi_compatible(&desc->header, (uint32_t)sizeof(zpc_runtime_submission_desc_t));
     if (compatibility != ZPC_RUNTIME_ABI_OK) return compatibility;
+
+    AsyncRuntimeAbiSubmissionDependencies dependencies{};
+    const int32_t dependencyCompatibility = zpc_runtime_collect_submission_dependencies(
+      engine, desc, false, &dependencies);
+    if (dependencyCompatibility != ZPC_RUNTIME_ABI_OK) return dependencyCompatibility;
 
     const auto *payload =
         reinterpret_cast<const zpc_runtime_host_submit_payload_t *>(desc->reserved[zpc_runtime_host_submit_payload_slot]);
@@ -705,6 +819,7 @@ namespace zs {
                                                    async_submission.desc.queue,
                                                    submission_handle->state->taskLabel);
     async_submission.cancellation = submission_handle->state->cancellation.token();
+    async_submission.prerequisites = dependencies.prerequisites;
 
     auto state = submission_handle->state;
     async_submission.step = [state](AsyncExecutionContext &ctx) {
@@ -724,6 +839,9 @@ namespace zs {
       delete submission_handle;
       return ZPC_RUNTIME_ABI_ERROR;
     }
+
+    zpc_runtime_register_submission_signal(engine, submission_handle->handle.id(),
+                         submission_handle->handle.event());
 
     *submission = submission_handle;
     return ZPC_RUNTIME_ABI_OK;
@@ -796,6 +914,10 @@ namespace zs {
                 "Engine ABI function table order must remain append-only");
   static_assert(sizeof(zpc_runtime_host_task_context_t) == 72,
                 "Host task context layout must remain fixed");
+  static_assert(sizeof(zpc_runtime_dependency_token_v1_t) == 32,
+                "Dependency token layout must remain fixed");
+  static_assert(sizeof(zpc_runtime_dependency_list_v1_t) == 64,
+                "Dependency list layout must remain fixed");
   static_assert(sizeof(zpc_runtime_validation_summary_v1_t) == 120,
                 "Validation summary layout must remain fixed");
   static_assert(offsetof(zpc_runtime_host_submit_payload_t, task)

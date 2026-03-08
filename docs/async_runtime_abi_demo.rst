@@ -17,9 +17,11 @@ Current Demo Coverage
 The demo prints:
 
 * engine descriptor name, build id, and capability bits
-* host-submit extension discovery and one completed host task
+* host-submit extension discovery, one completed host task, and one dependent host task chained by
+   a submission-event token
 * validation-report extension discovery and one published validation report summary plus JSON blob
-* native-queue extension discovery, one fake native queue submission, and one wait-on-signal call
+* native-queue extension discovery, one fake native queue submission with both a runtime
+   prerequisite token and a foreign native-signal dependency, and one wait-on-signal call
 
 How To Run
 ----------
@@ -42,9 +44,13 @@ What To Look For
 The output should show, in order:
 
 * an engine line with the expected engine name and capability mask
-* a host task callback line and a completed host event line
+* a host task callback line, a completed host event line, and a dependent-host line showing the
+   prerequisite token that was consumed
 * a validation summary line and a JSON line containing ``zpc.validation.v1``
-* a native event line showing non-zero signal token and incremented sync, record, and wait counts
+* a native extension line reporting minor version ``1``
+* a native event line showing non-zero signal token, incremented sync or record or wait counts,
+   and distinct ``first_wait`` or ``last_wait`` tokens so the pre-submit foreign wait and explicit
+   wait call are both visible
 
 Assessment Use
 --------------
