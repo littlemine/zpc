@@ -570,7 +570,7 @@ namespace zs {
                 "Engine ABI function table order must remain append-only");
   static_assert(sizeof(zpc_runtime_host_task_context_t) == 72,
                 "Host task context layout must remain fixed");
-  static_assert(sizeof(zpc_runtime_validation_summary_v1_t) == 96,
+  static_assert(sizeof(zpc_runtime_validation_summary_v1_t) == 120,
                 "Validation summary layout must remain fixed");
   static_assert(offsetof(zpc_runtime_host_submit_payload_t, task)
                     == sizeof(zpc_runtime_abi_header_t),
