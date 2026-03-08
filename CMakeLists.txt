@@ -296,7 +296,9 @@ if(ZS_ENABLE_JIT AND TARGET zpc_jit_deps)
 
   if(TARGET zpc_py_interop)
     zpc_target_reflect_sources(zpc_py_interop
-      SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/include/zensim/execution/AsyncBackendProfile.hpp
+      SOURCES
+        ${CMAKE_CURRENT_SOURCE_DIR}/include/zensim/execution/AsyncBackendProfile.hpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/include/zensim/execution/AsyncNativeQueueAdapter.hpp
       INCLUDE_DIRS ${CMAKE_CURRENT_SOURCE_DIR}/include
       PYTHON_BINDINGS
       PYTHON_LIB_NAME zpc_async_backend_reflect

@@ -61,6 +61,13 @@ target_link_libraries(asyncbackendprofile PRIVATE zpc)
 add_test(ZsAsyncBackendProfile asyncbackendprofile)
 add_dependencies(zensim asyncbackendprofile)
 
+# async native queue adapter
+add_executable(asyncnativequeue async_native_queue_adapter.cpp)
+target_link_libraries(asyncnativequeue PRIVATE zpc)
+
+add_test(ZsAsyncNativeQueue asyncnativequeue)
+add_dependencies(zensim asyncnativequeue)
+
 # validation schema
 add_executable(validationschema validation_schema.cpp)
 target_link_libraries(validationschema PRIVATE zpc)
