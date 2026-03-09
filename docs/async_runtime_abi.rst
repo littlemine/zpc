@@ -146,6 +146,10 @@ The current host-validated shape exposes:
 	can drive the same dirty or stale lifecycle model used by the in-tree ``AsyncResourceManager``
 * explicit maintenance scheduling through ``zpc_runtime_resource_maintenance_request_v1_t`` with a
 	returned submission handle and disposition code
+* dependency-aware explicit maintenance scheduling through
+	``schedule_maintenance_with_dependencies`` so runtime submission-event prerequisites can gate
+	resource maintenance with the same token model already used by host-submit and native-queue
+	paths
 * stale-sweep scheduling and retired-resource collection entry points so long-lived hosts can keep
 	resource maintenance and reclamation outside the base engine table
 
@@ -156,8 +160,11 @@ payload pointer, maintenance kind, epoch, lease count, bytes, and current stop f
 the queried extension useful for plugin-style hosts while preserving the internal C++ resource
 types as an implementation detail.
 
-The extension now reports minor version ``1`` to reflect the append-only addition of
-``query_resource_info`` beyond the original mutation-only surface.
+The extension now reports minor version ``2``. Minor version ``1`` added
+``query_resource_info`` beyond the original mutation-only surface; minor version ``2`` appends a
+dependency-aware maintenance scheduling entry point. Like plain host submission, this current
+maintenance path accepts runtime submission-event prerequisites but rejects foreign native-signal
+tokens because there is no native queue binding on the resource-maintenance path.
 
 Native Queue Extension
 ----------------------

@@ -300,6 +300,12 @@ extern "C" {
       zpc_runtime_engine_handle_t *engine, uint64_t resource_handle,
       const zpc_runtime_resource_maintenance_request_v1_t *request,
       zpc_runtime_submission_handle_t **submission, uint32_t *disposition);
+    typedef int32_t (*zpc_runtime_resource_schedule_maintenance_with_dependencies_fn)(
+      zpc_runtime_engine_handle_t *engine, uint64_t resource_handle,
+      const zpc_runtime_resource_maintenance_request_v1_t *request,
+      const zpc_runtime_dependency_list_v1_t *dependencies,
+      uint32_t stop_on_prerequisite_failure, zpc_runtime_submission_handle_t **submission,
+      uint32_t *disposition);
   typedef int32_t (*zpc_runtime_resource_sweep_stale_fn)(
       zpc_runtime_engine_handle_t *engine,
       const zpc_runtime_resource_maintenance_request_v1_t *request,
@@ -318,10 +324,12 @@ extern "C" {
     zpc_runtime_resource_advance_epoch_fn advance_epoch;
     zpc_runtime_resource_query_stats_fn query_stats;
     zpc_runtime_resource_schedule_maintenance_fn schedule_maintenance;
+    zpc_runtime_resource_schedule_maintenance_with_dependencies_fn
+      schedule_maintenance_with_dependencies;
     zpc_runtime_resource_sweep_stale_fn sweep_stale;
     zpc_runtime_resource_collect_retired_fn collect_retired;
     zpc_runtime_resource_query_info_fn query_resource_info;
-    void *reserved[3];
+    void *reserved[2];
   } zpc_runtime_resource_manager_extension_v1_t;
 
   typedef struct zpc_runtime_native_queue_desc_t {
@@ -443,6 +451,19 @@ extern "C" {
 #include "zensim/execution/ValidationPersistence.hpp"
 
 namespace zs {
+
+  struct AsyncRuntimeAbiSubmissionDependencies;
+
+  inline int32_t zpc_runtime_collect_dependency_list(
+      zpc_runtime_engine_handle_t *engine, const zpc_runtime_dependency_list_v1_t *dependency_list,
+      bool allow_foreign_signals, AsyncRuntimeAbiSubmissionDependencies *dependencies);
+
+  inline int32_t zpc_runtime_resource_schedule_maintenance_with_dependencies(
+      zpc_runtime_engine_handle_t *engine, uint64_t resource_handle,
+      const zpc_runtime_resource_maintenance_request_v1_t *request,
+      const zpc_runtime_dependency_list_v1_t *dependencies,
+      uint32_t stop_on_prerequisite_failure, zpc_runtime_submission_handle_t **submission,
+      uint32_t *disposition);
 
   inline constexpr const char *zpc_runtime_host_submit_extension_name =
       "zpc.runtime.host_submit.v1";
@@ -766,11 +787,18 @@ namespace zs {
       zpc_runtime_engine_handle_t *engine, const zpc_runtime_submission_desc_t *submission_desc,
       bool allow_foreign_signals, AsyncRuntimeAbiSubmissionDependencies *dependencies) {
     if (!submission_desc || !dependencies) return ZPC_RUNTIME_ABI_ERROR;
-    dependencies->prerequisites.clear();
-    dependencies->foreignSignalTokens.clear();
-
     const auto *dependency_list = reinterpret_cast<const zpc_runtime_dependency_list_v1_t *>(
         submission_desc->reserved[zpc_runtime_dependency_list_payload_slot]);
+    return zpc_runtime_collect_dependency_list(engine, dependency_list, allow_foreign_signals,
+                                               dependencies);
+  }
+
+  inline int32_t zpc_runtime_collect_dependency_list(
+      zpc_runtime_engine_handle_t *engine, const zpc_runtime_dependency_list_v1_t *dependency_list,
+      bool allow_foreign_signals, AsyncRuntimeAbiSubmissionDependencies *dependencies) {
+    if (!dependencies) return ZPC_RUNTIME_ABI_ERROR;
+    dependencies->prerequisites.clear();
+    dependencies->foreignSignalTokens.clear();
     if (!dependency_list) return ZPC_RUNTIME_ABI_OK;
 
     const int32_t dependencyCompatibility = zpc_runtime_is_abi_compatible(
@@ -836,7 +864,7 @@ namespace zs {
       extension_desc->extension_name =
           zpc_runtime_make_string_view(zpc_runtime_resource_manager_extension_name);
       extension_desc->extension_version_major = 1;
-      extension_desc->extension_version_minor = 1;
+      extension_desc->extension_version_minor = 2;
       extension_desc->function_table = &engine->resource_manager_extension;
     } else {
       return ZPC_RUNTIME_ABI_UNSUPPORTED_OPERATION;
@@ -1076,11 +1104,26 @@ namespace zs {
       zpc_runtime_engine_handle_t *engine, uint64_t resource_handle,
       const zpc_runtime_resource_maintenance_request_v1_t *request,
       zpc_runtime_submission_handle_t **submission, uint32_t *disposition) {
+    return zpc_runtime_resource_schedule_maintenance_with_dependencies(
+        engine, resource_handle, request, nullptr, 1u, submission, disposition);
+  }
+
+  inline int32_t zpc_runtime_resource_schedule_maintenance_with_dependencies(
+      zpc_runtime_engine_handle_t *engine, uint64_t resource_handle,
+      const zpc_runtime_resource_maintenance_request_v1_t *request,
+      const zpc_runtime_dependency_list_v1_t *dependencies,
+      uint32_t stop_on_prerequisite_failure, zpc_runtime_submission_handle_t **submission,
+      uint32_t *disposition) {
     if (!engine || !engine->resource_manager || !request || !submission)
       return ZPC_RUNTIME_ABI_ERROR;
     const int32_t compatibility = zpc_runtime_is_abi_compatible(
         &request->header, (uint32_t)sizeof(zpc_runtime_resource_maintenance_request_v1_t));
     if (compatibility != ZPC_RUNTIME_ABI_OK) return compatibility;
+
+    AsyncRuntimeAbiSubmissionDependencies resolvedDependencies{};
+    const int32_t dependencyCompatibility = zpc_runtime_collect_dependency_list(
+        engine, dependencies, false, &resolvedDependencies);
+    if (dependencyCompatibility != ZPC_RUNTIME_ABI_OK) return dependencyCompatibility;
 
     auto *submission_handle = new zpc_runtime_submission_handle_t{};
     submission_handle->engine = engine;
@@ -1090,8 +1133,10 @@ namespace zs {
     try {
       ticket = engine->resource_manager->schedule_maintenance(
           zpc_runtime_make_resource_handle(resource_handle),
-          zpc_runtime_make_resource_request(*request), {},
-          submission_handle->state->cancellation.token());
+          zpc_runtime_make_resource_request(*request),
+          zs::move(resolvedDependencies.prerequisites),
+          submission_handle->state->cancellation.token(),
+          stop_on_prerequisite_failure != 0);
     } catch (...) {
       delete submission_handle;
       return ZPC_RUNTIME_ABI_ERROR;
@@ -1430,6 +1475,8 @@ namespace zs {
     engine->resource_manager_extension.query_stats = &zpc_runtime_resource_query_stats;
     engine->resource_manager_extension.schedule_maintenance =
       &zpc_runtime_resource_schedule_maintenance;
+    engine->resource_manager_extension.schedule_maintenance_with_dependencies =
+      &zpc_runtime_resource_schedule_maintenance_with_dependencies;
     engine->resource_manager_extension.sweep_stale = &zpc_runtime_resource_sweep_stale;
     engine->resource_manager_extension.collect_retired = &zpc_runtime_resource_collect_retired;
     engine->resource_manager_extension.query_resource_info = &zpc_runtime_resource_query_info;
@@ -1497,6 +1544,7 @@ namespace zs {
                              + sizeof(zpc_runtime_resource_advance_epoch_fn)
                              + sizeof(zpc_runtime_resource_query_stats_fn)
                              + sizeof(zpc_runtime_resource_schedule_maintenance_fn)
+                + sizeof(zpc_runtime_resource_schedule_maintenance_with_dependencies_fn)
                              + sizeof(zpc_runtime_resource_sweep_stale_fn)
                              + sizeof(zpc_runtime_resource_collect_retired_fn),
                   "Resource manager query-info entry must remain append-only");

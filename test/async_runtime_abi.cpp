@@ -207,7 +207,7 @@ int main() {
          &resourceExtensionDesc)
        == ZPC_RUNTIME_ABI_OK);
     assert(resourceExtensionDesc.extension_version_major == 1);
-    assert(resourceExtensionDesc.extension_version_minor == 1);
+    assert(resourceExtensionDesc.extension_version_minor == 2);
     const auto *resourceExtension =
       static_cast<const zpc_runtime_resource_manager_extension_v1_t *>(
           resourceExtensionDesc.function_table);
@@ -345,13 +345,93 @@ int main() {
         assert(resourceExtension->query_stats(engine, &resourceStats) == ZPC_RUNTIME_ABI_OK);
         assert(resourceStats.dirty == 0);
 
+        CountingTaskState maintenanceDependencyState{};
+        zpc_runtime_host_submit_payload_t maintenanceDependencyPayload{};
+        maintenanceDependencyPayload.header =
+          zpc_runtime_make_header((uint32_t)sizeof(zpc_runtime_host_submit_payload_t));
+        maintenanceDependencyPayload.task = &counting_task;
+        maintenanceDependencyPayload.user_data = &maintenanceDependencyState;
+
+        zpc_runtime_submission_desc_t maintenanceDependencyDesc{};
+        maintenanceDependencyDesc.header =
+          zpc_runtime_make_header((uint32_t)sizeof(zpc_runtime_submission_desc_t));
+        maintenanceDependencyDesc.executor_name = zs::zpc_runtime_make_string_view("inline");
+        maintenanceDependencyDesc.task_label =
+          zs::zpc_runtime_make_string_view("abi-resource-maintenance-dependency");
+        maintenanceDependencyDesc.domain_code = static_cast<uint32_t>(zs::AsyncDomain::compute);
+        maintenanceDependencyDesc.queue_code =
+          static_cast<uint32_t>(zs::AsyncQueueClass::compute);
+        maintenanceDependencyDesc.backend_code =
+          static_cast<uint32_t>(zs::AsyncBackend::inline_host);
+        maintenanceDependencyDesc.priority = 7;
+        maintenanceDependencyDesc.reserved[zs::zpc_runtime_host_submit_payload_slot] =
+          reinterpret_cast<uint64_t>(&maintenanceDependencyPayload);
+
+        zpc_runtime_submission_handle_t *maintenanceDependencySubmission = nullptr;
+        assert(engineTable->submit(engine, &maintenanceDependencyDesc, &maintenanceDependencySubmission)
+               == ZPC_RUNTIME_ABI_OK);
+        assert(maintenanceDependencySubmission != nullptr);
+        assert(maintenanceDependencyState.callCount == 1);
+
+        zpc_runtime_host_event_t maintenanceDependencyEvent{};
+        maintenanceDependencyEvent.header =
+          zpc_runtime_make_header((uint32_t)sizeof(zpc_runtime_host_event_t));
+        assert(engineTable->query_event(maintenanceDependencySubmission, &maintenanceDependencyEvent)
+               == ZPC_RUNTIME_ABI_OK);
+
+        assert(resourceExtension->mark_dirty(engine, resourceHandle, 1) == ZPC_RUNTIME_ABI_OK);
+        zpc_runtime_dependency_token_v1_t maintenanceDependencyToken{};
+        maintenanceDependencyToken.token = maintenanceDependencyEvent.native_signal_token;
+        maintenanceDependencyToken.kind = ZPC_RUNTIME_DEPENDENCY_SUBMISSION_EVENT;
+        zpc_runtime_dependency_list_v1_t maintenanceDependencyList{};
+        maintenanceDependencyList.header =
+          zpc_runtime_make_header((uint32_t)sizeof(zpc_runtime_dependency_list_v1_t));
+        maintenanceDependencyList.items = &maintenanceDependencyToken;
+        maintenanceDependencyList.count = 1;
+
+        zpc_runtime_submission_handle_t *dependentMaintenanceSubmission = nullptr;
+        assert(resourceExtension->schedule_maintenance_with_dependencies(
+                 engine, resourceHandle, &maintenanceRequest, &maintenanceDependencyList, 1u,
+                 &dependentMaintenanceSubmission, &maintenanceDisposition)
+               == ZPC_RUNTIME_ABI_OK);
+        assert(maintenanceDisposition
+               == static_cast<uint32_t>(zs::AsyncResourceMaintenanceDisposition::scheduled));
+        assert(dependentMaintenanceSubmission != nullptr);
+        assert(resourceState.maintenanceCount == 2);
+
+        zpc_runtime_host_event_t dependentMaintenanceEvent{};
+        dependentMaintenanceEvent.header =
+          zpc_runtime_make_header((uint32_t)sizeof(zpc_runtime_host_event_t));
+        assert(engineTable->query_event(dependentMaintenanceSubmission, &dependentMaintenanceEvent)
+               == ZPC_RUNTIME_ABI_OK);
+        assert(dependentMaintenanceEvent.status_code
+               == static_cast<uint64_t>(zs::AsyncTaskStatus::completed));
+        assert(engineTable->release_submission(dependentMaintenanceSubmission) == ZPC_RUNTIME_ABI_OK);
+        assert(engineTable->release_submission(maintenanceDependencySubmission)
+               == ZPC_RUNTIME_ABI_OK);
+
+        zpc_runtime_dependency_token_v1_t invalidMaintenanceToken{};
+        invalidMaintenanceToken.token = 0x1234u;
+        invalidMaintenanceToken.kind = ZPC_RUNTIME_DEPENDENCY_NATIVE_SIGNAL;
+        zpc_runtime_dependency_list_v1_t invalidMaintenanceList{};
+        invalidMaintenanceList.header =
+          zpc_runtime_make_header((uint32_t)sizeof(zpc_runtime_dependency_list_v1_t));
+        invalidMaintenanceList.items = &invalidMaintenanceToken;
+        invalidMaintenanceList.count = 1;
+        zpc_runtime_submission_handle_t *invalidMaintenanceSubmission = nullptr;
+        assert(resourceExtension->schedule_maintenance_with_dependencies(
+                 engine, resourceHandle, &maintenanceRequest, &invalidMaintenanceList, 1u,
+                 &invalidMaintenanceSubmission, nullptr)
+               == ZPC_RUNTIME_ABI_UNSUPPORTED_OPERATION);
+        assert(invalidMaintenanceSubmission == nullptr);
+
         assert(resourceExtension->mark_dirty(engine, resourceHandle, 1) == ZPC_RUNTIME_ABI_OK);
         assert(resourceExtension->advance_epoch(engine, 2, &epoch) == ZPC_RUNTIME_ABI_OK);
         uint64_t staleScheduled = 0;
         assert(resourceExtension->sweep_stale(engine, &maintenanceRequest, &staleScheduled)
           == ZPC_RUNTIME_ABI_OK);
         assert(staleScheduled == 1);
-        assert(resourceState.maintenanceCount == 2);
+        assert(resourceState.maintenanceCount == 3);
 
         zpc_runtime_resource_maintenance_request_v1_t retireRequest = maintenanceRequest;
         retireRequest.retire_on_success = 1;

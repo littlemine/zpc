@@ -324,6 +324,24 @@ int main() {
               << " stale=" << resourceInfo.stale
               << " last_access_epoch=" << resourceInfo.last_access_epoch << "\n";
 
+    resourceExtension->mark_dirty(engine, resourceHandle, 1);
+    zpc_runtime_dependency_token_v1_t resourceDependencyToken{};
+    resourceDependencyToken.token = hostEvent.native_signal_token;
+    resourceDependencyToken.kind = ZPC_RUNTIME_DEPENDENCY_SUBMISSION_EVENT;
+    zpc_runtime_dependency_list_v1_t resourceDependencyList{};
+    resourceDependencyList.header =
+      zpc_runtime_make_header((uint32_t)sizeof(zpc_runtime_dependency_list_v1_t));
+    resourceDependencyList.items = &resourceDependencyToken;
+    resourceDependencyList.count = 1;
+    zpc_runtime_submission_handle_t *dependentResourceSubmission = nullptr;
+    resourceExtension->schedule_maintenance_with_dependencies(
+      engine, resourceHandle, &resourceRequest, &resourceDependencyList, 1u,
+      &dependentResourceSubmission, &resourceDisposition);
+    std::cout << "resource dependent maintenance: prerequisite_token="
+              << resourceDependencyToken.token
+              << " disposition=" << resourceDisposition << "\n";
+    engineTable->release_submission(dependentResourceSubmission);
+
     uint64_t staleScheduled = 0;
     resourceExtension->mark_dirty(engine, resourceHandle, 1);
     resourceExtension->advance_epoch(engine, 2, &resourceEpoch);
