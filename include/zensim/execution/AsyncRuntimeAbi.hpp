@@ -21,7 +21,8 @@ extern "C" {
     ZPC_RUNTIME_ABI_CAP_VALIDATION = 1u << 2,
     ZPC_RUNTIME_ABI_CAP_REFLECTION = 1u << 3,
     ZPC_RUNTIME_ABI_CAP_PYTHON_EXPORT = 1u << 4,
-    ZPC_RUNTIME_ABI_CAP_HOT_UPGRADE = 1u << 5
+    ZPC_RUNTIME_ABI_CAP_HOT_UPGRADE = 1u << 5,
+    ZPC_RUNTIME_ABI_CAP_RESOURCE_MANAGER = 1u << 6
   };
 
   enum zpc_runtime_abi_result_e {
@@ -35,6 +36,7 @@ extern "C" {
   typedef struct zpc_runtime_engine_handle_t zpc_runtime_engine_handle_t;
   typedef struct zpc_runtime_submission_handle_t zpc_runtime_submission_handle_t;
   typedef struct zpc_runtime_extension_handle_t zpc_runtime_extension_handle_t;
+  typedef struct zpc_runtime_resource_lease_handle_t zpc_runtime_resource_lease_handle_t;
 
   typedef struct zpc_runtime_abi_header_t {
     uint32_t size;
@@ -183,6 +185,120 @@ extern "C" {
     void *reserved[4];
   } zpc_runtime_validation_extension_v1_t;
 
+  typedef struct zpc_runtime_resource_maintenance_context_v1_t
+      zpc_runtime_resource_maintenance_context_v1_t;
+
+  typedef zpc_runtime_host_task_result_e (*zpc_runtime_resource_maintain_fn)(
+      void *user_data,
+      const zpc_runtime_resource_maintenance_context_v1_t *context);
+  typedef void (*zpc_runtime_resource_destroy_fn)(void *user_data, void *payload);
+
+  typedef struct zpc_runtime_resource_desc_v1_t {
+    zpc_runtime_abi_header_t header;
+    zpc_runtime_string_view_t resource_label;
+    zpc_runtime_string_view_t executor_name;
+    uint32_t domain_code;
+    uint32_t queue_code;
+    uint32_t backend_code;
+    int32_t priority;
+    uint64_t bytes;
+    uint64_t stale_after_epochs;
+    uint32_t allow_maintenance_while_leased;
+    uint32_t evict_when_stale;
+    void *payload;
+    void *user_data;
+    zpc_runtime_resource_maintain_fn maintain;
+    zpc_runtime_resource_destroy_fn destroy;
+    uint64_t reserved[4];
+  } zpc_runtime_resource_desc_v1_t;
+
+  typedef struct zpc_runtime_resource_maintenance_request_v1_t {
+    zpc_runtime_abi_header_t header;
+    uint32_t kind;
+    uint32_t require_idle;
+    uint32_t require_dirty;
+    uint32_t clear_dirty_on_success;
+    uint32_t retire_on_success;
+    zpc_runtime_string_view_t label;
+    uint64_t reserved[4];
+  } zpc_runtime_resource_maintenance_request_v1_t;
+
+  typedef struct zpc_runtime_resource_maintenance_context_v1_t {
+    zpc_runtime_abi_header_t header;
+    uint64_t resource_handle;
+    zpc_runtime_string_view_t resource_label;
+    zpc_runtime_string_view_t executor_name;
+    void *payload;
+    uint32_t maintenance_kind;
+    uint32_t domain_code;
+    uint32_t queue_code;
+    uint32_t backend_code;
+    uint64_t epoch;
+    uint64_t lease_count;
+    uint64_t bytes;
+    uint64_t stop_requested;
+    uint64_t interrupt_requested;
+    uint64_t reserved[4];
+  } zpc_runtime_resource_maintenance_context_v1_t;
+
+  typedef struct zpc_runtime_resource_manager_stats_v1_t {
+    zpc_runtime_abi_header_t header;
+    uint64_t total;
+    uint64_t leased;
+    uint64_t dirty;
+    uint64_t busy;
+    uint64_t retired;
+    uint64_t current_epoch;
+    uint64_t reserved[4];
+  } zpc_runtime_resource_manager_stats_v1_t;
+
+  typedef int32_t (*zpc_runtime_resource_register_fn)(
+      zpc_runtime_engine_handle_t *engine, const zpc_runtime_resource_desc_v1_t *desc,
+      uint64_t *resource_handle);
+  typedef int32_t (*zpc_runtime_resource_contains_fn)(
+      zpc_runtime_engine_handle_t *engine, uint64_t resource_handle, uint32_t *contains);
+  typedef int32_t (*zpc_runtime_resource_acquire_fn)(
+      zpc_runtime_engine_handle_t *engine, uint64_t resource_handle, void **payload,
+      zpc_runtime_resource_lease_handle_t **lease);
+  typedef int32_t (*zpc_runtime_resource_release_lease_fn)(
+      zpc_runtime_resource_lease_handle_t *lease);
+  typedef int32_t (*zpc_runtime_resource_touch_fn)(zpc_runtime_engine_handle_t *engine,
+                                                   uint64_t resource_handle);
+  typedef int32_t (*zpc_runtime_resource_mark_dirty_fn)(zpc_runtime_engine_handle_t *engine,
+                                                        uint64_t resource_handle,
+                                                        uint32_t dirty);
+  typedef int32_t (*zpc_runtime_resource_advance_epoch_fn)(zpc_runtime_engine_handle_t *engine,
+                                                           uint64_t delta,
+                                                           uint64_t *epoch);
+  typedef int32_t (*zpc_runtime_resource_query_stats_fn)(
+      zpc_runtime_engine_handle_t *engine, zpc_runtime_resource_manager_stats_v1_t *stats);
+  typedef int32_t (*zpc_runtime_resource_schedule_maintenance_fn)(
+      zpc_runtime_engine_handle_t *engine, uint64_t resource_handle,
+      const zpc_runtime_resource_maintenance_request_v1_t *request,
+      zpc_runtime_submission_handle_t **submission, uint32_t *disposition);
+  typedef int32_t (*zpc_runtime_resource_sweep_stale_fn)(
+      zpc_runtime_engine_handle_t *engine,
+      const zpc_runtime_resource_maintenance_request_v1_t *request,
+      uint64_t *scheduled_count);
+  typedef int32_t (*zpc_runtime_resource_collect_retired_fn)(
+      zpc_runtime_engine_handle_t *engine, uint64_t *removed_count);
+
+  typedef struct zpc_runtime_resource_manager_extension_v1_t {
+    zpc_runtime_abi_header_t header;
+    zpc_runtime_resource_register_fn register_resource;
+    zpc_runtime_resource_contains_fn contains_resource;
+    zpc_runtime_resource_acquire_fn acquire_resource;
+    zpc_runtime_resource_release_lease_fn release_lease;
+    zpc_runtime_resource_touch_fn touch_resource;
+    zpc_runtime_resource_mark_dirty_fn mark_dirty;
+    zpc_runtime_resource_advance_epoch_fn advance_epoch;
+    zpc_runtime_resource_query_stats_fn query_stats;
+    zpc_runtime_resource_schedule_maintenance_fn schedule_maintenance;
+    zpc_runtime_resource_sweep_stale_fn sweep_stale;
+    zpc_runtime_resource_collect_retired_fn collect_retired;
+    void *reserved[4];
+  } zpc_runtime_resource_manager_extension_v1_t;
+
   typedef struct zpc_runtime_native_queue_desc_t {
     zpc_runtime_abi_header_t header;
     uint32_t backend_code;
@@ -297,6 +413,7 @@ extern "C" {
 
 #include <memory>
 #include "zensim/execution/AsyncRuntime.hpp"
+#include "zensim/execution/AsyncResourceManager.hpp"
 #include "zensim/execution/AsyncNativeQueueAdapter.hpp"
 #include "zensim/execution/ValidationPersistence.hpp"
 
@@ -308,6 +425,8 @@ namespace zs {
       "zpc.runtime.validation_report.v1";
   inline constexpr const char *zpc_runtime_native_queue_extension_name =
       "zpc.runtime.native_queue.v1";
+    inline constexpr const char *zpc_runtime_resource_manager_extension_name =
+      "zpc.runtime.resource_manager.v1";
   inline constexpr uint32_t zpc_runtime_host_submit_payload_slot = 0u;
     inline constexpr uint32_t zpc_runtime_dependency_list_payload_slot = 1u;
 
@@ -373,7 +492,8 @@ namespace zs {
     SmallString engineName{"zpc-async-runtime"};
     SmallString buildId{"local"};
     uint64_t capabilityMask{ZPC_RUNTIME_ABI_CAP_ASYNC_SUBMIT | ZPC_RUNTIME_ABI_CAP_NATIVE_QUEUE
-                            | ZPC_RUNTIME_ABI_CAP_VALIDATION | ZPC_RUNTIME_ABI_CAP_HOT_UPGRADE};
+                            | ZPC_RUNTIME_ABI_CAP_VALIDATION | ZPC_RUNTIME_ABI_CAP_HOT_UPGRADE
+                            | ZPC_RUNTIME_ABI_CAP_RESOURCE_MANAGER};
     size_t workerCount{1};
   };
 
@@ -452,19 +572,71 @@ namespace zs {
     zpc_runtime_native_wait_fn wait{};
   };
 
+  inline AsyncResourceHandle zpc_runtime_make_resource_handle(uint64_t resource_handle) noexcept {
+    return AsyncResourceHandle{resource_handle};
+  }
+
+  inline AsyncResourceDescriptor zpc_runtime_make_resource_descriptor(
+      const zpc_runtime_resource_desc_v1_t &desc) {
+    AsyncResourceDescriptor resource{};
+    resource.label = zpc_runtime_small_string_from_view(desc.resource_label);
+    resource.executor = zpc_runtime_small_string_from_view(desc.executor_name);
+    if (!resource.executor.size()) resource.executor = "inline";
+    resource.domain = async_domain_from_abi_code(desc.domain_code);
+    resource.queue = async_queue_from_abi_code(desc.queue_code);
+    resource.endpoint = make_host_endpoint(async_backend_from_abi_code(desc.backend_code),
+                                          resource.queue,
+                                          resource.label.size() ? resource.label : "abi-resource");
+    resource.bytes = static_cast<size_t>(desc.bytes);
+    resource.staleAfterEpochs = desc.stale_after_epochs;
+    resource.priority = desc.priority;
+    resource.allowMaintenanceWhileLeased = desc.allow_maintenance_while_leased != 0;
+    resource.evictWhenStale = desc.evict_when_stale != 0;
+    return resource;
+  }
+
+  inline AsyncResourceMaintenanceRequest zpc_runtime_make_resource_request(
+      const zpc_runtime_resource_maintenance_request_v1_t &request) {
+    AsyncResourceMaintenanceRequest abiRequest{};
+    abiRequest.kind = static_cast<AsyncResourceMaintenanceKind>(static_cast<u8>(request.kind));
+    abiRequest.label = zpc_runtime_small_string_from_view(request.label);
+    abiRequest.requireIdle = request.require_idle != 0;
+    abiRequest.requireDirty = request.require_dirty != 0;
+    abiRequest.clearDirtyOnSuccess = request.clear_dirty_on_success != 0;
+    abiRequest.retireOnSuccess = request.retire_on_success != 0;
+    return abiRequest;
+  }
+
+  inline void zpc_runtime_fill_resource_stats(
+      const AsyncResourceManagerStats &snapshot, uint64_t current_epoch,
+      zpc_runtime_resource_manager_stats_v1_t *stats) {
+    stats->header = zpc_runtime_make_header(
+        (uint32_t)sizeof(zpc_runtime_resource_manager_stats_v1_t));
+    stats->total = snapshot.total;
+    stats->leased = snapshot.leased;
+    stats->dirty = snapshot.dirty;
+    stats->busy = snapshot.busy;
+    stats->retired = snapshot.retired;
+    stats->current_epoch = current_epoch;
+    for (auto &slot : stats->reserved) slot = 0;
+  }
+
 }  // namespace zs
 
 struct zpc_runtime_engine_handle_t {
   zs::Unique<zs::AsyncRuntime> runtime{};
+  zs::Unique<zs::AsyncResourceManager> resource_manager{};
   zs::SmallString engine_name{"zpc-async-runtime"};
   zs::SmallString build_id{"local"};
   uint64_t capability_mask{ZPC_RUNTIME_ABI_CAP_ASYNC_SUBMIT | ZPC_RUNTIME_ABI_CAP_NATIVE_QUEUE
-                           | ZPC_RUNTIME_ABI_CAP_VALIDATION | ZPC_RUNTIME_ABI_CAP_HOT_UPGRADE};
+                           | ZPC_RUNTIME_ABI_CAP_VALIDATION | ZPC_RUNTIME_ABI_CAP_HOT_UPGRADE
+                           | ZPC_RUNTIME_ABI_CAP_RESOURCE_MANAGER};
   std::mutex signal_registry_mutex{};
   std::unordered_map<uint64_t, zs::AsyncEvent> signal_registry{};
   zpc_runtime_host_submit_extension_v1_t host_submit_extension{};
   zpc_runtime_validation_extension_v1_t validation_extension{};
   zpc_runtime_native_queue_extension_v1_t native_queue_extension{};
+  zpc_runtime_resource_manager_extension_v1_t resource_manager_extension{};
   zs::AsyncRuntimeAbiValidationState validation_state{};
   zpc_runtime_engine_v1_t table{};
 };
@@ -474,6 +646,10 @@ struct zpc_runtime_submission_handle_t {
   zs::AsyncSubmissionHandle handle{};
   uint64_t native_signal_token{0};
   zs::Shared<zs::AsyncRuntimeAbiSubmissionState> state{};
+};
+
+struct zpc_runtime_resource_lease_handle_t {
+  zs::AsyncResourceManager::Lease lease{};
 };
 
 namespace zs {
@@ -607,6 +783,13 @@ namespace zs {
       extension_desc->extension_version_major = 1;
       extension_desc->extension_version_minor = 1;
       extension_desc->function_table = &engine->validation_extension;
+    } else if (zpc_runtime_string_view_equals(extension_name,
+                                              zpc_runtime_resource_manager_extension_name)) {
+      extension_desc->extension_name =
+          zpc_runtime_make_string_view(zpc_runtime_resource_manager_extension_name);
+      extension_desc->extension_version_major = 1;
+      extension_desc->extension_version_minor = 0;
+      extension_desc->function_table = &engine->resource_manager_extension;
     } else {
       return ZPC_RUNTIME_ABI_UNSUPPORTED_OPERATION;
     }
@@ -698,6 +881,191 @@ namespace zs {
     if (!engine || !view) return ZPC_RUNTIME_ABI_ERROR;
     if (!engine->validation_state.comparisonAvailable) return ZPC_RUNTIME_ABI_UNSUPPORTED_OPERATION;
     *view = zpc_runtime_make_string_view(engine->validation_state.comparisonText.c_str());
+    return ZPC_RUNTIME_ABI_OK;
+  }
+
+  inline int32_t zpc_runtime_resource_register(zpc_runtime_engine_handle_t *engine,
+                                               const zpc_runtime_resource_desc_v1_t *desc,
+                                               uint64_t *resource_handle) {
+    if (!engine || !engine->resource_manager || !desc || !resource_handle)
+      return ZPC_RUNTIME_ABI_ERROR;
+    const int32_t compatibility = zpc_runtime_is_abi_compatible(
+        &desc->header, (uint32_t)sizeof(zpc_runtime_resource_desc_v1_t));
+    if (compatibility != ZPC_RUNTIME_ABI_OK) return compatibility;
+
+    AsyncResourceCallbacks callbacks{};
+    if (desc->maintain || desc->destroy) {
+      const auto user_data = desc->user_data;
+      const auto maintain = desc->maintain;
+      const auto destroy = desc->destroy;
+      callbacks.maintain = [user_data, maintain](AsyncExecutionContext &ctx,
+                                                 AsyncResourceMaintenanceContext &maintenance) {
+        if (!maintain) return AsyncPollStatus::completed;
+        zpc_runtime_resource_maintenance_context_v1_t abiContext{};
+        abiContext.header = zpc_runtime_make_header(
+            (uint32_t)sizeof(zpc_runtime_resource_maintenance_context_v1_t));
+        abiContext.resource_handle = maintenance.resource.id;
+        abiContext.resource_label = zpc_runtime_make_string_view(
+            maintenance.descriptor ? maintenance.descriptor->label.asChars() : nullptr);
+        abiContext.executor_name = zpc_runtime_make_string_view(
+            maintenance.descriptor ? maintenance.descriptor->executor.asChars() : nullptr);
+        abiContext.payload = maintenance.payload;
+        abiContext.maintenance_kind = static_cast<uint32_t>(maintenance.request.kind);
+        abiContext.domain_code = maintenance.descriptor
+                                     ? static_cast<uint32_t>(maintenance.descriptor->domain)
+                                     : 0u;
+        abiContext.queue_code = maintenance.descriptor
+                                    ? static_cast<uint32_t>(maintenance.descriptor->queue)
+                                    : 0u;
+        abiContext.backend_code = maintenance.descriptor
+                                      ? static_cast<uint32_t>(maintenance.descriptor->endpoint.backend)
+                                      : 0u;
+        abiContext.epoch = maintenance.epoch;
+        abiContext.lease_count = maintenance.leaseCount;
+        abiContext.bytes = maintenance.descriptor ? maintenance.descriptor->bytes : 0u;
+        abiContext.stop_requested = ctx.cancellation.stop_requested() ? 1u : 0u;
+        abiContext.interrupt_requested = ctx.cancellation.interrupt_requested() ? 1u : 0u;
+        for (auto &slot : abiContext.reserved) slot = 0;
+        return async_poll_status_from_host_task_result(maintain(user_data, &abiContext));
+      };
+      callbacks.destroy = [user_data, destroy](void *payload) {
+        if (destroy) destroy(user_data, payload);
+      };
+    }
+
+    const auto handle = engine->resource_manager->register_resource(
+        zpc_runtime_make_resource_descriptor(*desc), zs::move(callbacks), desc->payload);
+    *resource_handle = handle.id;
+    return ZPC_RUNTIME_ABI_OK;
+  }
+
+  inline int32_t zpc_runtime_resource_contains(zpc_runtime_engine_handle_t *engine,
+                                               uint64_t resource_handle,
+                                               uint32_t *contains) {
+    if (!engine || !engine->resource_manager || !contains) return ZPC_RUNTIME_ABI_ERROR;
+    *contains = engine->resource_manager->contains(zpc_runtime_make_resource_handle(resource_handle))
+                    ? 1u
+                    : 0u;
+    return ZPC_RUNTIME_ABI_OK;
+  }
+
+  inline int32_t zpc_runtime_resource_acquire(zpc_runtime_engine_handle_t *engine,
+                                              uint64_t resource_handle, void **payload,
+                                              zpc_runtime_resource_lease_handle_t **lease) {
+    if (!engine || !engine->resource_manager || !lease) return ZPC_RUNTIME_ABI_ERROR;
+    auto acquired = engine->resource_manager->acquire(zpc_runtime_make_resource_handle(resource_handle));
+    if (!acquired.valid()) return ZPC_RUNTIME_ABI_UNSUPPORTED_OPERATION;
+    auto *lease_handle = new zpc_runtime_resource_lease_handle_t{};
+    lease_handle->lease = zs::move(acquired);
+    if (payload) *payload = lease_handle->lease.payload();
+    *lease = lease_handle;
+    return ZPC_RUNTIME_ABI_OK;
+  }
+
+  inline int32_t zpc_runtime_resource_release_lease(zpc_runtime_resource_lease_handle_t *lease) {
+    if (!lease) return ZPC_RUNTIME_ABI_ERROR;
+    delete lease;
+    return ZPC_RUNTIME_ABI_OK;
+  }
+
+  inline int32_t zpc_runtime_resource_touch(zpc_runtime_engine_handle_t *engine,
+                                            uint64_t resource_handle) {
+    if (!engine || !engine->resource_manager) return ZPC_RUNTIME_ABI_ERROR;
+    return engine->resource_manager->touch(zpc_runtime_make_resource_handle(resource_handle))
+               ? ZPC_RUNTIME_ABI_OK
+               : ZPC_RUNTIME_ABI_UNSUPPORTED_OPERATION;
+  }
+
+  inline int32_t zpc_runtime_resource_mark_dirty(zpc_runtime_engine_handle_t *engine,
+                                                 uint64_t resource_handle,
+                                                 uint32_t dirty) {
+    if (!engine || !engine->resource_manager) return ZPC_RUNTIME_ABI_ERROR;
+    return engine->resource_manager->mark_dirty(zpc_runtime_make_resource_handle(resource_handle),
+                                                dirty != 0)
+               ? ZPC_RUNTIME_ABI_OK
+               : ZPC_RUNTIME_ABI_UNSUPPORTED_OPERATION;
+  }
+
+  inline int32_t zpc_runtime_resource_advance_epoch(zpc_runtime_engine_handle_t *engine,
+                                                    uint64_t delta,
+                                                    uint64_t *epoch) {
+    if (!engine || !engine->resource_manager || !epoch) return ZPC_RUNTIME_ABI_ERROR;
+    *epoch = engine->resource_manager->advance_epoch(delta);
+    return ZPC_RUNTIME_ABI_OK;
+  }
+
+  inline int32_t zpc_runtime_resource_query_stats(
+      zpc_runtime_engine_handle_t *engine, zpc_runtime_resource_manager_stats_v1_t *stats) {
+    if (!engine || !engine->resource_manager || !stats) return ZPC_RUNTIME_ABI_ERROR;
+    const int32_t compatibility = zpc_runtime_is_abi_compatible(
+        &stats->header, (uint32_t)sizeof(zpc_runtime_resource_manager_stats_v1_t));
+    if (compatibility != ZPC_RUNTIME_ABI_OK) return compatibility;
+    zpc_runtime_fill_resource_stats(engine->resource_manager->stats(),
+                                    engine->resource_manager->current_epoch(), stats);
+    return ZPC_RUNTIME_ABI_OK;
+  }
+
+  inline int32_t zpc_runtime_resource_schedule_maintenance(
+      zpc_runtime_engine_handle_t *engine, uint64_t resource_handle,
+      const zpc_runtime_resource_maintenance_request_v1_t *request,
+      zpc_runtime_submission_handle_t **submission, uint32_t *disposition) {
+    if (!engine || !engine->resource_manager || !request || !submission)
+      return ZPC_RUNTIME_ABI_ERROR;
+    const int32_t compatibility = zpc_runtime_is_abi_compatible(
+        &request->header, (uint32_t)sizeof(zpc_runtime_resource_maintenance_request_v1_t));
+    if (compatibility != ZPC_RUNTIME_ABI_OK) return compatibility;
+
+    auto *submission_handle = new zpc_runtime_submission_handle_t{};
+    submission_handle->engine = engine;
+    submission_handle->state = zs::make_shared<AsyncRuntimeAbiSubmissionState>();
+
+    AsyncResourceMaintenanceTicket ticket{};
+    try {
+      ticket = engine->resource_manager->schedule_maintenance(
+          zpc_runtime_make_resource_handle(resource_handle),
+          zpc_runtime_make_resource_request(*request), {},
+          submission_handle->state->cancellation.token());
+    } catch (...) {
+      delete submission_handle;
+      return ZPC_RUNTIME_ABI_ERROR;
+    }
+
+    if (disposition) *disposition = static_cast<uint32_t>(ticket.disposition);
+    if (!ticket.scheduled()) {
+      delete submission_handle;
+      *submission = nullptr;
+      return ZPC_RUNTIME_ABI_OK;
+    }
+
+    submission_handle->handle = ticket.submission;
+    submission_handle->native_signal_token = ticket.submission.id();
+    zpc_runtime_register_submission_signal(engine, submission_handle->handle.id(),
+                                           submission_handle->handle.event());
+    *submission = submission_handle;
+    return ZPC_RUNTIME_ABI_OK;
+  }
+
+  inline int32_t zpc_runtime_resource_sweep_stale(
+      zpc_runtime_engine_handle_t *engine,
+      const zpc_runtime_resource_maintenance_request_v1_t *request,
+      uint64_t *scheduled_count) {
+    if (!engine || !engine->resource_manager || !request || !scheduled_count)
+      return ZPC_RUNTIME_ABI_ERROR;
+    const int32_t compatibility = zpc_runtime_is_abi_compatible(
+        &request->header, (uint32_t)sizeof(zpc_runtime_resource_maintenance_request_v1_t));
+    if (compatibility != ZPC_RUNTIME_ABI_OK) return compatibility;
+    const auto tickets = engine->resource_manager->schedule_stale_maintenance(
+        zpc_runtime_make_resource_request(*request));
+    *scheduled_count = 0;
+    for (const auto &ticket : tickets)
+      if (ticket.scheduled()) ++*scheduled_count;
+    return ZPC_RUNTIME_ABI_OK;
+  }
+
+  inline int32_t zpc_runtime_resource_collect_retired(zpc_runtime_engine_handle_t *engine,
+                                                      uint64_t *removed_count) {
+    if (!engine || !engine->resource_manager || !removed_count) return ZPC_RUNTIME_ABI_ERROR;
+    *removed_count = engine->resource_manager->collect_retired();
     return ZPC_RUNTIME_ABI_OK;
   }
 
@@ -951,6 +1319,7 @@ namespace zs {
       const AsyncRuntimeAbiEngineConfig &config = {}) {
     auto *engine = new zpc_runtime_engine_handle_t{};
     engine->runtime = zs::make_unique<AsyncRuntime>(config.workerCount);
+    engine->resource_manager = zs::make_unique<AsyncResourceManager>(*engine->runtime);
     engine->engine_name = config.engineName;
     engine->build_id = config.buildId;
     engine->capability_mask = config.capabilityMask;
@@ -981,6 +1350,22 @@ namespace zs {
     engine->native_queue_extension.submit = &zpc_runtime_native_queue_submit;
     engine->native_queue_extension.wait = &zpc_runtime_native_queue_wait_signal;
     for (auto &slot : engine->native_queue_extension.reserved) slot = nullptr;
+
+    engine->resource_manager_extension.header =
+      zpc_runtime_make_header((uint32_t)sizeof(zpc_runtime_resource_manager_extension_v1_t));
+    engine->resource_manager_extension.register_resource = &zpc_runtime_resource_register;
+    engine->resource_manager_extension.contains_resource = &zpc_runtime_resource_contains;
+    engine->resource_manager_extension.acquire_resource = &zpc_runtime_resource_acquire;
+    engine->resource_manager_extension.release_lease = &zpc_runtime_resource_release_lease;
+    engine->resource_manager_extension.touch_resource = &zpc_runtime_resource_touch;
+    engine->resource_manager_extension.mark_dirty = &zpc_runtime_resource_mark_dirty;
+    engine->resource_manager_extension.advance_epoch = &zpc_runtime_resource_advance_epoch;
+    engine->resource_manager_extension.query_stats = &zpc_runtime_resource_query_stats;
+    engine->resource_manager_extension.schedule_maintenance =
+      &zpc_runtime_resource_schedule_maintenance;
+    engine->resource_manager_extension.sweep_stale = &zpc_runtime_resource_sweep_stale;
+    engine->resource_manager_extension.collect_retired = &zpc_runtime_resource_collect_retired;
+    for (auto &slot : engine->resource_manager_extension.reserved) slot = nullptr;
 
     engine->table.header = zpc_runtime_make_header((uint32_t)sizeof(zpc_runtime_engine_v1_t));
     engine->table.query_engine_desc = &zpc_runtime_async_query_engine_desc;
@@ -1030,6 +1415,9 @@ namespace zs {
                 "Validation summary layout must remain fixed");
     static_assert(sizeof(zpc_runtime_validation_comparison_summary_v1_t) == 120,
           "Validation comparison summary layout must remain fixed");
+    static_assert(offsetof(zpc_runtime_resource_manager_extension_v1_t, register_resource)
+            == sizeof(zpc_runtime_abi_header_t),
+          "Resource manager extension function table order must remain append-only");
   static_assert(offsetof(zpc_runtime_host_submit_payload_t, task)
                     == sizeof(zpc_runtime_abi_header_t),
                 "Host submit payload function pointer order must remain append-only");
@@ -1038,14 +1426,14 @@ namespace zs {
                 "Validation extension function table order must remain append-only");
     static_assert(offsetof(zpc_runtime_validation_extension_v1_t, compare_baseline_file)
             == sizeof(zpc_runtime_abi_header_t)
-               + sizeof(zpc_runtime_validation_query_summary_fn)
-               + 2 * sizeof(zpc_runtime_validation_query_blob_fn),
+                 + sizeof(zpc_runtime_validation_query_summary_fn)
+                 + 2 * sizeof(zpc_runtime_validation_query_blob_fn),
           "Validation extension compare entry must remain append-only");
     static_assert(offsetof(zpc_runtime_validation_extension_v1_t, query_comparison_summary)
             == sizeof(zpc_runtime_abi_header_t)
-               + sizeof(zpc_runtime_validation_query_summary_fn)
-               + 2 * sizeof(zpc_runtime_validation_query_blob_fn)
-               + sizeof(zpc_runtime_validation_compare_baseline_file_fn),
+                 + sizeof(zpc_runtime_validation_query_summary_fn)
+                 + 2 * sizeof(zpc_runtime_validation_query_blob_fn)
+                 + sizeof(zpc_runtime_validation_compare_baseline_file_fn),
           "Validation extension comparison summary entry must remain append-only");
   static_assert(offsetof(zpc_runtime_native_queue_extension_v1_t, submit)
                     == sizeof(zpc_runtime_abi_header_t),

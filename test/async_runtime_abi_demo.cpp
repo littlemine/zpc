@@ -20,6 +20,15 @@ namespace {
     std::vector<void *> waitedSignals{};
   };
 
+  struct DemoResourcePayload {
+    int value{7};
+  };
+
+  struct DemoResourceState {
+    int maintenanceCount{0};
+    int destroyCount{0};
+  };
+
   zpc_runtime_host_task_result_e demo_task(void *user_data,
                                            const zpc_runtime_host_task_context_t *context,
                                            const zpc_runtime_submission_desc_t *desc) {
@@ -55,6 +64,26 @@ namespace {
     ++state->waitCount;
     state->waitedSignals.push_back(foreignSignal);
     return 1;
+  }
+
+  zpc_runtime_host_task_result_e demo_resource_maintain(
+      void *user_data, const zpc_runtime_resource_maintenance_context_v1_t *context) {
+    auto *state = static_cast<DemoResourceState *>(user_data);
+    auto *payload = static_cast<DemoResourcePayload *>(context->payload);
+    if (state) ++state->maintenanceCount;
+    std::cout << "resource maintenance: handle=" << context->resource_handle
+              << " epoch=" << context->epoch
+              << " kind=" << context->maintenance_kind
+              << " payload=" << (payload ? payload->value : -1) << "\n";
+    return ZPC_RUNTIME_HOST_TASK_COMPLETED;
+  }
+
+  void demo_resource_destroy(void *user_data, void *payload) {
+    auto *state = static_cast<DemoResourceState *>(user_data);
+    auto *resource = static_cast<DemoResourcePayload *>(payload);
+    if (state) ++state->destroyCount;
+    std::cout << "resource destroy: payload=" << (resource ? resource->value : -1) << "\n";
+    delete resource;
   }
 
   std::string to_string(zpc_runtime_string_view_t view) {
@@ -168,6 +197,19 @@ int main() {
   const auto *validationExtension =
       static_cast<const zpc_runtime_validation_extension_v1_t *>(validationExtensionDesc.function_table);
 
+    zpc_runtime_extension_desc_t resourceExtensionDesc{};
+    resourceExtensionDesc.header = zpc_runtime_make_header((uint32_t)sizeof(zpc_runtime_extension_desc_t));
+    engineTable->query_extension(
+      engine,
+      zpc_runtime_make_string_view(zpc_runtime_resource_manager_extension_name),
+      &resourceExtensionDesc);
+    std::cout << "extension: " << to_string(resourceExtensionDesc.extension_name)
+        << " version=" << resourceExtensionDesc.extension_version_major
+        << "." << resourceExtensionDesc.extension_version_minor << "\n";
+    const auto *resourceExtension =
+      static_cast<const zpc_runtime_resource_manager_extension_v1_t *>(
+        resourceExtensionDesc.function_table);
+
   zpc_runtime_validation_summary_v1_t summary{};
   summary.header = zpc_runtime_make_header((uint32_t)sizeof(zpc_runtime_validation_summary_v1_t));
   validationExtension->query_summary(engine, &summary);
@@ -207,6 +249,78 @@ int main() {
     std::cout << "validation comparison unavailable: " << persistenceError << "\n";
   }
   std::filesystem::remove(baselinePath, removeError);
+
+    DemoResourceState resourceState{};
+    zpc_runtime_resource_desc_v1_t resourceDesc{};
+    resourceDesc.header = zpc_runtime_make_header((uint32_t)sizeof(zpc_runtime_resource_desc_v1_t));
+    resourceDesc.resource_label = zpc_runtime_make_string_view("demo-resource");
+    resourceDesc.executor_name = zpc_runtime_make_string_view("inline");
+    resourceDesc.domain_code = static_cast<uint32_t>(AsyncDomain::compute);
+    resourceDesc.queue_code = static_cast<uint32_t>(AsyncQueueClass::compute);
+    resourceDesc.backend_code = static_cast<uint32_t>(AsyncBackend::inline_host);
+    resourceDesc.priority = 2;
+    resourceDesc.bytes = sizeof(DemoResourcePayload);
+    resourceDesc.stale_after_epochs = 2;
+    resourceDesc.payload = new DemoResourcePayload{};
+    resourceDesc.user_data = &resourceState;
+    resourceDesc.maintain = &demo_resource_maintain;
+    resourceDesc.destroy = &demo_resource_destroy;
+
+    uint64_t resourceHandle = 0;
+    resourceExtension->register_resource(engine, &resourceDesc, &resourceHandle);
+    std::cout << "resource registered: handle=" << resourceHandle << "\n";
+
+    void *resourcePayload = nullptr;
+    zpc_runtime_resource_lease_handle_t *resourceLease = nullptr;
+    resourceExtension->acquire_resource(engine, resourceHandle, &resourcePayload, &resourceLease);
+    std::cout << "resource lease: payload="
+        << static_cast<DemoResourcePayload *>(resourcePayload)->value << "\n";
+    resourceExtension->release_lease(resourceLease);
+
+    resourceExtension->mark_dirty(engine, resourceHandle, 1);
+    uint64_t resourceEpoch = 0;
+    resourceExtension->advance_epoch(engine, 2, &resourceEpoch);
+
+    zpc_runtime_resource_maintenance_request_v1_t resourceRequest{};
+    resourceRequest.header =
+      zpc_runtime_make_header((uint32_t)sizeof(zpc_runtime_resource_maintenance_request_v1_t));
+    resourceRequest.kind = static_cast<uint32_t>(AsyncResourceMaintenanceKind::refresh);
+    resourceRequest.require_dirty = 1;
+    resourceRequest.clear_dirty_on_success = 1;
+    resourceRequest.label = zpc_runtime_make_string_view("demo-resource-maintenance");
+
+    zpc_runtime_submission_handle_t *resourceSubmission = nullptr;
+    uint32_t resourceDisposition = 0;
+    resourceExtension->schedule_maintenance(
+      engine, resourceHandle, &resourceRequest, &resourceSubmission, &resourceDisposition);
+    std::cout << "resource maintenance disposition=" << resourceDisposition << "\n";
+    zpc_runtime_host_event_t resourceEvent{};
+    resourceEvent.header = zpc_runtime_make_header((uint32_t)sizeof(zpc_runtime_host_event_t));
+    engineTable->query_event(resourceSubmission, &resourceEvent);
+    std::cout << "resource event: status=" << resourceEvent.status_code
+        << " token=" << resourceEvent.native_signal_token << "\n";
+    engineTable->release_submission(resourceSubmission);
+
+    uint64_t staleScheduled = 0;
+    resourceExtension->mark_dirty(engine, resourceHandle, 1);
+    resourceExtension->advance_epoch(engine, 2, &resourceEpoch);
+    resourceExtension->sweep_stale(engine, &resourceRequest, &staleScheduled);
+    std::cout << "resource stale sweep scheduled=" << staleScheduled << "\n";
+
+    zpc_runtime_resource_maintenance_request_v1_t retireRequest = resourceRequest;
+    retireRequest.retire_on_success = 1;
+    retireRequest.require_dirty = 0;
+    retireRequest.label = zpc_runtime_make_string_view("demo-resource-retire");
+    zpc_runtime_submission_handle_t *retireSubmission = nullptr;
+    resourceExtension->schedule_maintenance(engine, resourceHandle, &retireRequest, &retireSubmission,
+                        nullptr);
+    engineTable->release_submission(retireSubmission);
+
+    uint64_t retiredCount = 0;
+    resourceExtension->collect_retired(engine, &retiredCount);
+    std::cout << "resource retired=" << retiredCount
+        << " maintenance_calls=" << resourceState.maintenanceCount
+        << " destroy_calls=" << resourceState.destroyCount << "\n";
 
   DemoNativeQueueState nativeState{};
   zpc_runtime_native_queue_desc_t nativeDesc{};

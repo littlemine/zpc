@@ -27,6 +27,19 @@ namespace {
     std::vector<void *> waitedSignals{};
   };
 
+  struct ResourcePayload {
+    int value{42};
+  };
+
+  struct ResourceCallbackState {
+    int maintenanceCount{0};
+    int destroyCount{0};
+    uint64_t lastEpoch{0};
+    uint64_t lastLeaseCount{0};
+    uint32_t lastKind{0};
+    void *lastPayload{nullptr};
+  };
+
   zpc_runtime_host_task_result_e counting_task(void *user_data,
                                                const zpc_runtime_host_task_context_t *context,
                                                const zpc_runtime_submission_desc_t *desc) {
@@ -83,6 +96,32 @@ namespace {
     state->lastForeignSignal = foreignSignal;
     state->waitedSignals.push_back(foreignSignal);
     return 1;
+  }
+
+  zpc_runtime_host_task_result_e resource_maintain(
+      void *user_data, const zpc_runtime_resource_maintenance_context_v1_t *context) {
+    auto *state = static_cast<ResourceCallbackState *>(user_data);
+    assert(state != nullptr);
+    assert(context != nullptr);
+    auto *payload = static_cast<ResourcePayload *>(context->payload);
+    assert(payload != nullptr);
+    assert(payload->value == 42);
+    ++state->maintenanceCount;
+    state->lastEpoch = context->epoch;
+    state->lastLeaseCount = context->lease_count;
+    state->lastKind = context->maintenance_kind;
+    state->lastPayload = context->payload;
+    return ZPC_RUNTIME_HOST_TASK_COMPLETED;
+  }
+
+  void resource_destroy(void *user_data, void *payload) {
+    auto *state = static_cast<ResourceCallbackState *>(user_data);
+    auto *resource = static_cast<ResourcePayload *>(payload);
+    assert(state != nullptr);
+    assert(resource != nullptr);
+    assert(resource->value == 42);
+    ++state->destroyCount;
+    delete resource;
   }
 
 }  // namespace
@@ -159,11 +198,140 @@ int main() {
       static_cast<const zpc_runtime_validation_extension_v1_t *>(validationExtensionDesc.function_table);
     assert(validationExtension != nullptr);
 
+    zpc_runtime_extension_desc_t resourceExtensionDesc{};
+    resourceExtensionDesc.header =
+      zpc_runtime_make_header((uint32_t)sizeof(zpc_runtime_extension_desc_t));
+    assert(engineTable->query_extension(
+         engine,
+         zs::zpc_runtime_make_string_view(zs::zpc_runtime_resource_manager_extension_name),
+         &resourceExtensionDesc)
+       == ZPC_RUNTIME_ABI_OK);
+    assert(resourceExtensionDesc.extension_version_major == 1);
+    assert(resourceExtensionDesc.extension_version_minor == 0);
+    const auto *resourceExtension =
+      static_cast<const zpc_runtime_resource_manager_extension_v1_t *>(
+          resourceExtensionDesc.function_table);
+    assert(resourceExtension != nullptr);
+    assert(engineDesc.capability_mask & ZPC_RUNTIME_ABI_CAP_RESOURCE_MANAGER);
+
     zpc_runtime_validation_summary_v1_t emptySummary{};
     emptySummary.header =
       zpc_runtime_make_header((uint32_t)sizeof(zpc_runtime_validation_summary_v1_t));
     assert(validationExtension->query_summary(engine, &emptySummary)
            == ZPC_RUNTIME_ABI_UNSUPPORTED_OPERATION);
+
+        ResourceCallbackState resourceState{};
+        zpc_runtime_resource_desc_v1_t resourceDesc{};
+        resourceDesc.header = zpc_runtime_make_header((uint32_t)sizeof(zpc_runtime_resource_desc_v1_t));
+        resourceDesc.resource_label = zs::zpc_runtime_make_string_view("abi-resource");
+        resourceDesc.executor_name = zs::zpc_runtime_make_string_view("inline");
+        resourceDesc.domain_code = static_cast<uint32_t>(zs::AsyncDomain::compute);
+        resourceDesc.queue_code = static_cast<uint32_t>(zs::AsyncQueueClass::compute);
+        resourceDesc.backend_code = static_cast<uint32_t>(zs::AsyncBackend::inline_host);
+        resourceDesc.priority = 3;
+        resourceDesc.bytes = sizeof(ResourcePayload);
+        resourceDesc.stale_after_epochs = 2;
+        resourceDesc.payload = new ResourcePayload{};
+        resourceDesc.user_data = &resourceState;
+        resourceDesc.maintain = &resource_maintain;
+        resourceDesc.destroy = &resource_destroy;
+
+        uint64_t resourceHandle = 0;
+        assert(resourceExtension->register_resource(engine, &resourceDesc, &resourceHandle)
+          == ZPC_RUNTIME_ABI_OK);
+        assert(resourceHandle != 0);
+
+        uint32_t containsResource = 0;
+        assert(resourceExtension->contains_resource(engine, resourceHandle, &containsResource)
+          == ZPC_RUNTIME_ABI_OK);
+        assert(containsResource == 1u);
+
+        zpc_runtime_resource_manager_stats_v1_t resourceStats{};
+        resourceStats.header =
+          zpc_runtime_make_header((uint32_t)sizeof(zpc_runtime_resource_manager_stats_v1_t));
+        assert(resourceExtension->query_stats(engine, &resourceStats) == ZPC_RUNTIME_ABI_OK);
+        assert(resourceStats.total == 1);
+        assert(resourceStats.current_epoch == 0);
+
+        void *leasedPayload = nullptr;
+        zpc_runtime_resource_lease_handle_t *lease = nullptr;
+        assert(resourceExtension->acquire_resource(engine, resourceHandle, &leasedPayload, &lease)
+          == ZPC_RUNTIME_ABI_OK);
+        assert(lease != nullptr);
+        assert(leasedPayload == resourceDesc.payload);
+
+        resourceStats.header =
+          zpc_runtime_make_header((uint32_t)sizeof(zpc_runtime_resource_manager_stats_v1_t));
+        assert(resourceExtension->query_stats(engine, &resourceStats) == ZPC_RUNTIME_ABI_OK);
+        assert(resourceStats.leased == 1);
+        assert(resourceExtension->release_lease(lease) == ZPC_RUNTIME_ABI_OK);
+
+        assert(resourceExtension->mark_dirty(engine, resourceHandle, 1) == ZPC_RUNTIME_ABI_OK);
+        uint64_t epoch = 0;
+        assert(resourceExtension->advance_epoch(engine, 2, &epoch) == ZPC_RUNTIME_ABI_OK);
+        assert(epoch == 2);
+
+        zpc_runtime_resource_maintenance_request_v1_t maintenanceRequest{};
+        maintenanceRequest.header = zpc_runtime_make_header(
+       (uint32_t)sizeof(zpc_runtime_resource_maintenance_request_v1_t));
+        maintenanceRequest.kind = static_cast<uint32_t>(zs::AsyncResourceMaintenanceKind::refresh);
+        maintenanceRequest.require_dirty = 1;
+        maintenanceRequest.clear_dirty_on_success = 1;
+        maintenanceRequest.label = zs::zpc_runtime_make_string_view("abi-resource-maintenance");
+
+        uint32_t maintenanceDisposition = 0;
+        zpc_runtime_submission_handle_t *maintenanceSubmission = nullptr;
+        assert(resourceExtension->schedule_maintenance(
+         engine, resourceHandle, &maintenanceRequest, &maintenanceSubmission,
+         &maintenanceDisposition)
+          == ZPC_RUNTIME_ABI_OK);
+        assert(maintenanceDisposition
+          == static_cast<uint32_t>(zs::AsyncResourceMaintenanceDisposition::scheduled));
+        assert(maintenanceSubmission != nullptr);
+        assert(resourceState.maintenanceCount == 1);
+        assert(resourceState.lastEpoch == 2);
+        assert(resourceState.lastKind
+          == static_cast<uint32_t>(zs::AsyncResourceMaintenanceKind::refresh));
+        assert(resourceState.lastPayload == resourceDesc.payload);
+
+        zpc_runtime_host_event_t maintenanceEvent{};
+        maintenanceEvent.header = zpc_runtime_make_header((uint32_t)sizeof(zpc_runtime_host_event_t));
+        assert(engineTable->query_event(maintenanceSubmission, &maintenanceEvent) == ZPC_RUNTIME_ABI_OK);
+        assert(maintenanceEvent.status_code == static_cast<uint64_t>(zs::AsyncTaskStatus::completed));
+        assert(engineTable->release_submission(maintenanceSubmission) == ZPC_RUNTIME_ABI_OK);
+
+        resourceStats.header =
+          zpc_runtime_make_header((uint32_t)sizeof(zpc_runtime_resource_manager_stats_v1_t));
+        assert(resourceExtension->query_stats(engine, &resourceStats) == ZPC_RUNTIME_ABI_OK);
+        assert(resourceStats.dirty == 0);
+
+        assert(resourceExtension->mark_dirty(engine, resourceHandle, 1) == ZPC_RUNTIME_ABI_OK);
+        assert(resourceExtension->advance_epoch(engine, 2, &epoch) == ZPC_RUNTIME_ABI_OK);
+        uint64_t staleScheduled = 0;
+        assert(resourceExtension->sweep_stale(engine, &maintenanceRequest, &staleScheduled)
+          == ZPC_RUNTIME_ABI_OK);
+        assert(staleScheduled == 1);
+        assert(resourceState.maintenanceCount == 2);
+
+        zpc_runtime_resource_maintenance_request_v1_t retireRequest = maintenanceRequest;
+        retireRequest.retire_on_success = 1;
+        retireRequest.require_dirty = 0;
+        retireRequest.label = zs::zpc_runtime_make_string_view("abi-resource-retire");
+        zpc_runtime_submission_handle_t *retireSubmission = nullptr;
+        assert(resourceExtension->schedule_maintenance(
+         engine, resourceHandle, &retireRequest, &retireSubmission, nullptr)
+          == ZPC_RUNTIME_ABI_OK);
+        assert(retireSubmission != nullptr);
+        assert(engineTable->release_submission(retireSubmission) == ZPC_RUNTIME_ABI_OK);
+
+        uint64_t retiredCount = 0;
+        assert(resourceExtension->collect_retired(engine, &retiredCount) == ZPC_RUNTIME_ABI_OK);
+        assert(retiredCount == 1);
+        assert(resourceState.destroyCount == 1);
+        containsResource = 1;
+        assert(resourceExtension->contains_resource(engine, resourceHandle, &containsResource)
+          == ZPC_RUNTIME_ABI_OK);
+        assert(containsResource == 0u);
 
     CountingTaskState countingState{};
     zpc_runtime_host_submit_payload_t payload{};
