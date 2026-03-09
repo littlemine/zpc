@@ -1,171 +1,166 @@
 #pragma once
-#include <atomic>
 
+#include "zensim/execution/Atomics.hpp"
 #include "zensim/ZpcMeta.hpp"
+#include "zensim/zpc_tpls/moodycamel/concurrent_queue/concurrentqueue.h"
 
 namespace zs {
 
-  /// =========================================================================
-  /// ConcurrentQueue<T, Capacity> — bounded lock-free MPMC ring buffer
-  /// =========================================================================
-  /// Based on Dmitry Vyukov's bounded MPMC queue.
-  /// Cache-line padded to avoid false sharing.
-  /// Capacity is rounded up to the next power of two.
-  ///
-  /// For unbounded use-cases, chain multiple bounded queues or use a
-  /// linked-list approach with pool allocation.
-
   namespace detail {
     constexpr size_t cache_line_size = 64;
+    constexpr size_t min_chunk_capacity = 64;
+    constexpr size_t max_chunk_capacity = 1024;
 
-    constexpr size_t next_power_of_two(size_t v) {
-      --v;
-      v |= v >> 1;
-      v |= v >> 2;
-      v |= v >> 4;
-      v |= v >> 8;
-      v |= v >> 16;
-      if constexpr (sizeof(size_t) > 4) v |= v >> 32;
-      return v + 1;
+    constexpr size_t next_power_of_two(size_t value) {
+      if (value <= 1) return 1;
+      --value;
+      value |= value >> 1;
+      value |= value >> 2;
+      value |= value >> 4;
+      value |= value >> 8;
+      value |= value >> 16;
+      if constexpr (sizeof(size_t) > 4) value |= value >> 32;
+      return value + 1;
+    }
+
+    constexpr size_t log2_power_of_two(size_t value) {
+      size_t shift = 0;
+      while (value > 1) {
+        value >>= 1;
+        ++shift;
+      }
+      return shift;
+    }
+
+    constexpr size_t balanced_chunk_capacity(size_t capacity, size_t requestedChunkCapacity = 0) {
+      if (capacity == 0) return 1;
+
+      if (requestedChunkCapacity != 0) {
+        const auto requested = next_power_of_two(requestedChunkCapacity);
+        return requested > capacity ? capacity : requested;
+      }
+
+      size_t chunkCapacity = 1;
+      while (chunkCapacity < capacity / chunkCapacity) chunkCapacity <<= 1;
+
+      if (chunkCapacity < min_chunk_capacity)
+        chunkCapacity = capacity < min_chunk_capacity ? capacity : min_chunk_capacity;
+      if (chunkCapacity > max_chunk_capacity)
+        chunkCapacity = max_chunk_capacity;
+      if (chunkCapacity > capacity)
+        chunkCapacity = capacity;
+      return next_power_of_two(chunkCapacity);
     }
   }  // namespace detail
 
-  template <typename T, size_t RequestedCapacity = 1024> struct ConcurrentQueue {
-    static_assert(RequestedCapacity > 0, "Capacity must be > 0");
+  template <typename T, size_t RequestedCapacity = 1024>
+  struct ConcurrentQueue {
     static constexpr size_t Capacity = detail::next_power_of_two(RequestedCapacity);
-    static constexpr size_t Mask = Capacity - 1;
+    static constexpr size_t DefaultCapacity = Capacity;
 
-    ConcurrentQueue() noexcept {
-      for (size_t i = 0; i < Capacity; ++i)
-        _cells[i].sequence.store(i, std::memory_order_relaxed);
-      _enqueuePos.store(0, std::memory_order_relaxed);
-      _dequeuePos.store(0, std::memory_order_relaxed);
+    explicit ConcurrentQueue(size_t capacity = DefaultCapacity)
+        : _queue{detail::next_power_of_two(capacity != 0 ? capacity : DefaultCapacity)} {}
+
+    ~ConcurrentQueue() = default;
+
+    ConcurrentQueue(const ConcurrentQueue &) = delete;
+    ConcurrentQueue &operator=(const ConcurrentQueue &) = delete;
+
+    template <typename U>
+    bool try_enqueue(U &&item) {
+      return _queue.try_enqueue(zs::forward<U>(item));
     }
 
-    ~ConcurrentQueue() {
-      // drain remaining items
-      T tmp;
-      while (try_dequeue(tmp)) {}
+    bool try_dequeue(T &item) {
+      return _queue.try_dequeue(item);
     }
 
-    ConcurrentQueue(const ConcurrentQueue&) = delete;
-    ConcurrentQueue& operator=(const ConcurrentQueue&) = delete;
-
-    /// Try to enqueue. Returns false if full.
-    template <typename U> bool try_enqueue(U&& item) {
-      Cell* cell;
-      size_t pos = _enqueuePos.load(std::memory_order_relaxed);
-      for (;;) {
-        cell = &_cells[pos & Mask];
-        size_t seq = cell->sequence.load(std::memory_order_acquire);
-        auto diff = static_cast<sint_t>(seq) - static_cast<sint_t>(pos);
-        if (diff == 0) {
-          if (_enqueuePos.compare_exchange_weak(pos, pos + 1, std::memory_order_relaxed))
-            break;
-        } else if (diff < 0) {
-          return false;  // full
-        } else {
-          pos = _enqueuePos.load(std::memory_order_relaxed);
-        }
-      }
-      ::new (static_cast<void*>(&cell->storage)) T(zs::forward<U>(item));
-      cell->sequence.store(pos + 1, std::memory_order_release);
-      return true;
-    }
-
-    /// Try to dequeue. Returns false if empty.
-    bool try_dequeue(T& item) {
-      Cell* cell;
-      size_t pos = _dequeuePos.load(std::memory_order_relaxed);
-      for (;;) {
-        cell = &_cells[pos & Mask];
-        size_t seq = cell->sequence.load(std::memory_order_acquire);
-        auto diff = static_cast<sint_t>(seq) - static_cast<sint_t>(pos + 1);
-        if (diff == 0) {
-          if (_dequeuePos.compare_exchange_weak(pos, pos + 1, std::memory_order_relaxed))
-            break;
-        } else if (diff < 0) {
-          return false;  // empty
-        } else {
-          pos = _dequeuePos.load(std::memory_order_relaxed);
-        }
-      }
-      item = zs::move(*reinterpret_cast<T*>(&cell->storage));
-      reinterpret_cast<T*>(&cell->storage)->~T();
-      cell->sequence.store(pos + Mask + 1, std::memory_order_release);
-      return true;
-    }
-
-    size_t size_approx() const noexcept {
-      auto e = _enqueuePos.load(std::memory_order_relaxed);
-      auto d = _dequeuePos.load(std::memory_order_relaxed);
-      return e >= d ? e - d : 0;
-    }
+    size_t size_approx() const noexcept { return _queue.size_approx(); }
 
     bool empty_approx() const noexcept { return size_approx() == 0; }
 
   private:
-    struct Cell {
-      std::atomic<size_t> sequence;
-      alignas(alignof(T)) byte storage[sizeof(T)];
-    };
-
-    // Pad to avoid false sharing between producer and consumer positions
-    alignas(detail::cache_line_size) std::atomic<size_t> _enqueuePos;
-    alignas(detail::cache_line_size) std::atomic<size_t> _dequeuePos;
-    Cell _cells[Capacity];
+    moodycamel::ConcurrentQueue<T> _queue;
   };
 
-  /// =========================================================================
-  /// SpscQueue<T, Capacity> — single-producer single-consumer bounded queue
-  /// =========================================================================
-  /// Simpler and faster than MPMC when only one thread produces and one consumes.
+  template <typename T, size_t RequestedCapacity = 1024>
+  struct SpscQueue {
+    static constexpr size_t DefaultCapacity = detail::next_power_of_two(RequestedCapacity);
 
-  template <typename T, size_t RequestedCapacity = 1024> struct SpscQueue {
-    static constexpr size_t Capacity = detail::next_power_of_two(RequestedCapacity);
-    static constexpr size_t Mask = Capacity - 1;
-
-    SpscQueue() noexcept = default;
-    ~SpscQueue() {
-      T tmp;
-      while (try_dequeue(tmp)) {}
+    explicit SpscQueue(size_t capacity = DefaultCapacity, size_t chunkCapacity = 0)
+        : _capacity{detail::next_power_of_two(capacity != 0 ? capacity : DefaultCapacity)},
+          _mask{_capacity - 1},
+          _chunkCapacity{detail::balanced_chunk_capacity(_capacity, chunkCapacity)},
+          _chunkMask{_chunkCapacity - 1},
+          _chunkShift{detail::log2_power_of_two(_chunkCapacity)},
+          _chunkCount{_capacity / _chunkCapacity},
+          _chunks{new Cell *[_chunkCount]} {
+      for (size_t chunkIndex = 0; chunkIndex < _chunkCount; ++chunkIndex)
+        _chunks[chunkIndex] = new Cell[_chunkCapacity];
     }
 
-    SpscQueue(const SpscQueue&) = delete;
-    SpscQueue& operator=(const SpscQueue&) = delete;
+    ~SpscQueue() {
+      T item{};
+      while (try_dequeue(item)) {}
+      for (size_t chunkIndex = 0; chunkIndex < _chunkCount; ++chunkIndex)
+        delete[] _chunks[chunkIndex];
+      delete[] _chunks;
+    }
 
-    template <typename U> bool try_enqueue(U&& item) {
-      size_t head = _head.load(std::memory_order_relaxed);
-      size_t next = (head + 1) & Mask;
-      if (next == _tail.load(std::memory_order_acquire)) return false;  // full
-      ::new (static_cast<void*>(&_cells[head].storage)) T(zs::forward<U>(item));
-      _head.store(next, std::memory_order_release);
+    SpscQueue(const SpscQueue &) = delete;
+    SpscQueue &operator=(const SpscQueue &) = delete;
+
+    template <typename U>
+    bool try_enqueue(U &&item) {
+      const size_t head = _head.load(memory_order_relaxed);
+      const size_t tail = _tail.load(memory_order_acquire);
+      if (head - tail >= _capacity) return false;
+
+      auto &cell = cell_at_(head);
+      ::new (static_cast<void *>(&cell.storage)) T(zs::forward<U>(item));
+      _head.store(head + 1, memory_order_release);
       return true;
     }
 
-    bool try_dequeue(T& item) {
-      size_t tail = _tail.load(std::memory_order_relaxed);
-      if (tail == _head.load(std::memory_order_acquire)) return false;  // empty
-      item = zs::move(*reinterpret_cast<T*>(&_cells[tail].storage));
-      reinterpret_cast<T*>(&_cells[tail].storage)->~T();
-      _tail.store((tail + 1) & Mask, std::memory_order_release);
+    bool try_dequeue(T &item) {
+      const size_t tail = _tail.load(memory_order_relaxed);
+      const size_t head = _head.load(memory_order_acquire);
+      if (tail == head) return false;
+
+      auto &cell = cell_at_(tail);
+      item = zs::move(*reinterpret_cast<T *>(&cell.storage));
+      reinterpret_cast<T *>(&cell.storage)->~T();
+      _tail.store(tail + 1, memory_order_release);
       return true;
     }
 
     size_t size_approx() const noexcept {
-      auto h = _head.load(std::memory_order_relaxed);
-      auto t = _tail.load(std::memory_order_relaxed);
-      return (h - t) & Mask;
+      const auto head = _head.load(memory_order_acquire);
+      const auto tail = _tail.load(memory_order_acquire);
+      return head - tail;
     }
+
+    size_t capacity() const noexcept { return _capacity; }
 
   private:
     struct Cell {
       alignas(alignof(T)) byte storage[sizeof(T)];
     };
 
-    alignas(detail::cache_line_size) std::atomic<size_t> _head{0};
-    alignas(detail::cache_line_size) std::atomic<size_t> _tail{0};
-    Cell _cells[Capacity];
+    Cell &cell_at_(size_t position) const noexcept {
+      const size_t index = position & _mask;
+      return _chunks[index >> _chunkShift][index & _chunkMask];
+    }
+
+    const size_t _capacity;
+    const size_t _mask;
+    const size_t _chunkCapacity;
+    const size_t _chunkMask;
+    const size_t _chunkShift;
+    const size_t _chunkCount;
+    Cell **_chunks;
+    alignas(detail::cache_line_size) Atomic<size_t> _head{0};
+    alignas(detail::cache_line_size) Atomic<size_t> _tail{0};
   };
 
 }  // namespace zs

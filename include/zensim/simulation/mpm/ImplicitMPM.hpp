@@ -1,4 +1,6 @@
 #pragma once
+#include <iostream>
+
 #include "zensim/container/HashTable.hpp"
 #include "zensim/geometry/Structure.hpp"
 #include "zensim/geometry/Structurefree.hpp"
@@ -105,8 +107,6 @@ namespace zs {
                 -> enable_if_type<RM_CVREF_T(collider)::dim == RM_CVREF_T(partition)::dim
                                     && RM_CVREF_T(collider)::dim == RM_CVREF_T(grids)::dim
                                     && RM_CVREF_T(collider)::dim == RM_CVREF_T(inout)::dim> {
-              // fmt::print("[gpu {}]\tprojecting {} grid blocks, dof dim: {}\n", (int)did,
-              //            partition.size(), RM_CVREF_T(inout)::dim);
               if constexpr (is_levelset_boundary<RM_CVREF_T(collider)>::value)
                 policy(range((size_t)inout.numEntries()
                              / remove_cvref_t<decltype(collider)>::dim),
@@ -144,7 +144,8 @@ namespace zs {
       match(
           [&, did = mh.devid()](auto& partition, auto& grids)
               -> enable_if_type<RM_CVREF_T(partition)::dim == RM_CVREF_T(grids)::dim> {
-            fmt::print("[gpu {}]\tpreconditioning {} grid blocks\n", (int)did, partition.size());
+            std::cout << "[gpu " << (int)did << "]\tpreconditioning " << partition.size()
+                      << " grid blocks\n";
             auto gridm = dof_view<space, 1>(grids.grid(), "m", 0);
             policy(range(out.numEntries()), DivPernodeMass{in, gridm, out});
           },

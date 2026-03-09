@@ -930,31 +930,6 @@ namespace zs {
       policy(range(numLeaves), params, _build_reorder_leaf{});
     }
 
-#if 0
-    {
-      fmt::print("{} leaves\n", numLeaves);
-      // check trunk order & lInds
-      Vector<u64> tab{primBvs.get_allocator(), numNodes}, tmp{primBvs.get_allocator(), 1};
-      policy(enumerate(tab), [] ZS_LAMBDA(auto id, auto &i) { i = id + 1; });
-      reduce(policy, zs::begin(tab), zs::end(tab), zs::begin(tmp), (u64)0);
-      auto chkSum = tmp.getVal();
-      fmt::print("{} total nodes, sum {} (ref: {})\n", numNodes, chkSum,
-                 ((u64)1 + (u64)numNodes) * (u64)numNodes / 2);
-
-      policy(enumerate(trunkDst), [tab = proxy<space>(tab)] ZS_LAMBDA(auto id, auto dst) {
-        if (atomic_cas(execTag, &tab[dst], (u64)(dst + 1), (u64)0) != dst + 1)
-          printf("\t%d-th trunk node (dst %d) invalid\n", (int)id, (int)dst);
-      });
-      policy(enumerate(leafInds), [tab = proxy<space>(tab)] ZS_LAMBDA(auto id, auto dst) {
-        if (atomic_cas(execTag, &tab[dst], (u64)(dst + 1), (u64)0) != dst + 1)
-          printf("\t%d-th leaf node (dst %d) invalid\n", (int)id, (int)dst);
-      });
-      reduce(policy, zs::begin(tab), zs::end(tab), zs::begin(tmp), (u64)0);
-      chkSum = tmp.getVal();
-      fmt::print("end sum {}\n", chkSum);
-    }
-#endif
-
     // reorder trunk
     {
       const auto &params = zs::make_tuple(lLcas, lOffsets, proxy<space>(auxIndices),

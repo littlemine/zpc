@@ -604,7 +604,6 @@ namespace zs {
       pol(zip(numActiveChildren, l.childMask), zs::make_tuple(wrapv<space>{}), _reorder_count_on{});
       exclusive_scan(pol, numActiveChildren.begin(), numActiveChildren.end(),
                      l.childOffset.begin());
-      // fmt::print("done level [{}] histogram sort.\n", I);
 
       /// DEBUG
       if constexpr (false) {
@@ -621,7 +620,6 @@ namespace zs {
                                             view<space>(l.childMask));
         pol(enumerate(lc.table._activeKeys, dsts), params, _reorder_locate_children<I>{});
       }
-      // fmt::print("done level [{}] locating children.\n", I);
 
       // pol(enumerate(dsts),
       //    [nchbs] ZS_LAMBDA(size_type i, size_type & dst) { dst = nchbs - 1 - i; });
@@ -1893,8 +1891,6 @@ namespace zs {
           pol(range(nbs), params, _build_level_entry{});
         }
         size_t parNbs = lp.numBlocks();
-        // fmt::print("complementing level [{}] topo: {} -> {}\n", level_no + 1, prevParNbs,
-        // parNbs);
         {
           /// @note init (child/value) mask for newly spawned blocks. childOffset uninitialized
           lp.resizeTopo(parNbs);
@@ -1914,7 +1910,6 @@ namespace zs {
           Resource::memset(MemoryEntity{this->memoryLocation(), lp.grid.tileOffset(prevParNbs)}, 0,
                            /*num bytes*/ (parNbs - prevParNbs) * lp.grid.tileBytes());
         }
-        // fmt::print("complementing level [{}]: done default init\n", level_no + 1);
         /// DEBUG
         if constexpr (false) {
           auto allocator = get_temporary_memory_source(pol);
@@ -1938,7 +1933,6 @@ namespace zs {
           pol(range(parNbs * hierarchy_bitmask_type::word_count), params,
               _update_topo_update_childmask{});
         }
-        // fmt::print("complementing level [{}]: done update child mask\n", level_no + 1);
 
         /// DEBUG
         if constexpr (false) {

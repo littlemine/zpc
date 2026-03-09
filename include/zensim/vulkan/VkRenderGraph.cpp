@@ -31,7 +31,7 @@ PassPipelineInfo PassPipelineCache::getOrBuild(
     const PassPipelineDesc& desc,
     vk::RenderPass renderPass,
     const std::vector<vk::DescriptorSetLayout>& setLayouts,
-    std::vector<std::unique_ptr<Pipeline>>& retiredPipelines) {
+  std::vector<UniquePtr<Pipeline>>& retiredPipelines) {
 
   auto it = _entries.find(tag);
   if (it != _entries.end() && !it->second.dirty && it->second.pipeline) {
@@ -60,7 +60,7 @@ PassPipelineInfo PassPipelineCache::getOrBuild(
     info.layout = static_cast<vk::PipelineLayout>(pipeline);
     info.bindPoint = vk::PipelineBindPoint::eGraphics;
     _entries[tag] = CachedEntry{
-        std::unique_ptr<Pipeline>(new Pipeline(std::move(pipeline))), false};
+      zs::make_unique<Pipeline>(std::move(pipeline)), false};
 
   } else if (desc.isCompute()) {
     const auto& shaderDesc = desc.computeShader;
@@ -80,7 +80,7 @@ PassPipelineInfo PassPipelineCache::getOrBuild(
     info.layout = static_cast<vk::PipelineLayout>(pipeline);
     info.bindPoint = vk::PipelineBindPoint::eCompute;
     _entries[tag] = CachedEntry{
-        std::unique_ptr<Pipeline>(new Pipeline(std::move(pipeline))), false};
+      zs::make_unique<Pipeline>(std::move(pipeline)), false};
   }
 
   return info;
@@ -639,7 +639,7 @@ RenderGraph RenderGraphBuilder::build(PassPipelineCache* pipelineCache,
       pass.pipelineInfo.layout = static_cast<vk::PipelineLayout>(pipeline);
       pass.pipelineInfo.bindPoint = vk::PipelineBindPoint::eGraphics;
       graph.managedPipelines.push_back(
-          std::unique_ptr<Pipeline>(new Pipeline(std::move(pipeline))));
+          zs::make_unique<Pipeline>(std::move(pipeline)));
 
     } else if (pass.pipelineDesc.isCompute()) {
       // Compute pipeline: create layout + shader module + pipeline
@@ -671,7 +671,7 @@ RenderGraph RenderGraphBuilder::build(PassPipelineCache* pipelineCache,
       pass.pipelineInfo.layout = static_cast<vk::PipelineLayout>(pipeline);
       pass.pipelineInfo.bindPoint = vk::PipelineBindPoint::eCompute;
       graph.managedPipelines.push_back(
-          std::unique_ptr<Pipeline>(new Pipeline(std::move(pipeline))));
+          zs::make_unique<Pipeline>(std::move(pipeline)));
     }
   }
 

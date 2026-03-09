@@ -1,0 +1,208 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ZPC Docs Portal</title>
+  <style>
+    :root {
+      --bg: #f5f1e8;
+      --panel: #fffaf0;
+      --ink: #1f2a30;
+      --muted: #5b6b73;
+      --accent: #0f766e;
+      --accent-2: #c96f32;
+      --line: #d8cdb8;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: Georgia, "Times New Roman", serif;
+      color: var(--ink);
+      background:
+        radial-gradient(circle at top left, rgba(201,111,50,0.10), transparent 28%),
+        radial-gradient(circle at top right, rgba(15,118,110,0.12), transparent 24%),
+        linear-gradient(180deg, #faf6ee 0%, var(--bg) 100%);
+    }
+    .shell {
+      max-width: 1200px;
+      margin: 0 auto;
+      padding: 40px 24px 64px;
+    }
+    .hero {
+      display: grid;
+      gap: 20px;
+      padding: 28px;
+      border: 1px solid var(--line);
+      background: rgba(255,250,240,0.88);
+      backdrop-filter: blur(6px);
+    }
+    h1, h2, h3 { margin: 0; font-weight: 600; }
+    h1 { font-size: clamp(2.2rem, 4vw, 3.4rem); letter-spacing: 0.02em; }
+    h2 { font-size: 1.35rem; margin-bottom: 12px; }
+    p { margin: 0; line-height: 1.6; }
+    .lead { color: var(--muted); max-width: 900px; }
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+      gap: 16px;
+      margin-top: 28px;
+    }
+    .section-label {
+      margin-top: 28px;
+      color: var(--muted);
+      font-size: 0.9rem;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+    .card {
+      border: 1px solid var(--line);
+      background: var(--panel);
+      padding: 18px;
+    }
+    .card p { color: var(--muted); margin-top: 8px; }
+    .card a { color: var(--accent); text-decoration: none; }
+    .card a:hover { text-decoration: underline; }
+    .visuals {
+      display: grid;
+      gap: 20px;
+      margin-top: 28px;
+    }
+    .visual {
+      border: 1px solid var(--line);
+      background: var(--panel);
+      padding: 18px;
+    }
+    .visual img {
+      width: 100%;
+      height: auto;
+      margin-top: 12px;
+      border: 1px solid var(--line);
+      background: white;
+    }
+    .footer {
+      margin-top: 32px;
+      color: var(--muted);
+      font-size: 0.95rem;
+    }
+    .accent { color: var(--accent-2); }
+  </style>
+</head>
+<body>
+  <main class="shell">
+    <section class="hero">
+      <h1>ZPC Docs <span class="accent">Portal</span></h1>
+      <p class="lead">
+        A lightweight documentation entry point for the current architecture work. This page is
+        standalone HTML for easy browsing in the editor or file explorer, while the primary design
+        content now lives in the Markdown pages beside it.
+      </p>
+    </section>
+
+    <p class="section-label">Start Here</p>
+    <section class="grid" aria-label="Primary docs links">
+      <article class="card">
+        <h2>Overview</h2>
+        <a href="overview.md">overview.md</a>
+        <p>High-level project context and the current architecture direction.</p>
+      </article>
+      <article class="card">
+        <h2>Research Topics</h2>
+        <a href="research_topics.md">research_topics.md</a>
+        <p>Topic-oriented contents page with summaries and suggested reading paths.</p>
+      </article>
+      <article class="card">
+        <h2>Roadmap</h2>
+        <a href="roadmap.md">roadmap.md</a>
+        <p>Strategic direction, delivery phases, and platform priorities.</p>
+      </article>
+    </section>
+
+    <p class="section-label">Platform Architecture</p>
+    <section class="grid" aria-label="Platform architecture links">
+      <article class="card">
+        <h2>Foundation</h2>
+        <a href="foundation_layer.md">foundation_layer.md</a>
+        <p>The portable, always-on substrate that future layers should depend on.</p>
+      </article>
+      <article class="card">
+        <h2>Runtime Core</h2>
+        <a href="runtime_core_design.md">runtime_core_design.md</a>
+        <p>Async control-plane direction, executor model, scheduler scope, and validation coupling.</p>
+      </article>
+      <article class="card">
+        <h2>Modularization</h2>
+        <a href="architecture_and_modularization.md">architecture_and_modularization.md</a>
+        <p>Target graph proposal, dependency direction, and compatibility-facade strategy.</p>
+      </article>
+      <article class="card">
+        <h2>Profiles</h2>
+        <a href="platform_and_build_profiles.md">platform_and_build_profiles.md</a>
+        <p>Delivery-oriented build profiles for minimal, runtime, desktop, mobile, web, and console-entry paths.</p>
+      </article>
+      <article class="card">
+        <h2>Implementation</h2>
+        <a href="implementation_roadmap.md">implementation_roadmap.md</a>
+        <p>Milestone sequence for foundation extraction, backend separation, and graphics split.</p>
+      </article>
+    </section>
+
+    <p class="section-label">Product And Application Research</p>
+    <section class="grid" aria-label="Product research links">
+      <article class="card">
+        <h2>Frontend + App</h2>
+        <a href="application_layer_design.md">application_layer_design.md</a><br>
+        <a href="lightweight_frontend_integration.md">lightweight_frontend_integration.md</a>
+        <p>Application-shell and lightweight frontend direction above the modular platform.</p>
+      </article>
+      <article class="card">
+        <h2>Rendering</h2>
+        <a href="rendering_and_visualization.md">rendering_and_visualization.md</a>
+        <p>Optional graphics ownership, visualization paths, inspection tooling, and presentation layers.</p>
+      </article>
+      <article class="card">
+        <h2>Physics</h2>
+        <a href="physics_and_simulation.md">physics_and_simulation.md</a>
+        <p>Simulation-facing structures, heterogeneous execution concerns, and validation-aware delivery.</p>
+      </article>
+      <article class="card">
+        <h2>Gameplay + Mechanics</h2>
+        <a href="gameplay_and_mechanics.md">gameplay_and_mechanics.md</a>
+        <p>Higher-level interaction logic, authoring systems, scripting, and native or web app consumers.</p>
+      </article>
+      <article class="card">
+        <h2>Web Runtime Interface</h2>
+        <a href="web_runtime_service_interface.md">web_runtime_service_interface.md</a>
+        <p>Browser and service-mediated interaction model for sessions, runtime control, streaming reports, and WASM-aware delivery.</p>
+      </article>
+      <article class="card">
+        <h2>CLI + GUI Exposure</h2>
+        <a href="cli_and_gui_interface_exposure.md">cli_and_gui_interface_exposure.md</a>
+        <p>Shared service model for automation, operator control, interactive authoring, runtime inspection, and tuning.</p>
+      </article>
+      <article class="card">
+        <h2>Canary Tuning</h2>
+        <a href="canary_gameplay_and_tuning.md">canary_gameplay_and_tuning.md</a>
+        <p>Schema-driven scenario setup, ECS-style mechanic layering, human parameter tuning, and canary evaluation workflows.</p>
+      </article>
+    </section>
+
+    <section class="visuals" aria-label="Architecture visuals">
+      <article class="visual">
+        <h2>Target Graph</h2>
+        <p>A high-level view of the intended dependency direction from base contracts up to compatibility facades.</p>
+        <img src="assets/architecture-target-graph.svg" alt="ZPC target graph diagram">
+      </article>
+      <article class="visual">
+        <h2>Build Profiles</h2>
+        <p>A compact map showing how the project scales from a portable minimal profile up to a full development assembly.</p>
+        <img src="assets/build-profiles.svg" alt="ZPC build profile diagram">
+      </article>
+    </section>
+
+    <p class="footer">
+      Markdown portal: <a href="README.md">README.md</a>. Topic index: <a href="research_topics.md">research_topics.md</a>. Legacy Sphinx entry point: <a href="index.rst">index.rst</a>.
+    </p>
+  </main>
+</body>
+</html>

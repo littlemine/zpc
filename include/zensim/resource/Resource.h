@@ -7,6 +7,7 @@
 #include <vector>
 
 #include "zensim/Reflection.h"
+#include "zensim/ZpcResource.hpp"
 #include "zensim/ZpcFunction.hpp"
 #include "zensim/memory/MemOps.hpp"
 #include "zensim/memory/MemoryResource.h"
@@ -98,13 +99,13 @@ namespace zs {
       match([&](auto t) {
         if constexpr (is_memory_source_available(t)) {
           using MemT = RM_CVREF_T(t);
-          res = std::make_unique<ResourceT<MemT>>(devid, zs::get<Is>(args)...);
+          res = zs::make_unique<ResourceT<MemT>>(devid, zs::get<Is>(args)...);
           location = MemoryLocation{t.value, devid};
-          cloner = [devid, args]() -> std::unique_ptr<resource_type> {
-            std::unique_ptr<resource_type> ret{};
+          cloner = [devid, args]() -> UniquePtr<resource_type> {
+            UniquePtr<resource_type> ret{};
             zs::apply(
                 [&ret](auto &&...ctorArgs) {
-                  ret = std::make_unique<ResourceT<decltype(t)>>(FWD(ctorArgs)...);
+                  ret = zs::make_unique<ResourceT<decltype(t)>>(FWD(ctorArgs)...);
                 },
                 zs::tuple_cat(zs::make_tuple(devid), args));
             return ret;
@@ -121,14 +122,14 @@ namespace zs {
                                      index_sequence_for<Args...>{});
       else {
         if constexpr (is_memory_source_available(tag)) {
-          res = std::make_unique<ResourceT<MemTag>>(devid, args...);
+          res = zs::make_unique<ResourceT<MemTag>>(devid, args...);
           location = MemoryLocation{MemTag::value, devid};
           cloner
-              = [devid, args = zs::make_tuple(FWD(args)...)]() -> std::unique_ptr<resource_type> {
-            std::unique_ptr<resource_type> ret{};
+              = [devid, args = zs::make_tuple(FWD(args)...)]() -> UniquePtr<resource_type> {
+            UniquePtr<resource_type> ret{};
             zs::apply(
                 [&ret](auto &&...ctorArgs) {
-                  ret = std::make_unique<ResourceT<MemTag>>(FWD(ctorArgs)...);
+                  ret = zs::make_unique<ResourceT<MemTag>>(FWD(ctorArgs)...);
                 },
                 zs::tuple_cat(zs::make_tuple(devid), args));
             return ret;
@@ -139,8 +140,8 @@ namespace zs {
       }
     }
 
-    function<std::unique_ptr<resource_type>()> cloner{};
-    std::unique_ptr<resource_type> res{};
+    function<UniquePtr<resource_type>()> cloner{};
+    UniquePtr<resource_type> res{};
     MemoryLocation location{memsrc_e::host, -1};
   };
 

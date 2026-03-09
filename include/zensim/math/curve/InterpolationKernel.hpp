@@ -1,4 +1,6 @@
 #pragma once
+
+#include <iostream>
 #include "zensim/ZpcIterator.hpp"
 #include "zensim/geometry/LevelSetInterface.h"
 #include "zensim/math/MathUtils.h"
@@ -504,13 +506,14 @@ namespace zs {
       for (int d = 0; d != dim; ++d) {
         for (int w = 0; w != width; ++w) {
           sum += get<0>(weights)(d, w);
-          fmt::print("weights({}, {}): [{}]\t", d, w, get<0>(weights)(d, w));
-          if constexpr (deriv_order > 0) fmt::print("[{}]\t", get<1>(weights)(d, w));
-          if constexpr (deriv_order > 1) fmt::print("[{}]\t", get<2>(weights)(d, w));
-          fmt::print("\n");
+          std::cout << "weights(" << d << ", " << w << "): [" << get<0>(weights)(d, w)
+                    << "]\t";
+          if constexpr (deriv_order > 0) std::cout << '[' << get<1>(weights)(d, w) << "]\t";
+          if constexpr (deriv_order > 1) std::cout << '[' << get<2>(weights)(d, w) << "]\t";
+          std::cout << '\n';
         }
       }
-      fmt::print("weight sum: {}\n", sum);
+      std::cout << "weight sum: " << sum << '\n';
     }
 
     grid_view_type *gridPtr{nullptr};

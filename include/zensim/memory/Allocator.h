@@ -7,6 +7,7 @@
 
 #include "MemOps.hpp"
 #include "MemoryResource.h"
+#include "zensim/ZpcResource.hpp"
 #include "zensim/math/bit/Bits.h"
 
 namespace zs {
@@ -350,7 +351,7 @@ namespace zs {
         pmr::pool_options opt{/*.max_blocks_per_chunk = */ 0,
                               /*.largest_required_pool_block = */ block_sizes(i)};
         /// thread-safe version
-        _pools[i] = std::make_unique<synchronized_pool_resource>(opt, source);
+        _pools[i] = zs::make_unique<synchronized_pool_resource>(opt, source);
       }
     }
 
@@ -369,7 +370,7 @@ namespace zs {
     }
 
   private:
-    std::array<std::unique_ptr<mr_t>, nPools> _pools;
+    std::array<UniquePtr<mr_t>, nPools> _pools;
   };
 
   template <size_t... Ns> struct static_memory_pools : mr_t {
@@ -390,7 +391,7 @@ namespace zs {
       for (char i = 0; i < nPools; ++i) {
         pmr::pool_options opt{/*.max_blocks_per_chunk = */ 0,
                               /*.largest_required_pool_block = */ block_sizes(i)};
-        _pools[i] = std::make_unique<unsynchronized_pool_resource>(opt, source);
+        _pools[i] = zs::make_unique<unsynchronized_pool_resource>(opt, source);
       }
     }
 
@@ -409,7 +410,7 @@ namespace zs {
     }
 
   private:
-    std::array<std::unique_ptr<mr_t>, nPools> _pools;
+    std::array<UniquePtr<mr_t>, nPools> _pools;
   };
 #endif
 

@@ -16,10 +16,20 @@
 // # include <winnt.h>
 #  endif
 #  include "zensim/ZpcIntrinsics.hpp"
+#  include "zensim/execution/ConcurrencyPrimitive.hpp"
 #  include "zensim/types/Property.h"
 #endif
 
 namespace zs {
+
+  enum memory_order {
+    memory_order_relaxed,
+    memory_order_consume,
+    memory_order_acquire,
+    memory_order_release,
+    memory_order_acq_rel,
+    memory_order_seq_cst
+  };
 
   /// reference: raja/include/RAJA/policy/atomic_builtin.hpp: BuiltinAtomicCAS
 
@@ -525,5 +535,159 @@ namespace zs {
 #endif
     }
   }
+
+  template <typename ExecTag, typename T>
+  inline T atomic_load(ExecTag, const T *src) {
+    if constexpr (is_same_v<ExecTag, seq_exec_tag>) {
+      return *src;
+    } else {
+      auto *mutableSrc = const_cast<T *>(src);
+      T expected = *const_cast<const volatile T *>(src);
+      return atomic_cas(ExecTag{}, mutableSrc, expected, expected);
+    }
+  }
+
+  template <typename ExecTag, typename T>
+  inline void atomic_store(ExecTag, T *dest, T value) {
+    if constexpr (is_same_v<ExecTag, seq_exec_tag>)
+      *dest = value;
+    else
+      (void)atomic_exch(ExecTag{}, dest, value);
+  }
+
+  namespace detail {
+    template <typename T, bool IsPointer = is_pointer_v<T>, bool IsEnum = is_enum_v<T>,
+              bool IsBool = is_same_v<T, bool>>
+    struct atomic_storage_impl {
+      using type = T;
+    };
+
+    template <typename T>
+    struct atomic_storage_impl<T, true, false, false> {
+      using type = uintptr_t;
+    };
+
+    template <typename T>
+    struct atomic_storage_impl<T, false, true, false> {
+      using type = underlying_type_t<T>;
+    };
+
+    template <typename T>
+    struct atomic_storage_impl<T, false, false, true> {
+      using type = u32;
+    };
+
+    template <typename T>
+    struct atomic_storage {
+      using type = typename atomic_storage_impl<T>::type;
+    };
+
+    template <typename T>
+    using atomic_storage_t = typename atomic_storage<T>::type;
+
+    template <typename T>
+    inline atomic_storage_t<T> to_atomic_storage(T value) noexcept {
+      if constexpr (is_pointer_v<T>)
+        return reinterpret_cast<atomic_storage_t<T>>(value);
+      else if constexpr (is_same_v<T, bool>)
+        return value ? 1u : 0u;
+      else if constexpr (is_enum_v<T>)
+        return static_cast<atomic_storage_t<T>>(value);
+      else
+        return value;
+    }
+
+    template <typename T>
+    inline T from_atomic_storage(atomic_storage_t<T> value) noexcept {
+      if constexpr (is_pointer_v<T>)
+        return reinterpret_cast<T>(value);
+      else if constexpr (is_same_v<T, bool>)
+        return value != 0;
+      else if constexpr (is_enum_v<T>)
+        return static_cast<T>(value);
+      else
+        return value;
+    }
+  }  // namespace detail
+
+  template <typename T>
+  class Atomic {
+  public:
+    using value_type = T;
+    using storage_type = detail::atomic_storage_t<T>;
+
+    Atomic() noexcept = default;
+    constexpr Atomic(T value) noexcept : _value{detail::to_atomic_storage(value)} {}
+
+    Atomic(const Atomic &) = delete;
+    Atomic &operator=(const Atomic &) = delete;
+
+    storage_type *native_handle() noexcept { return &_value; }
+    const storage_type *native_handle() const noexcept { return &_value; }
+
+    T load(memory_order = memory_order_seq_cst) const noexcept {
+      return detail::from_atomic_storage<T>(atomic_load(omp_c, &_value));
+    }
+
+    void store(T value, memory_order = memory_order_seq_cst) noexcept {
+      atomic_store(omp_c, &_value, detail::to_atomic_storage(value));
+    }
+
+    T exchange(T value, memory_order = memory_order_seq_cst) noexcept {
+      return detail::from_atomic_storage<T>(
+          atomic_exch(omp_c, &_value, detail::to_atomic_storage(value)));
+    }
+
+    bool compare_exchange_weak(T &expected, T desired,
+                               memory_order = memory_order_seq_cst,
+                               memory_order = memory_order_seq_cst) noexcept {
+      return compare_exchange_strong(expected, desired);
+    }
+
+    bool compare_exchange_strong(T &expected, T desired,
+                                 memory_order = memory_order_seq_cst,
+                                 memory_order = memory_order_seq_cst) noexcept {
+      auto expectedStorage = detail::to_atomic_storage(expected);
+      const auto observed = atomic_cas(omp_c, &_value, expectedStorage,
+                                       detail::to_atomic_storage(desired));
+      if (observed == expectedStorage) return true;
+      expected = detail::from_atomic_storage<T>(observed);
+      return false;
+    }
+
+    template <typename Q = T, enable_if_type<is_integral_v<Q> && !is_same_v<Q, bool>, int> = 0>
+    T fetch_add(T value, memory_order = memory_order_seq_cst) noexcept {
+      return atomic_add(omp_c, &_value, value);
+    }
+
+    template <typename Q = T, enable_if_type<is_integral_v<Q> && !is_same_v<Q, bool>, int> = 0>
+    T fetch_sub(T value, memory_order = memory_order_seq_cst) noexcept {
+      return atomic_add(omp_c, &_value, -value);
+    }
+
+    void wait(T expected, memory_order = memory_order_seq_cst) const noexcept {
+      _waitMutex.lock();
+      _waitCv.wait(_waitMutex, [&] { return load(memory_order_acquire) != expected; });
+      _waitMutex.unlock();
+    }
+
+    void notify_one() noexcept { _waitCv.notify_one(); }
+    void notify_all() noexcept { _waitCv.notify_all(); }
+
+  private:
+    static_assert((is_integral_v<storage_type> || is_same_v<storage_type, uintptr_t>)
+                      && sizeof(storage_type) <= sizeof(u64),
+                  "Atomic supports bool, pointers, enums, and host integral types up to 64 bits.");
+
+    mutable Mutex _waitMutex{};
+    mutable ConditionVariable _waitCv{};
+    storage_type _value{};
+  };
+
+  template <typename T>
+  using atomic = Atomic<T>;
+
+  using atomic_bool = Atomic<bool>;
+  using atomic_size_t = Atomic<size_t>;
 
 }  // namespace zs

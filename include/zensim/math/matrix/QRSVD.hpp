@@ -2,7 +2,6 @@
 #include "Givens.hpp"
 #include "zensim/ZpcFunctional.hpp"
 #include "zensim/math/Vec.h"
-#include "zensim/zpc_tpls/fmt/core.h"
 
 /// <summary>
 /// qrsvd
@@ -398,24 +397,6 @@ namespace zs {
           gamma[0] = alpha[0] * beta[0];
           gamma[1] = alpha[1] * beta[1];
         }
-
-#if 0
-        {
-          auto printMat = [](auto&& mat, std::string msg = "") {
-            using Mat = RM_CVREF_T(mat);
-            if (!msg.empty()) fmt::print("## msg: {}\n", msg);
-            if constexpr (Mat::get_extent() == 9)
-              fmt::print("mat3[{}] ==\n{}, {}, {}\n{}, {}, {}\n{}, {}, {}\n", (void*)&mat,
-                         mat(0, 0), mat(0, 1), mat(0, 2), mat(1, 0), mat(1, 1), mat(1, 2),
-                         mat(2, 0), mat(2, 1), mat(2, 2));
-          };
-          printMat(A, "A");
-          printMat(U, "U");
-          printMat(B, "B");
-          printMat(V.transpose(), "V^T");
-          printMat(U * B * V.transpose(), "Achk (U B V^T)");
-        }
-#endif
         /**
          *  Handle the cases of one of the alphas and betas being 0
          *  Sorted by ease of handling and then frequency

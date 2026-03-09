@@ -95,7 +95,7 @@ namespace zs {
 #if ZS_VULKAN_USE_VMA
     VmaAllocation allocation;
 #else
-    std::shared_ptr<VkMemory> pmem;
+    Shared<VkMemory> pmem;
 #endif
 
     std::optional<vk::ImageView> pview;

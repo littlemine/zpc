@@ -1,6 +1,7 @@
 #pragma once
 #include <optional>
 
+#include "zensim/types/ImplPattern.hpp"
 #include "zensim/vulkan/VkContext.hpp"
 
 namespace zs {
@@ -238,7 +239,7 @@ namespace zs {
 #if ZS_VULKAN_USE_VMA
     VmaAllocation allocation;
 #else
-    std::shared_ptr<VkMemory> pmem;
+    Shared<VkMemory> pmem;
 #endif
 
     std::optional<vk::BufferView> pview;

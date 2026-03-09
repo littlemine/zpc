@@ -1,6 +1,7 @@
 #pragma once
 #include "zensim/ZpcFunction.hpp"
 #include "zensim/execution/Concurrency.h"
+#include "zensim/execution/ManagedThread.hpp"
 
 namespace zs {
 
@@ -18,7 +19,7 @@ namespace zs {
       }
     }
     IO() : bRunning{true} {
-      th = std::thread([this]() { this->worker(); });
+      th.start([this](ManagedThread &) { worker(); }, "io-worker");
     }
 
   public:
@@ -29,7 +30,7 @@ namespace zs {
     ~IO() {
       while (!jobs.empty()) cv.notify_all();
       bRunning = false;
-      th.join();
+      if (th.joinable()) th.join();
     }
 
     static void flush() {
@@ -47,7 +48,7 @@ namespace zs {
     std::mutex mut;
     std::condition_variable cv;
     threadsafe_queue<zs::function<void()>> jobs;
-    std::thread th;
+    ManagedThread th;
   };
 
   std::string file_get_content(std::string const &path);

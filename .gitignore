@@ -16,3 +16,6 @@
 cmake-build-**
 .idea
 /.vs
+build-copilot
+build-session-*
+.claude

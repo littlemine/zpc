@@ -1,4 +1,6 @@
 #pragma once
+#include <iostream>
+
 #include "Vector.hpp"
 #include "zensim/execution/Atomics.hpp"
 #include "zensim/execution/ExecutionPolicy.hpp"
@@ -80,7 +82,7 @@ namespace zs {
     counter_t counts{_cnt.get_allocator(), numNodes()};
     counts.reset(0);
     auto frontView = proxy<space>(*this);
-    fmt::print("{} current front nodes, {} num bvh nodes\n", numFrontNodes, numNodes());
+    std::cout << numFrontNodes << " current front nodes, " << numNodes() << " num bvh nodes\n";
     policy(range(numFrontNodes),
            [execTag, counts = proxy<space>(counts), front = frontView] ZS_LAMBDA(
                index_t i) mutable { atomic_add(execTag, &counts[front.node(i)], (index_t)1); });

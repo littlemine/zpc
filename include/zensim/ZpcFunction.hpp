@@ -210,22 +210,34 @@ namespace zs {
     }
     function &operator=(const function &o) {
       if (this != &o) {
-        if (o)
+        if (_manageFn) (*_manageFn)(_storage.data(), nullptr, manage_op_e::destruct);
+        _erasedFn = nullptr;
+        _manageFn = nullptr;
+        if (o) {
           o._manageFn(const_cast<void *>(o._storage.data()), _storage.data(), manage_op_e::clone);
-        _erasedFn = o._erasedFn;
-        _manageFn = o._manageFn;
+          _erasedFn = o._erasedFn;
+          _manageFn = o._manageFn;
+        }
       }
       return *this;
     }
 
-    function(function &&o) noexcept { operator=(zs::move(o)); }
+    function(function &&o) noexcept : _storage{}, _erasedFn{nullptr}, _manageFn{nullptr} {
+      operator=(zs::move(o));
+    }
     function &operator=(function &&o) noexcept {
       if (this != &o) {
-        memcpy(_storage.data(), o._storage.data(), function_storage::capacity);
-        _erasedFn = o._erasedFn;
-        _manageFn = o._manageFn;
-        o._erasedFn = nullptr;
-        o._manageFn = nullptr;
+        if (_manageFn) (*_manageFn)(_storage.data(), nullptr, manage_op_e::destruct);
+        _erasedFn = nullptr;
+        _manageFn = nullptr;
+        if (o) {
+          o._manageFn(const_cast<void *>(o._storage.data()), _storage.data(), manage_op_e::clone);
+          _erasedFn = o._erasedFn;
+          _manageFn = o._manageFn;
+          o._manageFn(const_cast<void *>(o._storage.data()), nullptr, manage_op_e::destruct);
+          o._erasedFn = nullptr;
+          o._manageFn = nullptr;
+        }
       }
       return *this;
     }

@@ -1,0 +1,128 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1480" height="920" viewBox="0 0 1480 920" role="img" aria-labelledby="title desc">
+  <title id="title">ZPC target graph</title>
+  <desc id="desc">A cleaner layered target graph showing compile contract, foundation, runtime and validation core, backend modules, domain modules, and frontend and application surfaces including web and wasm delivery.</desc>
+  <defs>
+    <style>
+      .bg { fill: #f7f3eb; }
+      .frame { fill: #fbf8f2; stroke: #cfc3ae; stroke-width: 2; rx: 28; ry: 28; }
+      .laneA { fill: #e2f2ec; stroke: #2d7d72; stroke-width: 2; rx: 18; ry: 18; }
+      .laneB { fill: #e5edf7; stroke: #3a628f; stroke-width: 2; rx: 18; ry: 18; }
+      .laneC { fill: #f8eadf; stroke: #cc7b3c; stroke-width: 2; rx: 18; ry: 18; }
+      .laneD { fill: #f1e7f7; stroke: #7e59a7; stroke-width: 2; rx: 18; ry: 18; }
+      .laneE { fill: #ebf2de; stroke: #73922c; stroke-width: 2; rx: 18; ry: 18; }
+      .laneF { fill: #f4ead7; stroke: #8c6a2f; stroke-width: 2; rx: 18; ry: 18; }
+      .section { font: 700 15px "Segoe UI", Arial, sans-serif; letter-spacing: 0.08em; fill: #5f6b73; }
+      .title { font: 700 34px Georgia, serif; fill: #1f2a30; }
+      .subtitle { font: 400 18px Georgia, serif; fill: #5b6b73; }
+      .label { font: 700 18px "Segoe UI Semibold", "Segoe UI", Arial, sans-serif; fill: #1f2a30; }
+      .body { font: 400 14px "Segoe UI", Arial, sans-serif; fill: #314047; }
+      .note { font: 400 13px "Segoe UI", Arial, sans-serif; fill: #526168; }
+      .arrow { stroke: #66757d; stroke-width: 3.5; fill: none; marker-end: url(#arrow); }
+      .soft { stroke: #8a989f; stroke-width: 2.5; fill: none; marker-end: url(#arrowSoft); }
+    </style>
+    <marker id="arrow" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto">
+      <path d="M 0 0 L 12 6 L 0 12 z" fill="#66757d"/>
+    </marker>
+    <marker id="arrowSoft" markerWidth="11" markerHeight="11" refX="9" refY="5.5" orient="auto">
+      <path d="M 0 0 L 11 5.5 L 0 11 z" fill="#8a989f"/>
+    </marker>
+  </defs>
+
+  <rect class="bg" x="0" y="0" width="1480" height="920"/>
+  <text class="title" x="70" y="64">ZPC Target Graph</text>
+  <text class="subtitle" x="70" y="96">Foundation-first modularization with explicit runtime, product, and web delivery surfaces</text>
+
+  <rect class="frame" x="50" y="130" width="1380" height="730"/>
+
+  <text class="section" x="90" y="170">LAYER 0-1  BASE AND FOUNDATION</text>
+  <rect class="laneA" x="90" y="195" width="250" height="88"/>
+  <text class="label" x="116" y="230">zpcbase</text>
+  <text class="body" x="116" y="254">header aggregation</text>
+  <text class="body" x="116" y="274">compile features and low-level contracts</text>
+
+  <rect class="laneA" x="90" y="315" width="250" height="124"/>
+  <text class="label" x="116" y="350">zpccore_foundation</text>
+  <text class="body" x="116" y="374">portable math, memory, filesystem,</text>
+  <text class="body" x="116" y="394">logging, threads, and platform-safe</text>
+  <text class="body" x="116" y="414">utility ownership</text>
+
+  <text class="section" x="400" y="170">LAYER 2  RUNTIME AND VALIDATION CORE</text>
+  <rect class="laneB" x="400" y="210" width="290" height="96"/>
+  <text class="label" x="426" y="246">zpc_validation_core</text>
+  <text class="body" x="426" y="270">schema, compare, format, and</text>
+  <text class="body" x="426" y="290">upgrade-facing machine-readable output</text>
+
+  <rect class="laneB" x="400" y="334" width="290" height="122"/>
+  <text class="label" x="426" y="370">zpc_async_runtime_core</text>
+  <text class="body" x="426" y="394">runtime control plane, scheduler,</text>
+  <text class="body" x="426" y="414">endpoints, native queue adapters,</text>
+  <text class="body" x="426" y="434">and ABI-facing helpers</text>
+
+  <text class="section" x="750" y="170">LAYER 3  BACKEND MODULES</text>
+  <rect class="laneC" x="750" y="190" width="240" height="58"/>
+  <text class="label" x="776" y="226">zpc_backend_serial</text>
+  <rect class="laneC" x="750" y="266" width="240" height="58"/>
+  <text class="label" x="799" y="302">zpc_backend_omp</text>
+  <rect class="laneC" x="750" y="342" width="240" height="58"/>
+  <text class="label" x="791" y="378">zpc_backend_cuda</text>
+  <rect class="laneC" x="750" y="418" width="240" height="58"/>
+  <text class="label" x="789" y="454">zpc_backend_musa</text>
+  <rect class="laneC" x="750" y="494" width="240" height="58"/>
+  <text class="label" x="794" y="530">zpc_backend_sycl</text>
+  <rect class="laneC" x="750" y="570" width="240" height="58"/>
+  <text class="label" x="783" y="606">zpc_backend_opencl</text>
+
+  <text class="section" x="1050" y="170">LAYER 4-6  DOMAIN, GRAPHICS, AND SURFACES</text>
+  <rect class="laneD" x="1050" y="190" width="300" height="72"/>
+  <text class="label" x="1076" y="226">Domain modules</text>
+  <text class="body" x="1076" y="250">zpc_geometry, zpc_simulation, zpc_io, zpc_tools</text>
+
+  <rect class="laneD" x="1050" y="284" width="300" height="72"/>
+  <text class="label" x="1076" y="320">Graphics module</text>
+  <text class="body" x="1076" y="344">zpc_graphics_vulkan stays optional</text>
+
+  <rect class="laneE" x="1050" y="388" width="300" height="90"/>
+  <text class="label" x="1076" y="424">Native app and tool surfaces</text>
+  <text class="body" x="1076" y="448">immediate-mode app shell, editors,</text>
+  <text class="body" x="1076" y="468">profilers, validation UIs</text>
+
+  <rect class="laneE" x="1050" y="500" width="300" height="96"/>
+  <text class="label" x="1076" y="536">Web applications and WASM</text>
+  <text class="body" x="1076" y="560">browser-facing apps, wasm builds,</text>
+  <text class="body" x="1076" y="580">sandboxed runtime consumers</text>
+
+  <rect class="laneE" x="1050" y="618" width="300" height="96"/>
+  <text class="label" x="1076" y="654">Python, JIT, and frontend packages</text>
+  <text class="body" x="1076" y="678">zpc_py_base, zpc_jit_clang, zpc_jit_nvrtc,</text>
+  <text class="body" x="1076" y="698">and lightweight frontend integration</text>
+
+  <text class="section" x="470" y="540">COMPATIBILITY FACADE</text>
+  <rect class="laneF" x="470" y="570" width="300" height="104"/>
+  <text class="label" x="496" y="608">zpccore, zpc, zensim</text>
+  <text class="body" x="496" y="632">preserve downstream entry points while</text>
+  <text class="body" x="496" y="652">ownership migrates into narrower layers</text>
+
+  <path class="arrow" d="M 215 283 L 215 315"/>
+  <path class="arrow" d="M 340 360 L 400 258"/>
+  <path class="arrow" d="M 340 377 L 400 395"/>
+
+  <path class="arrow" d="M 690 258 L 750 219"/>
+  <path class="arrow" d="M 690 383 L 750 295"/>
+  <path class="arrow" d="M 690 395 L 750 371"/>
+  <path class="arrow" d="M 690 408 L 750 447"/>
+  <path class="arrow" d="M 690 422 L 750 523"/>
+  <path class="arrow" d="M 690 436 L 750 599"/>
+
+  <path class="arrow" d="M 990 219 L 1050 226"/>
+  <path class="arrow" d="M 990 447 L 1050 320"/>
+  <path class="arrow" d="M 990 383 L 1050 433"/>
+  <path class="arrow" d="M 990 408 L 1050 548"/>
+  <path class="arrow" d="M 990 436 L 1050 666"/>
+
+  <path class="soft" d="M 1200 714 L 770 638"/>
+  <path class="soft" d="M 1200 596 L 770 620"/>
+  <path class="soft" d="M 1200 478 L 770 602"/>
+
+  <text class="note" x="90" y="806">Primary dependency direction: compile contract -> foundation -> runtime and validation -> backend modules -> domain, graphics, and product surfaces.</text>
+  <text class="note" x="90" y="830">Web applications and WASM are explicit consumers of the runtime and foundation layers, not afterthoughts hidden behind desktop-only assumptions.</text>
+</svg>

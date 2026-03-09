@@ -10,23 +10,23 @@
 /// inside a certain source file
 
 // #include "zensim/execution/ExecutionPolicy.hpp"
-#include <thread>
 
 #include "zensim/math/bit/Bits.h"
 #if defined(_WIN32)
 #  include <intrin.h>
 #  include <stdlib.h>
-// #  include <windows.h>
-// #  include <synchapi.h>
+#  include <windows.h>
 
 #elif defined(__linux__)
 #  include <immintrin.h>
 #  include <linux/futex.h>
+#  include <sched.h>
 #  include <sys/syscall.h> /* Definition of SYS_* constants */
 #  include <unistd.h>
 
 #elif defined(__APPLE__)
 #  include <arm_neon.h>
+#  include <sched.h>
 #  include <unistd.h>
 #endif
 
@@ -86,17 +86,23 @@ namespace zs {
   inline void pause_cpu(ExecTag = {}) {
 #if defined(_MSC_VER) || (defined(_WIN32) && defined(__INTEL_COMPILER))
     YieldProcessor();
-#elif defined(__clang__) || defined(__GNUC__)
-#  ifdef ZS_PLATFORM_OSX
-    pause();
-#  else
-    // _mm_pause();
-    std::this_thread::yield();
-#  endif
+  #elif defined(__i386__) || defined(__x86_64__)
+    _mm_pause();
+  #elif defined(__aarch64__) || defined(__arm__)
+    __asm__ __volatile__("yield");
 #else
-    static_assert(always_false<ExecTag>, "cannot determinate appropriate pause() intrinsics");
+    yield_cpu();
 #endif
   }
+
+    template <typename ExecTag = seq_exec_tag, enable_if_t<is_host_execution_tag<ExecTag>()> = 0>
+    inline void yield_cpu(ExecTag = {}) noexcept {
+  #if defined(ZS_PLATFORM_WINDOWS)
+    SwitchToThread();
+  #else
+    sched_yield();
+  #endif
+    }
 
 /// @brief warp shuffle funcs
 // __shfl_sync

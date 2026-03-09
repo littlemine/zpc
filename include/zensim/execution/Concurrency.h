@@ -4,12 +4,11 @@
 #include <condition_variable>
 #include <future>
 #include <map>
-#include <memory>
 #include <mutex>
 #include <queue>
 #include <shared_mutex>
-#include <thread>
 
+#include "zensim/ZpcResource.hpp"
 #include "zensim/TypeAlias.hpp"
 #include "zensim/types/Optional.h"
 
@@ -57,10 +56,10 @@ namespace zs {
       data_queue.pop();
       return value;
     }
-    std::shared_ptr<T> wait_and_pop_ptr() {
+    SharedPtr<T> wait_and_pop_ptr() {
       std::unique_lock<std::mutex> lk(mut);
       data_cond.wait(lk, [this] { return !data_queue.empty(); });
-      std::shared_ptr<T> res(std::make_shared<T>(data_queue.front()));
+      SharedPtr<T> res(zs::make_shared<T>(data_queue.front()));
       data_queue.pop();
       return res;
     }
@@ -78,10 +77,10 @@ namespace zs {
       data_queue.pop();
       return value;
     }
-    std::shared_ptr<T> try_pop_ptr() {
+    SharedPtr<T> try_pop_ptr() {
       std::lock_guard<std::mutex> lk(mut);
-      if (data_queue.empty()) return std::shared_ptr<T>();
-      std::shared_ptr<T> res(std::make_shared<T>(data_queue.front()));
+      if (data_queue.empty()) return SharedPtr<T>();
+      SharedPtr<T> res(zs::make_shared<T>(data_queue.front()));
       data_queue.pop();
       return res;
     }

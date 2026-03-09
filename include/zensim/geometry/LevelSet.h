@@ -7,12 +7,13 @@
 #include "AnalyticLevelSet.h"
 #include "LevelSetInterface.h"
 #include "SparseGrid.hpp"
+#include "zensim/ZpcResource.hpp"
 #include "zensim/math/Vec.h"
 
 namespace zs {
 
   template <execspace_e space, typename LsT>
-  constexpr auto get_level_set_view(const std::shared_ptr<LsT> lsPtr) noexcept {
+  constexpr auto get_level_set_view(const SharedPtr<LsT>& lsPtr) noexcept {
     using ls_t = remove_cvref_t<LsT>;
     if constexpr (is_spg_v<ls_t>)      // SparseGrid<ls_t::dim, ...>
       return proxy<space>(*lsPtr);     // const & non-const view
@@ -78,23 +79,23 @@ namespace zs {
                                // analytic_ls_t<analytic_geometry_e::Plane>,
                                uniform_vel_ls_t>;
     /// shared_ptr of const raw levelsets
-    using basic_ls_ptr_t = assemble_t<variant, map_t<std::shared_ptr, raw_ls_tl>>;
+    using basic_ls_ptr_t = assemble_t<variant, map_t<SharedPtr, raw_ls_tl>>;
     using const_basic_ls_ptr_t
-        = assemble_t<variant, map_t<std::shared_ptr, map_t<add_const_t, raw_ls_tl>>>;
+      = assemble_t<variant, map_t<SharedPtr, map_t<add_const_t, raw_ls_tl>>>;
 
     using const_sdf_ls_ptr_t
-        = assemble_t<variant, map_t<std::shared_ptr, map_t<add_const_t, raw_sdf_ls_tl>>>;
+      = assemble_t<variant, map_t<SharedPtr, map_t<add_const_t, raw_sdf_ls_tl>>>;
     using const_vel_ls_ptr_t
-        = assemble_t<variant, map_t<std::shared_ptr, map_t<add_const_t, raw_vel_ls_tl>>>;
+      = assemble_t<variant, map_t<SharedPtr, map_t<add_const_t, raw_vel_ls_tl>>>;
 
     constexpr BasicLevelSet() noexcept = default;
 
     template <typename Ls,
               enable_if_t<raw_ls_tl::template occurencies_t<remove_cvref_t<Ls>>::value == 1> = 0>
-    BasicLevelSet(Ls &&ls) : _ls{std::make_shared<remove_cvref_t<Ls>>(FWD(ls))} {}
+    BasicLevelSet(Ls &&ls) : _ls{zs::make_shared<remove_cvref_t<Ls>>(FWD(ls))} {}
     template <typename Ls,
               enable_if_t<raw_ls_tl::template occurencies_t<remove_cvref_t<Ls>>::value == 1> = 0>
-    BasicLevelSet(const std::shared_ptr<Ls> &ls) : _ls{ls} {}
+    BasicLevelSet(const SharedPtr<Ls> &ls) : _ls{ls} {}
 
 #if 0
     BasicLevelSet(const BasicLevelSet &ls) : _ls{} {
@@ -102,7 +103,7 @@ namespace zs {
         using LsT = typename RM_REF_T(lsPtr)::element_type;
         static_assert(std::is_copy_constructible_v<LsT>,
                       "the levelset should be copy constructible");
-        _ls = std::make_shared<LsT>(*lsPtr);
+        _ls = zs::make_shared<LsT>(*lsPtr);
       })(ls._ls);
     }
     BasicLevelSet &operator=(const BasicLevelSet &ls) {
@@ -114,13 +115,13 @@ namespace zs {
 #endif
 
     template <typename LsT> bool holdsLevelSet() const noexcept {
-      return std::holds_alternative<std::shared_ptr<LsT>>(_ls);
+      return std::holds_alternative<SharedPtr<LsT>>(_ls);
     }
     template <typename LsT> decltype(auto) getLevelSet() const noexcept {
-      return *std::get<std::shared_ptr<LsT>>(_ls);
+      return *std::get<SharedPtr<LsT>>(_ls);
     }
     template <typename LsT> decltype(auto) getLevelSet() noexcept {
-      return *std::get<std::shared_ptr<LsT>>(_ls);
+      return *std::get<SharedPtr<LsT>>(_ls);
     }
 
     basic_ls_ptr_t _ls{};
@@ -156,13 +157,13 @@ namespace zs {
 
     /// ctor
     template <typename SdfField = spls_t, typename VelField = DummyLevelSet<T, d>>
-    constexpr ConstSdfVelFieldPtr(std::shared_ptr<const SdfField> sdf = {},
-                                  std::shared_ptr<const VelField> vel = {}) noexcept
+    constexpr ConstSdfVelFieldPtr(SharedPtr<const SdfField> sdf = {},
+                                  SharedPtr<const VelField> vel = {}) noexcept
         : _sdfConstPtr{sdf}, _velConstPtr{vel} {}
     template <typename SdfField = spls_t, typename VelField = DummyLevelSet<T, d>>
     constexpr ConstSdfVelFieldPtr(const SdfField *sdf, const VelField *vel = nullptr) noexcept
-        : _sdfConstPtr{std::shared_ptr(sdf, [](...) {})},
-          _velConstPtr{std::shared_ptr(vel, [](...) {})} {}
+        : _sdfConstPtr{SharedPtr<const SdfField>{sdf, [](const SdfField *) {}}},
+          _velConstPtr{SharedPtr<const VelField>{vel, [](const VelField *) {}}} {}
 
     constexpr ConstSdfVelFieldPtr(const basic_level_set_t &sdf,
                                   const basic_level_set_t &vel = dummy_ls_t{}) noexcept

@@ -4,6 +4,7 @@
  * @brief Vulkan Render Graph — core types and interfaces.
  *
  * Provides a declarative, DAG-based render graph for Vulkan with:
+#include "zensim/ZpcResource.hpp"
  *  - Virtual resource handles (buffer / image)
  *  - Pass nodes with typed resource references
  *  - Automatic barrier injection (layout transitions, memory barriers)
@@ -228,7 +229,7 @@ struct ZPC_CORE_API PassPipelineCache {
       const PassPipelineDesc& desc,
       vk::RenderPass renderPass,
       const std::vector<vk::DescriptorSetLayout>& setLayouts,
-      std::vector<std::unique_ptr<Pipeline>>& retiredPipelines);
+      std::vector<UniquePtr<Pipeline>>& retiredPipelines);
 
   /// @brief Remove a cached pipeline.  The caller must ensure the GPU is done.
   void erase(const std::string& tag);
@@ -243,7 +244,7 @@ private:
   VulkanContext& _ctx;
 
   struct CachedEntry {
-    std::unique_ptr<Pipeline> pipeline;
+    UniquePtr<Pipeline> pipeline;
     bool dirty{false};
   };
   std::map<std::string, CachedEntry> _entries;
@@ -887,7 +888,7 @@ struct ZPC_CORE_API RenderGraph {
   std::vector<Framebuffer> managedFramebuffers;
 
   /// Auto-created pipelines (RAII, destroyed with graph).
-  std::vector<std::unique_ptr<Pipeline>> managedPipelines;
+  std::vector<UniquePtr<Pipeline>> managedPipelines;
 
   bool compiled{false};
 

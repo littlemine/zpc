@@ -1,0 +1,77 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1460" height="600" viewBox="0 0 1460 600" role="img" aria-labelledby="title desc">
+  <title id="title">ZPC build profiles</title>
+  <desc id="desc">Build profile progression from minimal through runtime, desktop, mobile, web, and full-dev with allowed major capabilities.</desc>
+  <defs>
+    <style>
+      .bg { fill: #fffdf8; }
+      .line { stroke: #d8cdb8; stroke-width: 2; }
+      .frame { fill: #f7f1e3; stroke: #ccbfa6; stroke-width: 2; rx: 18; ry: 18; }
+      .p1 { fill: #d7efe9; stroke: #0f766e; stroke-width: 2; rx: 16; ry: 16; }
+      .p2 { fill: #dfe9f7; stroke: #315b8a; stroke-width: 2; rx: 16; ry: 16; }
+      .p3 { fill: #f5e7d6; stroke: #c96f32; stroke-width: 2; rx: 16; ry: 16; }
+      .p4 { fill: #efe6f7; stroke: #7b4ea3; stroke-width: 2; rx: 16; ry: 16; }
+      .p5 { fill: #e5efd7; stroke: #6a8d1f; stroke-width: 2; rx: 16; ry: 16; }
+      .p6 { fill: #e2eef0; stroke: #4f7c86; stroke-width: 2; rx: 16; ry: 16; }
+      .title { font: 700 30px Georgia, serif; fill: #1f2a30; }
+      .label { font: 700 20px Georgia, serif; fill: #1f2a30; }
+      .small { font: 400 14px Georgia, serif; fill: #304047; }
+      .cap { font: 400 13px Georgia, serif; fill: #4b5b62; }
+    </style>
+  </defs>
+  <rect class="bg" x="0" y="0" width="1460" height="600"/>
+  <text class="title" x="60" y="58">ZPC Build Profiles</text>
+  <rect class="frame" x="50" y="90" width="1360" height="450"/>
+
+  <rect class="p1" x="80" y="140" width="160" height="290"/>
+  <text class="label" x="124" y="178">minimal</text>
+  <text class="cap" x="98" y="214">portable core</text>
+  <text class="cap" x="98" y="238">host baseline</text>
+  <text class="cap" x="98" y="262">no Vulkan</text>
+  <text class="cap" x="98" y="286">no Python</text>
+  <text class="cap" x="98" y="310">no JIT</text>
+  <text class="cap" x="98" y="334">no vendor SDKs required</text>
+
+  <rect class="p2" x="280" y="120" width="160" height="310"/>
+  <text class="label" x="324" y="158">runtime</text>
+  <text class="cap" x="298" y="194">minimal + runtime core</text>
+  <text class="cap" x="298" y="218">validation core</text>
+  <text class="cap" x="298" y="242">stable ABI</text>
+  <text class="cap" x="298" y="266">no graphics required</text>
+  <text class="cap" x="298" y="290">deployable engine path</text>
+
+  <rect class="p3" x="480" y="100" width="160" height="330"/>
+  <text class="label" x="525" y="138">desktop</text>
+  <text class="cap" x="498" y="174">runtime + selected backends</text>
+  <text class="cap" x="498" y="198">optional graphics</text>
+  <text class="cap" x="498" y="222">optional tools</text>
+  <text class="cap" x="498" y="246">interactive workflows</text>
+
+  <rect class="p4" x="680" y="120" width="160" height="310"/>
+  <text class="label" x="731" y="158">mobile</text>
+  <text class="cap" x="698" y="194">runtime-oriented</text>
+  <text class="cap" x="698" y="218">sandbox-safe services</text>
+  <text class="cap" x="698" y="242">compile-first validation</text>
+  <text class="cap" x="698" y="266">no mandatory JIT</text>
+
+  <rect class="p6" x="880" y="120" width="180" height="310"/>
+  <text class="label" x="943" y="158">web</text>
+  <text class="cap" x="900" y="194">runtime-oriented wasm</text>
+  <text class="cap" x="900" y="218">browser-safe packaging</text>
+  <text class="cap" x="900" y="242">sandbox-safe IO assumptions</text>
+  <text class="cap" x="900" y="266">web app delivery</text>
+
+  <rect class="p5" x="1100" y="100" width="220" height="330"/>
+  <text class="label" x="1174" y="138">full-dev</text>
+  <text class="cap" x="1125" y="174">desktop + Python + JIT</text>
+  <text class="cap" x="1125" y="198">broad backend coverage</text>
+  <text class="cap" x="1125" y="222">tooling and experiments</text>
+  <text class="cap" x="1125" y="246">assembled compatibility experience</text>
+
+  <line class="line" x1="240" y1="285" x2="280" y2="285"/>
+  <line class="line" x1="440" y1="275" x2="480" y2="275"/>
+  <line class="line" x1="640" y1="265" x2="680" y2="265"/>
+  <line class="line" x1="840" y1="265" x2="880" y2="265"/>
+  <line class="line" x1="1060" y1="265" x2="1100" y2="265"/>
+
+  <text class="small" x="80" y="500">Profiles are delivery-oriented, not backend-oriented. The modular target graph should make each of these shapes explicit and buildable.</text>
+</svg>

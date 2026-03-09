@@ -119,9 +119,6 @@ namespace zs {
     for (; sdfIter; ++sdfIter) {
       const SDFTreeType::LeafNodeType &sdfNode = *sdfIter;
       // const VelTreeType::LeafNodeType &velNode = *velIter;
-      // if (sdfNode.onVoxelCount() != velNode.onVoxelCount()) {
-      //   fmt::print("sdf grid and vel grid structure not consistent!\n");
-      // }
       if (sdfNode.onVoxelCount() > 0) {
         IV coord{};
         {

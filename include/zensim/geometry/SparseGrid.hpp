@@ -1,4 +1,5 @@
 #pragma once
+#include <iostream>
 #include <utility>
 
 // #include "zensim/container/Bcht.hpp"
@@ -9,7 +10,6 @@
 #include "zensim/math/curve/InterpolationKernel.hpp"
 #include "zensim/math/matrix/Transform.hpp"
 #include "zensim/types/Property.h"
-#include "zensim/zpc_tpls/fmt/color.h"
 
 namespace zs {
 
@@ -138,22 +138,22 @@ namespace zs {
     void printTransformation(std::string_view msg = {}) const {
       const auto &a = _transform;
       if constexpr (dim == 3) {
-        fmt::print(
-            fg(fmt::color::aquamarine),
-            "[{}] inspecting {} transform:\n[{}, {}, {}, {};\n {}, {}, {}, {};\n {}, {}, {}, "
-            "{};\n {}, {}, {}, {}].\n",
-            msg, get_type_str<SparseGrid>(), a(0, 0), a(0, 1), a(0, 2), a(0, 3), a(1, 0), a(1, 1),
-            a(1, 2), a(1, 3), a(2, 0), a(2, 1), a(2, 2), a(2, 3), a(3, 0), a(3, 1), a(3, 2),
-            a(3, 3));
+        std::cout << '[' << msg << "] inspecting " << get_type_str<SparseGrid>()
+                  << " transform:\n[" << a(0, 0) << ", " << a(0, 1) << ", " << a(0, 2)
+                  << ", " << a(0, 3) << ";\n " << a(1, 0) << ", " << a(1, 1) << ", "
+                  << a(1, 2) << ", " << a(1, 3) << ";\n " << a(2, 0) << ", " << a(2, 1)
+                  << ", " << a(2, 2) << ", " << a(2, 3) << ";\n " << a(3, 0) << ", "
+                  << a(3, 1) << ", " << a(3, 2) << ", " << a(3, 3) << "].\n";
       } else if constexpr (dim == 2) {
-        fmt::print(fg(fmt::color::aquamarine),
-                   "[{}] inspecting {} transform:\n[{}, {}, {};\n {}, {}, {};\n {}, {}, {}].\n",
-                   msg, get_type_str<SparseGrid>(), a(0, 0), a(0, 1), a(0, 2), a(1, 0), a(1, 1),
-                   a(1, 2), a(2, 0), a(2, 1), a(2, 2));
+        std::cout << '[' << msg << "] inspecting " << get_type_str<SparseGrid>()
+                  << " transform:\n[" << a(0, 0) << ", " << a(0, 1) << ", " << a(0, 2)
+                  << ";\n " << a(1, 0) << ", " << a(1, 1) << ", " << a(1, 2)
+                  << ";\n " << a(2, 0) << ", " << a(2, 1) << ", " << a(2, 2)
+                  << "].\n";
       } else if constexpr (dim == 1) {
-        fmt::print(fg(fmt::color::aquamarine),
-                   "[{}] inspecting {} transform:\n[{}, {};\n {}, {}].\n", msg,
-                   get_type_str<SparseGrid>(), a(0, 0), a(0, 1), a(1, 0), a(1, 1));
+        std::cout << '[' << msg << "] inspecting " << get_type_str<SparseGrid>()
+                  << " transform:\n[" << a(0, 0) << ", " << a(0, 1) << ";\n " << a(1, 0)
+                  << ", " << a(1, 1) << "].\n";
       }
     }
     template <typename VecTM,

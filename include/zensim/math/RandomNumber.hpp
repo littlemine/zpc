@@ -1,6 +1,6 @@
 #pragma once
-#include <chrono>
 #include <cmath>
+#include <ctime>
 #include <random>
 
 #include "zensim/math/Rotation.hpp"
@@ -26,8 +26,12 @@ namespace zs {
        Reset seed using time
     */
     void resetSeedUsingTime() noexcept {
-      auto s = std::chrono::high_resolution_clock::now().time_since_epoch().count();
-      generator.seed(s);
+      std::timespec ts{};
+      std::timespec_get(&ts, TIME_UTC);
+      const auto seed = static_cast<std::mt19937::result_type>(
+          (static_cast<unsigned long long>(ts.tv_sec) << 32)
+          ^ static_cast<unsigned long long>(ts.tv_nsec));
+      generator.seed(seed);
     }
 
     /**

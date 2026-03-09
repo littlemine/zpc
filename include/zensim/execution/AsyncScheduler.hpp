@@ -4,121 +4,149 @@
 #  error "AsyncScheduler.hpp requires C++20 coroutine support."
 #endif
 
-#include <atomic>
 #include <coroutine>
 
 #include "zensim/ZpcAsync.hpp"
 #include "zensim/ZpcCoroutine.hpp"
 #include "zensim/ZpcFunction.hpp"
 #include "zensim/container/ConcurrentQueue.hpp"
-#include "zensim/execution/ConcurrencyPrimitive.hpp"
+#include "zensim/execution/AsyncMemoryPool.hpp"
+#include "zensim/execution/Intrinsics.hpp"
 #include "zensim/execution/ManagedThread.hpp"
-#include "zensim/types/SmallVector.hpp"
 
 namespace zs {
 
-  /// =========================================================================
-  /// CoroTaskNode — DAG node for coroutine-based task scheduling
-  /// =========================================================================
+  struct CoroTaskNode;
+
+  struct CoroTaskEdge {
+    CoroTaskNode *node{nullptr};
+    CoroTaskEdge *next{nullptr};
+  };
 
   struct CoroTaskNode {
-    CoroTaskNode& to(CoroTaskNode& dst) {
-      if (_numSuccs < kMaxEdges) _succs[_numSuccs++] = &dst;
-      if (dst._numPreds < kMaxEdges) dst._preds[dst._numPreds++] = this;
-      dst._numDeps.fetch_add(1, std::memory_order_relaxed);
+    CoroTaskNode &to(CoroTaskNode &dst) {
+      append_edge_(_succs, &dst, _numSuccs);
+      dst.append_edge_(dst._preds, this, dst._numPreds);
+      dst._numDeps.fetch_add(1);
       return *this;
+    }
+
+    ~CoroTaskNode() {
+      release_edges_(_preds);
+      release_edges_(_succs);
     }
 
     enum state_e : u8 { idle = 0, planned, scheduled, running, done };
 
-    static constexpr size_t kMaxEdges = 16;
-    CoroTaskNode* _preds[kMaxEdges]{};
-    CoroTaskNode* _succs[kMaxEdges]{};
-    size_t _numPreds{0};
-    size_t _numSuccs{0};
-    std::atomic<int> _numDeps{0};
+    template <typename Fn>
+    void for_each_predecessor(Fn &&fn) const {
+      for (auto *edge = _preds.load(); edge; edge = edge->next) fn(edge->node);
+    }
+
+    template <typename Fn>
+    void for_each_successor(Fn &&fn) const {
+      for (auto *edge = _succs.load(); edge; edge = edge->next) fn(edge->node);
+    }
+
+    Atomic<CoroTaskEdge *> _preds{nullptr};
+    Atomic<CoroTaskEdge *> _succs{nullptr};
+    atomic_size_t _numPreds{0};
+    atomic_size_t _numSuccs{0};
+    Atomic<int> _numDeps{0};
     Future<void> _task{};
     BasicSmallString<> _tag{};
-    state_e _state{idle};
-  };
 
-  /// =========================================================================
-  /// AsyncScheduler — work-stealing scheduler with ManagedThread workers
-  /// =========================================================================
-  /// Inspired by zs-app Scheduler (Taro) but reimplemented with std-free types.
-  ///
-  /// Features:
-  /// - Global MPMC queue + per-worker local queues
-  /// - Work stealing from random peers when local queue is empty
-  /// - Coroutine scheduling via co_await scheduler.schedule()
-  /// - DAG scheduling via CoroTaskNode
-  /// - Futex-based sleep/wake (no condition variables for hot path)
+    Atomic<state_e> _state{idle};
+
+  private:
+    void append_edge_(Atomic<CoroTaskEdge *> &head, CoroTaskNode *node, atomic_size_t &count) {
+      auto *edge = detail::async_pool<CoroTaskEdge, 1024>().acquire();
+      edge->node = node;
+      CoroTaskEdge *expected = head.load();
+      do {
+        edge->next = expected;
+      } while (!head.compare_exchange_weak(expected, edge));
+      count.fetch_add(1);
+    }
+
+    void release_edges_(Atomic<CoroTaskEdge *> &head) noexcept {
+      auto *edge = head.exchange(nullptr);
+      while (edge) {
+        auto *next = edge->next;
+        detail::async_pool<CoroTaskEdge, 1024>().release(edge);
+        edge = next;
+      }
+    }
+  };
 
   struct AsyncScheduler {
     static constexpr size_t kMaxWorkers = 32;
+    inline static thread_local const AsyncScheduler *_currentScheduler{nullptr};
+    inline static thread_local i32 _currentWorkerId{-1};
 
-    /// Task variant — discriminated union without std::variant
     struct TaskHandle {
       enum kind_e : u8 { empty = 0, normal_fn, once_coro, task_node, stop_signal };
 
-      TaskHandle() noexcept : _kind{empty}, _fn{} {}
+      TaskHandle() noexcept : _kind{empty}, _node{nullptr} {}
       explicit TaskHandle(function<void()> fn) : _kind{normal_fn}, _fn{zs::move(fn)} {}
-      explicit TaskHandle(std::coroutine_handle<> h) : _kind{once_coro}, _coro{h} {}
-      explicit TaskHandle(CoroTaskNode* n) : _kind{task_node}, _node{n} {}
+      explicit TaskHandle(std::coroutine_handle<> handle) : _kind{once_coro}, _coro{handle} {}
+      explicit TaskHandle(CoroTaskNode *node) : _kind{task_node}, _node{node} {}
 
       static TaskHandle make_stop() {
-        TaskHandle t;
-        t._kind = stop_signal;
-        return t;
+        TaskHandle task;
+        task._kind = stop_signal;
+        return task;
       }
 
-      TaskHandle(TaskHandle&& o) noexcept : _kind{o._kind} {
+      TaskHandle(TaskHandle &&other) noexcept : _kind{other._kind} {
         switch (_kind) {
           case normal_fn:
-            ::new (&_fn) function<void()>(zs::move(o._fn));
+            ::new (&_fn) function<void()>(zs::move(other._fn));
             break;
           case once_coro:
-            _coro = o._coro;
+            _coro = other._coro;
             break;
           case task_node:
-            _node = o._node;
+            _node = other._node;
             break;
           default:
             break;
         }
-        o._kind = empty;
+        other._kind = empty;
       }
-      TaskHandle& operator=(TaskHandle&& o) noexcept {
-        if (this != &o) {
+
+      TaskHandle &operator=(TaskHandle &&other) noexcept {
+        if (this != &other) {
           destroy_();
-          _kind = o._kind;
+          _kind = other._kind;
           switch (_kind) {
             case normal_fn:
-              ::new (&_fn) function<void()>(zs::move(o._fn));
+              ::new (&_fn) function<void()>(zs::move(other._fn));
               break;
             case once_coro:
-              _coro = o._coro;
+              _coro = other._coro;
               break;
             case task_node:
-              _node = o._node;
+              _node = other._node;
               break;
             default:
               break;
           }
-          o._kind = empty;
+          other._kind = empty;
         }
         return *this;
       }
+
       ~TaskHandle() { destroy_(); }
 
-      TaskHandle(const TaskHandle&) = delete;
-      TaskHandle& operator=(const TaskHandle&) = delete;
+      TaskHandle(const TaskHandle &) = delete;
+      TaskHandle &operator=(const TaskHandle &) = delete;
 
       kind_e kind() const noexcept { return _kind; }
       bool valid() const noexcept { return _kind != empty; }
-      function<void()>& as_fn() { return _fn; }
-      std::coroutine_handle<>& as_coro() { return _coro; }
-      CoroTaskNode*& as_node() { return _node; }
+      function<void()> &as_fn() { return _fn; }
+      std::coroutine_handle<> &as_coro() { return _coro; }
+      CoroTaskNode *&as_node() { return _node; }
 
     private:
       void destroy_() {
@@ -130,83 +158,75 @@ namespace zs {
       union {
         function<void()> _fn;
         std::coroutine_handle<> _coro;
-        CoroTaskNode* _node;
+        CoroTaskNode *_node;
       };
     };
 
-    /// Worker — one per thread
-    struct Worker {
+    struct alignas(64) Worker {
       ManagedThread thread{};
       ConcurrentQueue<TaskHandle, 256> localQueue{};
-      std::atomic<u32> status{2};  // 0=sleep, 1=busy, 2=signaled
+      Atomic<u32> status{2};
       i32 index{-1};
     };
 
     explicit AsyncScheduler(size_t numThreads = 4);
     ~AsyncScheduler();
 
-    AsyncScheduler(const AsyncScheduler&) = delete;
-    AsyncScheduler& operator=(const AsyncScheduler&) = delete;
+    AsyncScheduler(const AsyncScheduler &) = delete;
+    AsyncScheduler &operator=(const AsyncScheduler &) = delete;
 
-    /// Enqueue a plain function
-    void enqueue(function<void()> fn, i32 workerId = -1) {
-      enqueue_(TaskHandle{zs::move(fn)}, workerId);
-    }
+    void enqueue(function<void()> fn, i32 workerId = -1) { enqueue_(TaskHandle{zs::move(fn)}, workerId); }
+    void enqueue(std::coroutine_handle<> coro, i32 workerId = -1) { enqueue_(TaskHandle{coro}, workerId); }
+    void enqueue(CoroTaskNode *node, i32 workerId = -1) { enqueue_(TaskHandle{node}, workerId); }
 
-    /// Enqueue a coroutine handle (fire-once)
-    void enqueue(std::coroutine_handle<> coro, i32 workerId = -1) {
-      enqueue_(TaskHandle{coro}, workerId);
-    }
-
-    /// Enqueue a DAG task node
-    void enqueue(CoroTaskNode* node, i32 workerId = -1) {
-      enqueue_(TaskHandle{node}, workerId);
-    }
-
-    /// Awaitable — co_await scheduler.schedule() to resume on a worker
     auto schedule(i32 workerId = -1) {
       struct Awaiter : std::suspend_always {
-        AsyncScheduler& sched;
-        i32 wid;
-        Awaiter(AsyncScheduler& s, i32 w) : sched{s}, wid{w} {}
-        void await_suspend(std::coroutine_handle<> h) {
-          sched.enqueue_(TaskHandle{h}, wid);
-        }
+        AsyncScheduler &scheduler;
+        i32 worker;
+        Awaiter(AsyncScheduler &sched, i32 wid) : scheduler{sched}, worker{wid} {}
+        void await_suspend(std::coroutine_handle<> handle) { scheduler.enqueue_(TaskHandle{handle}, worker); }
       };
       return Awaiter{*this, workerId};
     }
 
-    /// Schedule an entire DAG rooted at `node` (topological walk)
-    bool schedule(CoroTaskNode* node);
-
-    /// Block until all jobs complete
+    bool schedule(CoroTaskNode *node);
     void wait();
-
-    /// Request all workers to stop
     void shutdown();
 
     size_t numWorkers() const noexcept { return _numWorkers; }
-    size_t numJobsRemaining() const noexcept {
-      return _remainingJobs.load(std::memory_order_relaxed);
-    }
+    size_t numJobsRemaining() const noexcept { return _remainingJobs.load(); }
     bool idle() const noexcept { return numJobsRemaining() == 0; }
+    i32 current_worker_id() const noexcept {
+      return _currentScheduler == this ? _currentWorkerId : -1;
+    }
+    void pause() noexcept { _pauseState.store(1); }
+    void resume() noexcept {
+      if (_pauseState.exchange(0) != 0) {
+        _pauseState.notify_all();
+        wake_any_worker_();
+      }
+    }
+    bool paused() const noexcept { return _pauseState.load() != 0; }
+    i32 resolve_worker_id(i32 workerId = -1) const noexcept {
+      if (workerId >= 0) return workerId;
+      return current_worker_id();
+    }
 
   private:
-    void enqueue_(TaskHandle&& task, i32 workerId = -1);
-    void process_(Worker& w, TaskHandle& task);
-    void worker_loop_(ManagedThread& self, i32 workerIndex);
-    bool try_steal_(Worker& thief, TaskHandle& out);
+    void enqueue_(TaskHandle &&task, i32 workerId = -1);
+    void process_(Worker &worker, TaskHandle &task);
+    void worker_loop_(ManagedThread &self, i32 workerIndex);
+    bool try_steal_(Worker &thief, TaskHandle &out);
+    void wake_worker_(Worker &worker) noexcept;
+    void wake_any_worker_() noexcept;
 
-    Worker* _workers{nullptr};
+    Worker *_workers{nullptr};
     size_t _numWorkers{0};
     ConcurrentQueue<TaskHandle, 1024> _globalQueue{};
-    std::atomic<size_t> _remainingJobs{0};
-    std::atomic<u32> _stealCounter{0};
+    atomic_size_t _remainingJobs{0};
+    Atomic<u32> _stealCounter{0};
+    Atomic<u32> _pauseState{0};
   };
-
-  // =========================================================================
-  // Inline implementations
-  // =========================================================================
 
   inline AsyncScheduler::AsyncScheduler(size_t numThreads) {
     if (numThreads == 0) numThreads = 1;
@@ -217,7 +237,7 @@ namespace zs {
     for (size_t i = 0; i < numThreads; ++i) {
       _workers[i].index = static_cast<i32>(i);
       _workers[i].thread.start(
-          [this, i](ManagedThread& self) { worker_loop_(self, static_cast<i32>(i)); },
+          [this, i](ManagedThread &self) { worker_loop_(self, static_cast<i32>(i)); },
           "sched-worker");
     }
   }
@@ -229,80 +249,121 @@ namespace zs {
   }
 
   inline void AsyncScheduler::shutdown() {
+    if (!_workers) return;
+    _pauseState.store(0);
+    _pauseState.notify_all();
     for (size_t i = 0; i < _numWorkers; ++i) _workers[i].thread.request_stop();
-    // Wake all workers so they notice the stop
     for (size_t i = 0; i < _numWorkers; ++i) {
-      _workers[i].status.store(2, std::memory_order_release);
+      _workers[i].status.store(2);
       _workers[i].status.notify_one();
     }
     for (size_t i = 0; i < _numWorkers; ++i) _workers[i].thread.join();
   }
 
   inline void AsyncScheduler::wait() {
+    size_t attempts = 0;
     while (!idle()) {
-      // Nudge all workers
-      for (size_t i = 0; i < _numWorkers; ++i) {
-        u32 expected = 0;
-        if (_workers[i].status.compare_exchange_weak(expected, 2, std::memory_order_relaxed))
-          _workers[i].status.notify_one();
-      }
+      wake_any_worker_();
+      if (attempts < 64)
+        pause_cpu();
+      else
+        ManagedThread::yield_current();
+      ++attempts;
     }
   }
 
-  inline void AsyncScheduler::enqueue_(TaskHandle&& task, i32 workerId) {
-    _remainingJobs.fetch_add(1, std::memory_order_relaxed);
+  inline void AsyncScheduler::wake_worker_(Worker &worker) noexcept {
+    worker.status.store(2);
+    worker.status.notify_one();
+  }
 
+  inline void AsyncScheduler::wake_any_worker_() noexcept {
+    for (size_t i = 0; i < _numWorkers; ++i) {
+      u32 expected = 0;
+      if (_workers[i].status.compare_exchange_weak(expected, 2)) {
+        _workers[i].status.notify_one();
+        return;
+      }
+    }
+
+    if (_numWorkers != 0) {
+        _workers[_stealCounter.fetch_add(1) % _numWorkers]
+          .status.notify_one();
+    }
+  }
+
+  inline void AsyncScheduler::enqueue_(TaskHandle &&task, i32 workerId) {
     if (workerId >= 0 && workerId < static_cast<i32>(_numWorkers)) {
-      _workers[workerId].localQueue.try_enqueue(zs::move(task));
-      _workers[workerId].status.store(2, std::memory_order_release);
-      _workers[workerId].status.notify_one();
-    } else {
-      _globalQueue.try_enqueue(zs::move(task));
-      // Wake any sleeping worker
-      for (size_t i = 0; i < _numWorkers; ++i) {
-        u32 expected = 0;
-        if (_workers[i].status.compare_exchange_weak(expected, 2, std::memory_order_relaxed)) {
-          _workers[i].status.notify_one();
-          break;
+      const auto currentWorker = current_worker_id();
+      auto &worker = _workers[workerId];
+      const bool keepLocal = currentWorker == workerId || worker.status.load() == 0;
+      if (keepLocal) {
+        while (!worker.localQueue.try_enqueue(zs::move(task))) {
+          TaskHandle displaced;
+          if (worker.localQueue.try_dequeue(displaced)) {
+            size_t globalAttempts = 0;
+            while (!_globalQueue.try_enqueue(zs::move(displaced))) {
+              if (globalAttempts < 64)
+                pause_cpu();
+              else
+                ManagedThread::yield_current();
+              ++globalAttempts;
+            }
+            wake_any_worker_();
+          } else {
+            ManagedThread::yield_current();
+          }
         }
+        _remainingJobs.fetch_add(1);
+        wake_worker_(worker);
+        if (_numWorkers > 1) wake_any_worker_();
+        return;
       }
     }
+
+    size_t enqueueAttempts = 0;
+    while (!_globalQueue.try_enqueue(zs::move(task))) {
+      if (enqueueAttempts < 64)
+        pause_cpu();
+      else
+        ManagedThread::yield_current();
+      ++enqueueAttempts;
+    }
+    _remainingJobs.fetch_add(1);
+    wake_any_worker_();
   }
 
-  inline void AsyncScheduler::process_(Worker& w, TaskHandle& task) {
+  inline void AsyncScheduler::process_(Worker &worker, TaskHandle &task) {
     switch (task.kind()) {
       case TaskHandle::normal_fn:
         if (task.as_fn()) task.as_fn()();
-        _remainingJobs.fetch_sub(1, std::memory_order_relaxed);
+        _remainingJobs.fetch_sub(1);
         break;
 
       case TaskHandle::once_coro:
         if (task.as_coro()) task.as_coro().resume();
-        _remainingJobs.fetch_sub(1, std::memory_order_relaxed);
+        _remainingJobs.fetch_sub(1);
         break;
 
       case TaskHandle::task_node: {
-        auto* node = task.as_node();
+        auto *node = task.as_node();
         if (node && node->_task.getHandle()) {
-          node->_state = CoroTaskNode::running;
+          node->_state.store(CoroTaskNode::running);
           node->_task.getHandle().resume();
 
           if (node->_task.getHandle().done()) {
-            node->_state = CoroTaskNode::done;
-            // Propagate to successors
-            for (size_t i = 0; i < node->_numSuccs; ++i) {
-              auto* succ = node->_succs[i];
-              if (succ->_numDeps.fetch_sub(1, std::memory_order_acq_rel) == 1) {
-                enqueue_(TaskHandle{succ});
+            node->_state.store(CoroTaskNode::done);
+            node->for_each_successor([&](CoroTaskNode *successor) {
+              if (successor->_numDeps.fetch_sub(1) == 1) {
+                enqueue_(TaskHandle{successor});
               }
-            }
+            });
           } else {
-            // Re-enqueue for coherence on same worker
-            enqueue_(TaskHandle{node}, w.index);
-            _remainingJobs.fetch_add(1, std::memory_order_relaxed);  // counteract the sub below
+            enqueue_(TaskHandle{node}, worker.index);
+            _remainingJobs.fetch_add(1);
           }
         }
-        _remainingJobs.fetch_sub(1, std::memory_order_relaxed);
+        _remainingJobs.fetch_sub(1);
         break;
       }
 
@@ -313,59 +374,77 @@ namespace zs {
     }
   }
 
-  inline void AsyncScheduler::worker_loop_(ManagedThread& self, i32 workerIndex) {
-    auto& w = _workers[workerIndex];
+  inline void AsyncScheduler::worker_loop_(ManagedThread &self, i32 workerIndex) {
+    auto &worker = _workers[workerIndex];
+    struct WorkerScope {
+      const AsyncScheduler *previousScheduler;
+      i32 previousWorkerId;
+
+      WorkerScope(const AsyncScheduler *scheduler, i32 workerId)
+          : previousScheduler{AsyncScheduler::_currentScheduler},
+            previousWorkerId{AsyncScheduler::_currentWorkerId} {
+        AsyncScheduler::_currentScheduler = scheduler;
+        AsyncScheduler::_currentWorkerId = workerId;
+      }
+
+      ~WorkerScope() {
+        AsyncScheduler::_currentScheduler = previousScheduler;
+        AsyncScheduler::_currentWorkerId = previousWorkerId;
+      }
+    } scope{this, workerIndex};
 
     while (!self.stop_requested()) {
+      worker.status.store(1);
+
+      while (_pauseState.load() != 0 && !self.stop_requested()) _pauseState.wait(1);
+      if (self.stop_requested()) break;
+
       TaskHandle task;
-
-      // 1. Try local queue first
-      if (w.localQueue.try_dequeue(task)) {
-        w.status.store(1, std::memory_order_relaxed);
-        process_(w, task);
+      if (worker.localQueue.try_dequeue(task)) {
+        process_(worker, task);
         continue;
       }
 
-      // 2. Try global queue
       if (_globalQueue.try_dequeue(task)) {
-        w.status.store(1, std::memory_order_relaxed);
-        process_(w, task);
+        process_(worker, task);
         continue;
       }
 
-      // 3. Try stealing from a peer
-      if (try_steal_(w, task)) {
-        w.status.store(1, std::memory_order_relaxed);
-        process_(w, task);
+      if (try_steal_(worker, task)) {
+        process_(worker, task);
         continue;
       }
 
-      // 4. Nothing to do — sleep
-      w.status.store(0, std::memory_order_release);
-      w.status.wait(0);  // futex-based wait (C++20 atomic::wait)
+      u32 expected = 1;
+      if (!worker.status.compare_exchange_strong(expected, 0)) continue;
+      worker.status.wait(0);
     }
   }
 
-  inline bool AsyncScheduler::try_steal_(Worker& thief, TaskHandle& out) {
-    // Round-robin starting from a rotating offset to spread contention
-    u32 start = _stealCounter.fetch_add(1, std::memory_order_relaxed) % _numWorkers;
-    for (size_t i = 0; i < _numWorkers; ++i) {
-      size_t idx = (start + i) % _numWorkers;
-      if (static_cast<i32>(idx) == thief.index) continue;
-      if (_workers[idx].localQueue.try_dequeue(out)) return true;
+  inline bool AsyncScheduler::try_steal_(Worker &thief, TaskHandle &out) {
+    if (_numWorkers <= 1) return false;
+
+    const size_t start = _stealCounter.fetch_add(1) % _numWorkers;
+    const size_t thiefIndex = static_cast<size_t>(thief.index);
+    for (size_t offset = 0; offset < _numWorkers; ++offset) {
+      const size_t victimIndex = (start + offset) % _numWorkers;
+      if (victimIndex == thiefIndex) continue;
+
+      auto &victim = _workers[victimIndex];
+      if (victim.localQueue.try_dequeue(out)) return true;
     }
     return false;
   }
 
-  inline bool AsyncScheduler::schedule(CoroTaskNode* node) {
+  inline bool AsyncScheduler::schedule(CoroTaskNode *node) {
     if (!node) return false;
-    if (node->_state == CoroTaskNode::planned) return false;  // already visited
-    node->_state = CoroTaskNode::planned;
+    auto expected = CoroTaskNode::idle;
+    if (!node->_state.compare_exchange_strong(expected, CoroTaskNode::planned)) return true;
 
-    if (node->_numDeps.load(std::memory_order_relaxed) != 0) {
-      for (size_t i = 0; i < node->_numPreds; ++i) {
-        if (!schedule(node->_preds[i])) return false;
-      }
+    if (node->_numDeps.load() != 0) {
+      bool okay = true;
+      node->for_each_predecessor([&](CoroTaskNode *pred) { okay = schedule(pred) && okay; });
+      if (!okay) return false;
     } else {
       enqueue(node);
     }
