@@ -101,6 +101,31 @@ namespace zs {
     return AsyncEventAwaiter{event};
   }
 
+  struct AsyncEventSchedulerAwaiter {
+    AsyncEvent event;
+    AsyncScheduler *scheduler{nullptr};
+    i32 workerId{-1};
+
+    bool await_ready() const noexcept { return event.ready(); }
+
+    void await_suspend(std::coroutine_handle<> handle) {
+      event.on_complete([continuation = handle, scheduler = scheduler, worker = workerId]() mutable {
+        if (scheduler)
+          scheduler->enqueue(continuation, worker);
+        else
+          continuation.resume();
+      });
+    }
+
+    AsyncTaskStatus await_resume() const noexcept { return event.status(); }
+  };
+
+  inline AsyncEventSchedulerAwaiter co_await_event_on(const AsyncEvent &event,
+                                                      AsyncScheduler &scheduler,
+                                                      i32 workerId = -1) {
+    return AsyncEventSchedulerAwaiter{event, &scheduler, scheduler.resolve_worker_id(workerId)};
+  }
+
   struct AsyncSubmissionAwaiter {
     AsyncSubmissionHandle handle;
 
@@ -115,6 +140,33 @@ namespace zs {
 
   inline AsyncSubmissionAwaiter co_await_submission(const AsyncSubmissionHandle &handle) {
     return AsyncSubmissionAwaiter{handle};
+  }
+
+  struct AsyncSubmissionSchedulerAwaiter {
+    AsyncSubmissionHandle handle;
+    AsyncScheduler *scheduler{nullptr};
+    i32 workerId{-1};
+
+    bool await_ready() const noexcept { return !handle.valid() || handle.event().ready(); }
+
+    void await_suspend(std::coroutine_handle<> continuation) {
+      handle.event().on_complete(
+          [continuation, scheduler = scheduler, worker = workerId]() mutable {
+            if (scheduler)
+              scheduler->enqueue(continuation, worker);
+            else
+              continuation.resume();
+          });
+    }
+
+    AsyncTaskStatus await_resume() const noexcept { return handle.status(); }
+  };
+
+  inline AsyncSubmissionSchedulerAwaiter co_await_submission_on(const AsyncSubmissionHandle &handle,
+                                                                AsyncScheduler &scheduler,
+                                                                i32 workerId = -1) {
+    return AsyncSubmissionSchedulerAwaiter{handle, &scheduler,
+                                           scheduler.resolve_worker_id(workerId)};
   }
 
 }  // namespace zs

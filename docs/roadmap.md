@@ -5,6 +5,12 @@ platform for computation, hardware orchestration, validation, and application
 delivery. This roadmap captures the direction so interface and implementation work
 can stay aligned.
 
+## Why This Page Exists
+
+This page is the strategic summary for the docs set. It does not replace the more
+specific architecture pages; it gives the program-level direction they are meant to
+support.
+
 ## Platform Direction
 
 The target shape of ZPC is:
@@ -210,3 +216,9 @@ current foundation-first direction are:
 
 Those pages are the working architectural baseline for modularization and platform
 surface evolution.
+
+## Current Design Consequence
+
+The roadmap should stay broad, but not vague. Whenever a new idea appears, it needs
+to fit one of these product surfaces, delivery tracks, or quality gates rather than
+living as an isolated branch-only experiment with no place in the overall plan.

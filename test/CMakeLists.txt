@@ -74,6 +74,12 @@ target_link_libraries(asyncbackendprofile PRIVATE zpc_async_runtime_core)
 add_test(ZsAsyncBackendProfile asyncbackendprofile)
 add_dependencies(zensim asyncbackendprofile)
 
+add_executable(asyncresourcemanager async_resource_manager.cpp)
+target_link_libraries(asyncresourcemanager PRIVATE zpc)
+
+add_test(ZsAsyncResourceManager asyncresourcemanager)
+add_dependencies(zensim asyncresourcemanager)
+
 # async native queue adapter
 add_executable(asyncnativequeue async_native_queue_adapter.cpp)
 target_link_libraries(asyncnativequeue PRIVATE zpc)

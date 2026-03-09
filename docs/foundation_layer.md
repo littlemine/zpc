@@ -4,6 +4,12 @@ The next durable step for ZPC is not to widen the top-level product surface. It 
 to make the portable always-on substrate explicit, narrow, and safe to consume
 without accidentally pulling in graphics, JIT, Python, or vendor SDK dependencies.
 
+## Why This Page Exists
+
+This page defines what must remain true of the lowest always-on layer in the
+system. It is the portability and dependency-discipline page for the rest of the
+architecture.
+
 ## Purpose
 
 The foundation layer is the part of ZPC that should remain available across all
@@ -102,6 +108,12 @@ This foundation split is the prerequisite for most other strategic goals:
 
 In practical terms, foundation work reduces future churn. It makes every later layer
 easier to compose, test, and ship.
+
+## Current Design Consequence
+
+Any capability that cannot justify living inside a portable, dependency-light,
+profile-friendly substrate belongs above this layer. That rule is what keeps the
+core usable across desktop, mobile, web, and future constrained targets.
 
 ## Related Pages
 

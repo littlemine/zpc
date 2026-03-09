@@ -5,6 +5,12 @@ behaves as if the project were primarily one assembled product. The next
 architectural step is to preserve the current compatibility surface while making the
 internal graph explicitly layered and pay-for-what-you-use.
 
+## Why This Page Exists
+
+This page is the structural map for the whole documentation set. It explains where
+major ownership boundaries should live and how the pieces should depend on one
+another.
+
 ## Problem Statement
 
 Today the main issue is not that the codebase has no structure. The issue is that
@@ -178,6 +184,12 @@ This is not only about cleaner CMake. It directly supports:
 - clearer ownership for async runtime, graphics, and tooling work
 - better scaling across multiple implementation agents or contributors once
   interfaces stabilize
+
+## Current Design Consequence
+
+This target graph is not optional polish. It is the reference boundary map the rest
+of the docs now assume when talking about profiles, ABI stability, product layers,
+rendering, simulation, gameplay, and frontend integration.
 
 ## Related Pages
 

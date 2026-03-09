@@ -81,11 +81,13 @@ namespace zs {
 
   struct AsyncScheduler {
     static constexpr size_t kMaxWorkers = 32;
+    inline static thread_local const AsyncScheduler *_currentScheduler{nullptr};
+    inline static thread_local i32 _currentWorkerId{-1};
 
     struct TaskHandle {
       enum kind_e : u8 { empty = 0, normal_fn, once_coro, task_node, stop_signal };
 
-      TaskHandle() noexcept : _kind{empty}, _fn{} {}
+      TaskHandle() noexcept : _kind{empty}, _node{nullptr} {}
       explicit TaskHandle(function<void()> fn) : _kind{normal_fn}, _fn{zs::move(fn)} {}
       explicit TaskHandle(std::coroutine_handle<> handle) : _kind{once_coro}, _coro{handle} {}
       explicit TaskHandle(CoroTaskNode *node) : _kind{task_node}, _node{node} {}
@@ -194,6 +196,13 @@ namespace zs {
     size_t numWorkers() const noexcept { return _numWorkers; }
     size_t numJobsRemaining() const noexcept { return _remainingJobs.load(); }
     bool idle() const noexcept { return numJobsRemaining() == 0; }
+    i32 current_worker_id() const noexcept {
+      return _currentScheduler == this ? _currentWorkerId : -1;
+    }
+    i32 resolve_worker_id(i32 workerId = -1) const noexcept {
+      if (workerId >= 0) return workerId;
+      return current_worker_id();
+    }
 
   private:
     void enqueue_(TaskHandle &&task, i32 workerId = -1);
@@ -351,6 +360,23 @@ namespace zs {
 
   inline void AsyncScheduler::worker_loop_(ManagedThread &self, i32 workerIndex) {
     auto &worker = _workers[workerIndex];
+    struct WorkerScope {
+      const AsyncScheduler *previousScheduler;
+      i32 previousWorkerId;
+
+      WorkerScope(const AsyncScheduler *scheduler, i32 workerId)
+          : previousScheduler{AsyncScheduler::_currentScheduler},
+            previousWorkerId{AsyncScheduler::_currentWorkerId} {
+        AsyncScheduler::_currentScheduler = scheduler;
+        AsyncScheduler::_currentWorkerId = workerId;
+      }
+
+      ~WorkerScope() {
+        AsyncScheduler::_currentScheduler = previousScheduler;
+        AsyncScheduler::_currentWorkerId = previousWorkerId;
+      }
+    } scope{this, workerIndex};
+
     while (!self.stop_requested()) {
       TaskHandle task;
       if (worker.localQueue.try_dequeue(task)) {
@@ -377,12 +403,8 @@ namespace zs {
   }
 
   inline bool AsyncScheduler::try_steal_(Worker &thief, TaskHandle &out) {
-    const u32 start = _stealCounter.fetch_add(1) % _numWorkers;
-    for (size_t i = 0; i < _numWorkers; ++i) {
-      const size_t index = (start + i) % _numWorkers;
-      if (static_cast<i32>(index) == thief.index) continue;
-      if (_workers[index].localQueue.try_dequeue(out)) return true;
-    }
+    static_cast<void>(thief);
+    static_cast<void>(out);
     return false;
   }
 

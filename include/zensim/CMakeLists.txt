@@ -288,6 +288,7 @@ set(ZENSIM_LIBRARY_ASYNC_RUNTIME_CORE_INCLUDE_FILES
   execution/AsyncBackendProfile.hpp
   execution/AsyncMemoryPool.hpp
   execution/AsyncNativeQueueAdapter.hpp
+  execution/AsyncResourceManager.hpp
   execution/AsyncRuntime.hpp
   execution/AsyncRuntimeAbi.hpp
   execution/AsyncScheduler.hpp

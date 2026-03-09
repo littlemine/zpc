@@ -5,6 +5,12 @@ execution, backend-native queues, validation, and future deployment-facing surfa
 without freezing internal implementation details into the user-facing product
 boundary.
 
+## Why This Page Exists
+
+This page defines the shared execution vocabulary that should sit between the
+portable foundation and higher-level product surfaces. It is the control-plane page
+for the docs set.
+
 ## Role Of The Runtime Core
 
 The runtime core is the layer above the portable foundation and below
@@ -120,6 +126,12 @@ An explicit runtime core gives ZPC one coherent place to evolve:
 
 without forcing higher-level products to depend on backend internals or monolithic
 build assembly.
+
+## Current Design Consequence
+
+If new execution-facing work cannot be expressed as part of this shared control
+plane, it is either too backend-specific and belongs in an adapter layer, or too
+product-specific and belongs above the runtime core.
 
 ## Related Pages
 

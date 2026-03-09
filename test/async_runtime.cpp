@@ -1,6 +1,7 @@
 #include <cassert>
 #include <chrono>
 #include <cstdio>
+#include <cstdlib>
 #include <thread>
 
 #include "zensim/ZpcAsync.hpp"
@@ -12,6 +13,13 @@
 #include "zensim/execution/AsyncScheduler.hpp"
 
 using namespace zs;
+
+static void require(bool condition, const char *message) {
+  if (condition) return;
+  std::fprintf(stderr, "[async-test] requirement failed: %s\n", message);
+  std::fflush(stderr);
+  std::abort();
+}
 
 static void test_static_vector() {
   StaticVector<int, 8> v;
@@ -307,21 +315,41 @@ static void test_scheduler_runtime_interop() {
   AsyncScheduler scheduler{2};
   AsyncRuntime runtime{2};
   atomic<int> produced{0};
+  atomic<int> runtimeSteps{0};
+  AsyncFlag schedulerReady{};
+  std::thread::id scheduledThreadId{};
+  std::thread::id runtimeThreadId{};
+  std::thread::id resumedThreadId{};
+
+  scheduler.enqueue([&]() {
+    schedulerReady.signal();
+  });
+
+  size_t readySpins = 0;
+  while (!schedulerReady.is_signaled() && readySpins++ < 50'000) {
+    scheduler.wait();
+    std::this_thread::yield();
+  }
+  require(schedulerReady.is_signaled(), "scheduler thread did not become ready");
 
   auto flow = [&]() -> Future<int> {
     co_await schedule_on(scheduler);
+    scheduledThreadId = std::this_thread::get_id();
 
     auto handle = runtime.submit(AsyncSubmission{
         "thread_pool",
         AsyncTaskDesc{"interop", AsyncDomain::thread, AsyncQueueClass::compute},
         make_host_endpoint(AsyncBackend::thread_pool, AsyncQueueClass::compute, "interop"),
         [&](AsyncExecutionContext &) {
+          runtimeThreadId = std::this_thread::get_id();
+          runtimeSteps.fetch_add(1);
           produced.store(21);
           return AsyncPollStatus::completed;
         }});
 
-    auto status = co_await co_await_submission(handle);
-    assert(status == AsyncTaskStatus::completed);
+    auto status = co_await co_await_submission_on(handle, scheduler);
+    require(status == AsyncTaskStatus::completed, "runtime submission did not complete");
+    resumedThreadId = std::this_thread::get_id();
     co_return produced.load() * 2;
   };
 
@@ -332,7 +360,15 @@ static void test_scheduler_runtime_interop() {
     std::this_thread::yield();
   }
 
-  assert(future.get() == 42);
+    require(future.get() == 42, "scheduler/runtime interop produced unexpected result");
+    require(runtimeSteps.load() == 1, "runtime submission executed unexpected number of steps");
+    require(runtimeThreadId != std::thread::id{}, "runtime worker thread was not recorded");
+    require(scheduledThreadId != std::thread::id{},
+      "scheduler/runtime interop did not record the owning scheduler thread");
+    require(resumedThreadId == scheduledThreadId,
+      "scheduler/runtime interop did not resume on the owning scheduler thread");
+    require(resumedThreadId != runtimeThreadId,
+      "scheduler/runtime interop resumed on the runtime worker thread");
 }
 
 static void test_task_graph() {

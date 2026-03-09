@@ -9,6 +9,7 @@
 
 #include "zensim/ZpcImplPattern.hpp"
 #include "zensim/ZpcMeta.hpp"
+#include "zensim/execution/Atomics.hpp"
 
 namespace zs {
 
@@ -20,7 +21,7 @@ namespace zs {
 
       template <typename P>
       std::coroutine_handle<> await_suspend(std::coroutine_handle<P> handle) noexcept {
-        handle.promise()._inSuspension = true;
+        handle.promise()._inSuspension.store(true, memory_order_release);
         if (auto continuation = handle.promise()._continuation) return continuation;
         return std::noop_coroutine();
       }
@@ -32,7 +33,7 @@ namespace zs {
     FinalAwaiter final_suspend() noexcept { return {}; }
     void set_continuation(std::coroutine_handle<> handle) noexcept { _continuation = handle; }
 
-    bool _inSuspension{true};
+    Atomic<bool> _inSuspension{true};
 
   protected:
     std::coroutine_handle<> _continuation{};
@@ -51,13 +52,13 @@ namespace zs {
 
       bool await_ready() noexcept {
         const bool skip = !_handle || _handle.done();
-        if (skip && _handle) _handle.promise()._inSuspension = false;
+        if (skip && _handle) _handle.promise()._inSuspension.store(false, memory_order_release);
         return skip;
       }
 
       std::coroutine_handle<> await_suspend(std::coroutine_handle<> awaiting) noexcept {
         _handle.promise().set_continuation(awaiting);
-        _handle.promise()._inSuspension = false;
+        _handle.promise()._inSuspension.store(false, memory_order_release);
         return _handle;
       }
 
@@ -101,15 +102,21 @@ namespace zs {
     CoroHandle getHandle() const noexcept { return _handle; }
 
     void resume() const {
-      _handle.promise()._inSuspension = false;
+      _handle.promise()._inSuspension.store(false, memory_order_release);
       _handle.resume();
     }
 
     bool isReady() const noexcept {
-      return !_handle || (_handle.promise()._inSuspension && _handle.done());
+      return !_handle
+             || (_handle.promise()._inSuspension.load(memory_order_acquire) && _handle.done());
     }
-    bool isDone() const noexcept { return _handle && _handle.promise()._inSuspension && _handle.done(); }
-    bool isInProgress() const noexcept { return _handle && !_handle.promise()._inSuspension; }
+    bool isDone() const noexcept {
+      return _handle && _handle.promise()._inSuspension.load(memory_order_acquire)
+             && _handle.done();
+    }
+    bool isInProgress() const noexcept {
+      return _handle && !_handle.promise()._inSuspension.load(memory_order_acquire);
+    }
 
     decltype(auto) get() & { return _handle.promise().get(); }
     decltype(auto) get() && { return zs::move(_handle.promise()).get(); }
