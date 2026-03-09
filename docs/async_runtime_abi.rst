@@ -55,6 +55,10 @@ It also exposes a validation-report extension, ``zpc.runtime.validation_report.v
 machine-readable validation payloads can move across the deployable ABI without forcing validation
 transport details into the base engine table.
 
+It now also exposes a resource-manager extension, ``zpc.runtime.resource_manager.v1``, so
+runtime-owned resource registration, maintenance, and retirement control can cross the deployable
+boundary without flattening ``AsyncResourceManager`` directly into the base engine table.
+
 The next queried extension layer now also begins exposing backend-native queue submission through
 ``zpc.runtime.native_queue.v1`` so queue or stream-oriented backends can reuse the deployable ABI
 without flattening backend-specific signaling hooks into the base engine table.
@@ -122,6 +126,32 @@ The adapter-side helpers ``publish_async_runtime_validation_report()`` and
 ``ValidationSuiteReport`` model without freezing the internal schema structures directly into the C
 ABI. That keeps the deployable surface transport-friendly while reusing the already established
 validation schema and formatting stack.
+
+Resource Manager Extension
+--------------------------
+
+The ``zpc.runtime.resource_manager.v1`` extension is the first deployable ABI bridge for the
+runtime-side resource control plane.
+
+The current host-validated shape exposes:
+
+* stable registration through ``zpc_runtime_resource_desc_v1_t`` with opaque payload storage,
+	maintenance callback, and destroy callback hooks
+* explicit lease acquire or release through an opaque ``zpc_runtime_resource_lease_handle_t`` so
+	payload access does not leak C++ ownership types across the ABI boundary
+* ``touch``, ``mark_dirty``, ``advance_epoch``, and ``query_stats`` operations so external tools
+	can drive the same dirty or stale lifecycle model used by the in-tree ``AsyncResourceManager``
+* explicit maintenance scheduling through ``zpc_runtime_resource_maintenance_request_v1_t`` with a
+	returned submission handle and disposition code
+* stale-sweep scheduling and retired-resource collection entry points so long-lived hosts can keep
+	resource maintenance and reclamation outside the base engine table
+
+The adapter currently owns one ``AsyncResourceManager`` instance per ABI engine. Resource
+maintenance callbacks receive a stable
+``zpc_runtime_resource_maintenance_context_v1_t`` describing the resource handle, label, executor,
+payload pointer, maintenance kind, epoch, lease count, bytes, and current stop flags. That keeps
+the queried extension useful for plugin-style hosts while preserving the internal C++ resource
+types as an implementation detail.
 
 Native Queue Extension
 ----------------------
@@ -198,7 +228,9 @@ function-table contract, host-submit extension discovery, completed host submiss
 cancellation, validation extension discovery, validation summary or JSON or text export, and a
 host-only fake native queue submission and wait-signal path through the concrete ``AsyncRuntime``
 adapter. It also validates dependency-list propagation for runtime submission-event prerequisites,
-rejection of unsupported native-signal dependencies on plain host submission, and mixed runtime or
-native prerequisite handling on the native queue path.
+rejection of unsupported native-signal dependencies on plain host submission, mixed runtime or
+native prerequisite handling on the native queue path, and the resource-manager extension's
+registration, lease acquisition, dirty tracking, epoch advance, explicit maintenance scheduling,
+stale sweep, and retirement collection path.
 
 For the broader deployable-boundary rationale, see :doc:`plugin_and_abi_stability`.
