@@ -140,6 +140,30 @@ int main() {
     return 1;
   }
 
+  zs::ValidationSuiteReport lastRun{};
+  if (!canaryService.last_report("demo", &lastRun) || lastRun.suite != "demo") {
+    std::fprintf(stderr, "missing last canary report\n");
+    return 1;
+  }
+
+  if (!canaryService.promote_last_run_to_baseline("demo", "demo-promoted")
+      || !canaryService.has_baseline("demo-promoted")) {
+    std::fprintf(stderr, "failed to promote canary baseline\n");
+    return 1;
+  }
+
+  zs::CanaryScenarioRunRequest promotedRequest{};
+  promotedRequest.session = session;
+  promotedRequest.scenarioId = "demo";
+  promotedRequest.baselineId = "demo-promoted";
+  promotedRequest.overrides.push_back(zs::CanaryParameterOverride{"speed", "2.5"});
+  const auto promotedResult = canaryService.run_scenario(promotedRequest);
+  if (!promotedResult.accepted || !promotedResult.hasComparison
+      || promotedResult.comparison.summary.regressed != 0) {
+    std::fprintf(stderr, "promoted baseline comparison failed\n");
+    return 1;
+  }
+
     if (!services.latest_snapshot(session, &validation) || validation.summary.total != 2) {
     std::fprintf(stderr, "missing validation snapshot\n");
     return 1;

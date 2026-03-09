@@ -34,6 +34,30 @@ namespace zs {
       _baselines.insert_or_assign(baselineId.asChars(), zs::move(report));
     }
 
+    bool has_baseline(const SmallString &baselineId) const {
+      if (baselineId.size() == 0) return false;
+      std::lock_guard<std::mutex> lock(_mutex);
+      return _baselines.find(baselineId.asChars()) != _baselines.end();
+    }
+
+    bool last_report(const SmallString &scenarioId, ValidationSuiteReport *report) const {
+      if (scenarioId.size() == 0 || report == nullptr) return false;
+      std::lock_guard<std::mutex> lock(_mutex);
+      auto it = _lastReports.find(scenarioId.asChars());
+      if (it == _lastReports.end()) return false;
+      *report = it->second;
+      return true;
+    }
+
+    bool promote_last_run_to_baseline(const SmallString &scenarioId, const SmallString &baselineId) {
+      if (scenarioId.size() == 0 || baselineId.size() == 0) return false;
+      std::lock_guard<std::mutex> lock(_mutex);
+      auto it = _lastReports.find(scenarioId.asChars());
+      if (it == _lastReports.end()) return false;
+      _baselines.insert_or_assign(baselineId.asChars(), it->second);
+      return true;
+    }
+
     std::vector<CanaryScenarioDescriptor> list_scenarios(
         InterfaceSessionHandle session) const override {
       if (!_services.session_exists(session)) return {};
@@ -135,6 +159,11 @@ namespace zs {
       result.report.records.push_back(zs::move(record));
       result.report.refresh_summary();
       result.accepted = accepted && result.report.summary.failed == 0 && result.report.summary.errored == 0;
+
+      {
+        std::lock_guard<std::mutex> lock(_mutex);
+        _lastReports.insert_or_assign(result.scenarioId.asChars(), result.report);
+      }
 
       const auto baselineKey = request.baselineId.size() ? request.baselineId : scenario.scenarioId;
       ValidationComparisonReport comparison{};
@@ -239,6 +268,7 @@ namespace zs {
     mutable std::mutex _mutex{};
     std::vector<CanaryScenarioDescriptor> _scenarios{};
     std::unordered_map<std::string, ValidationSuiteReport> _baselines{};
+    std::unordered_map<std::string, ValidationSuiteReport> _lastReports{};
   };
 
 }  // namespace zs
