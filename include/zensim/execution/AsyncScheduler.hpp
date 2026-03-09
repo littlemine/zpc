@@ -294,26 +294,31 @@ namespace zs {
 
   inline void AsyncScheduler::enqueue_(TaskHandle &&task, i32 workerId) {
     if (workerId >= 0 && workerId < static_cast<i32>(_numWorkers)) {
+      const auto currentWorker = current_worker_id();
       auto &worker = _workers[workerId];
-      while (!worker.localQueue.try_enqueue(zs::move(task))) {
-        TaskHandle displaced;
-        if (worker.localQueue.try_dequeue(displaced)) {
-          size_t globalAttempts = 0;
-          while (!_globalQueue.try_enqueue(zs::move(displaced))) {
-            if (globalAttempts < 64)
-              pause_cpu();
-            else
-              ManagedThread::yield_current();
-            ++globalAttempts;
+      const bool keepLocal = currentWorker == workerId || worker.status.load() == 0;
+      if (keepLocal) {
+        while (!worker.localQueue.try_enqueue(zs::move(task))) {
+          TaskHandle displaced;
+          if (worker.localQueue.try_dequeue(displaced)) {
+            size_t globalAttempts = 0;
+            while (!_globalQueue.try_enqueue(zs::move(displaced))) {
+              if (globalAttempts < 64)
+                pause_cpu();
+              else
+                ManagedThread::yield_current();
+              ++globalAttempts;
+            }
+            wake_any_worker_();
+          } else {
+            ManagedThread::yield_current();
           }
-          wake_any_worker_();
-        } else {
-          ManagedThread::yield_current();
         }
+        _remainingJobs.fetch_add(1);
+        wake_worker_(worker);
+        if (_numWorkers > 1) wake_any_worker_();
+        return;
       }
-      _remainingJobs.fetch_add(1);
-      wake_worker_(worker);
-      return;
     }
 
     size_t enqueueAttempts = 0;
