@@ -8,7 +8,7 @@ int main() {
   zs::LocalInterfaceServices services{runtime, &resourceManager};
   zs::LocalCanaryScenarioService canaryService{services};
 
-  zs::InterfaceServiceBundle bundle{&services, &services, &services, &services};
+  zs::InterfaceServiceBundle bundle{&services, &services, &services, &services, &canaryService};
   if (!bundle.complete()) {
     std::fprintf(stderr, "service bundle incomplete\n");
     return 1;

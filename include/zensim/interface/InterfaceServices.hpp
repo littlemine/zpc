@@ -9,6 +9,8 @@
 
 namespace zs {
 
+  class CanaryScenarioService;
+
   struct InterfaceSessionHandle {
     u64 id{0};
 
@@ -133,9 +135,10 @@ namespace zs {
     InterfaceRuntimeControlService *runtime{nullptr};
     InterfaceValidationService *validation{nullptr};
     InterfaceResourceService *resources{nullptr};
+    CanaryScenarioService *canary{nullptr};
 
     bool complete() const noexcept {
-      return sessions && runtime && validation && resources;
+      return sessions && runtime && validation && resources && canary;
     }
   };
 
