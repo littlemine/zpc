@@ -417,8 +417,17 @@ namespace zs {
   }
 
   inline bool AsyncScheduler::try_steal_(Worker &thief, TaskHandle &out) {
-    static_cast<void>(thief);
-    static_cast<void>(out);
+    if (_numWorkers <= 1) return false;
+
+    const size_t start = _stealCounter.fetch_add(1) % _numWorkers;
+    const size_t thiefIndex = static_cast<size_t>(thief.index);
+    for (size_t offset = 0; offset < _numWorkers; ++offset) {
+      const size_t victimIndex = (start + offset) % _numWorkers;
+      if (victimIndex == thiefIndex) continue;
+
+      auto &victim = _workers[victimIndex];
+      if (victim.localQueue.try_dequeue(out)) return true;
+    }
     return false;
   }
 

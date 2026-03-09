@@ -147,6 +147,26 @@ static void test_concurrent_queue() {
   assert(!queue.try_dequeue(value));
 }
 
+static void test_spsc_queue() {
+  SpscQueue<int> queue{65};
+  assert(queue.capacity() == 128);
+  assert(queue.empty_approx());
+
+  for (int value = 0; value < 128; ++value)
+    assert(queue.try_enqueue(value));
+  assert(!queue.try_enqueue(128));
+  assert(queue.size_approx() == 128);
+
+  for (int expected = 0; expected < 128; ++expected) {
+    int value = -1;
+    assert(queue.try_dequeue(value));
+    assert(value == expected);
+  }
+
+  int value = 0;
+  assert(!queue.try_dequeue(value));
+}
+
 static void test_async_event() {
   auto event = AsyncEvent::create();
   assert(!event.ready());
@@ -333,6 +353,44 @@ static void test_scheduler_pause() {
   require(counter.load() == N, "scheduler did not drain paused work after resume");
 }
 
+static void test_scheduler_work_stealing() {
+  AsyncScheduler scheduler{4};
+  AsyncFlag ownerBlocked{};
+  AsyncFlag releaseOwner{};
+  atomic<int> completed{0};
+  atomic<int> stolen{0};
+  constexpr int N = 32;
+
+  scheduler.enqueue(
+      [&]() {
+        ownerBlocked.signal();
+        while (!releaseOwner.is_signaled()) ManagedThread::yield_current();
+      },
+      0);
+
+  size_t ownerSpins = 0;
+  while (!ownerBlocked.is_signaled() && ownerSpins++ < 5'000'000) std::this_thread::yield();
+  require(ownerBlocked.is_signaled(), "scheduler did not block the pinned owner worker");
+
+  for (int i = 0; i < N; ++i) {
+    scheduler.enqueue(
+        [&]() {
+          if (scheduler.current_worker_id() != 0) stolen.fetch_add(1);
+          completed.fetch_add(1);
+        },
+        0);
+  }
+
+  size_t spins = 0;
+  while (completed.load() == 0 && spins++ < 5'000'000) std::this_thread::yield();
+  require(completed.load() > 0, "scheduler did not make progress on pinned local work");
+  require(stolen.load() > 0, "scheduler did not steal work from a blocked worker");
+
+  releaseOwner.signal();
+  scheduler.wait();
+  require(completed.load() == N, "scheduler did not complete stolen local work");
+}
+
 static void test_scheduler_runtime_interop() {
   AsyncScheduler scheduler{2};
   AsyncRuntime runtime{2};
@@ -430,6 +488,7 @@ int main() {
   run("async_routine", test_async_routine);
   run("managed_thread", test_managed_thread);
   run("concurrent_queue", test_concurrent_queue);
+  run("spsc_queue", test_spsc_queue);
   run("async_event", test_async_event);
   run("async_runtime", test_async_runtime);
   run("resumable_routine", test_resumable_routine);
@@ -438,6 +497,7 @@ int main() {
   run("scheduler", test_scheduler);
   run("scheduler_pressure", test_scheduler_pressure);
   run("scheduler_pause", test_scheduler_pause);
+  run("scheduler_work_stealing", test_scheduler_work_stealing);
   run("scheduler_runtime_interop", test_scheduler_runtime_interop);
   run("task_graph", test_task_graph);
 
