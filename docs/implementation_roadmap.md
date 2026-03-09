@@ -93,6 +93,96 @@ Rules for this milestone:
 - keep base ABI narrow and extension-driven
 - do not force graphics ownership into runtime-only or constrained profiles
 
+Why third:
+
+- locks in the profile matrix before higher-level surfaces are added
+- prevents desktop and graphics assumptions from leaking upward into every
+  interface or application layer
+
+## Milestone 4: Introduce Shared Interface Services
+
+Primary goal:
+
+- define one shared service layer for runtime control, resource inspection,
+  validation reporting, and scenario access
+
+Target outcome:
+
+- explicit interface-services target such as `zpc_interface_services`
+- shared session and capability model above the runtime ABI
+- shared validation and benchmark retrieval path for automation and UI consumers
+- scenario and parameter-schema conventions ready for CLI, GUI, and web adapters
+
+Rules for this milestone:
+
+- do not let CLI, GUI, or web layers each invent their own runtime-control API
+- keep transport and presentation concerns above the shared service model
+- preserve ABI discipline by extending through queried contracts where needed
+
+Why fourth:
+
+- CLI, GUI, web, and canary surfaces all need the same service vocabulary
+- this is the narrowest place to stop interface drift before product layers appear
+- it turns the current runtime and validation work into reusable user-facing
+  contracts
+
+## Milestone 5: Add CLI, GUI, And Web Adapters
+
+Primary goal:
+
+- expose the shared interface-services layer through concrete operator-facing and
+  user-facing surfaces
+
+Target outcome:
+
+- first CLI command groups for runtime, validation, benchmark, resource, and
+  scenario workflows
+- native GUI shell consuming the same service contracts for inspection and tuning
+- web runtime or service adapter that reuses session, capability, and reporting
+  concepts instead of inventing browser-only APIs
+
+Rules for this milestone:
+
+- CLI output must stay machine-readable and automation-safe
+- GUI and web layers must stay above interface services instead of depending on
+  backend internals
+- native and browser-facing delivery should differ by transport and packaging, not
+  by core semantic model
+
+Why fifth:
+
+- product surfaces should only appear after the shared service layer is stable
+- once the first adapter exists, the others become mapping work rather than API
+  redesign
+
+## Milestone 6: Add Canary Scenarios And Human Tuning Flows
+
+Primary goal:
+
+- formalize schema-driven canary scenarios for human tuning, evaluation, and
+  regression checks
+
+Target outcome:
+
+- explicit canary core target such as `zpc_canary_core`
+- scenario identifiers, parameter schemas, defaults, ranges, and evaluation
+  metrics defined in shared form
+- CLI, GUI, and web exposure for running and comparing canary scenarios
+- validation-aligned canary reporting rather than a separate ad hoc result format
+
+Rules for this milestone:
+
+- keep canary logic above runtime, simulation, and validation ownership
+- do not smuggle product-specific mechanics back into the portable core
+- prefer CLI-first scenario exposure before richer GUI or web tooling
+
+Why sixth:
+
+- canary workflows depend on runtime, validation, and interface services already
+  being stable
+- this keeps the tuning layer explicit instead of letting it emerge as scattered
+  test-only or editor-only logic
+
 ## Validation Gates
 
 Each milestone should be considered complete only when all relevant gates are
@@ -104,6 +194,10 @@ satisfied:
   development profiles
 - new targets do not introduce unwanted transitive dependencies into narrower
   builds
+- shared interface-services contracts remain usable from CLI, GUI, and web adapters
+  without semantic drift
+- canary scenario schemas and reports remain machine-readable and comparable over
+  time
 
 ## Migration Safety Rules
 
@@ -121,8 +215,10 @@ Once these milestones land, the project is in a better position to support:
 
 - mobile and constrained-platform profile work
 - GUI and application-layer composition
+- browser-facing runtime services and thin web application shells
 - lightweight frontend packaging such as `zpc::lite`-style integration
-- cleaner CLI, MCP, and validation-facing surfaces
+- cleaner CLI, GUI, web, MCP, and validation-facing surfaces
+- explicit canary scenario and tuning workflows for human evaluation
 - broader feature work in rendering, geometry, simulation, and tooling without
   re-entangling the base build
 
@@ -140,3 +236,7 @@ work gets harder, not easier.
   matrix the milestones are intended to unlock
 - [application_layer_design.md](application_layer_design.md) for one of the
   higher-level consumers that should follow after the lower layers are stabilized
+- [web_runtime_service_interface.md](web_runtime_service_interface.md) for the
+  service and browser-facing interface model these milestones should enable
+- [canary_gameplay_and_tuning.md](canary_gameplay_and_tuning.md) for the scenario
+  and tuning layer that should follow after interface services are explicit

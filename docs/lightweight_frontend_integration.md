@@ -113,5 +113,7 @@ for web-facing and WASM-oriented integrations as it does for Python and DSL laye
   binary-boundary model this frontend path relies on
 - [application_layer_design.md](application_layer_design.md) for the adjacent GUI
   and editor-oriented consumer layer
+- [web_runtime_service_interface.md](web_runtime_service_interface.md) for the web
+  and service-mediated runtime interaction model built on those boundaries
 - [implementation_roadmap.md](implementation_roadmap.md) for the sequencing that
   should happen before lightweight frontend packaging is formalized

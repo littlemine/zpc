@@ -56,6 +56,15 @@ without guessing file names.
 - [lightweight_frontend_integration.md](lightweight_frontend_integration.md)
   Frontend composition strategy: Python, DSL, web-facing, and lightweight package
   families on top of the modular runtime.
+- [web_runtime_service_interface.md](web_runtime_service_interface.md)
+  Web-facing runtime interaction: browser clients, service sessions, runtime
+  capabilities, event streams, and WASM or service-mediated delivery.
+- [cli_and_gui_interface_exposure.md](cli_and_gui_interface_exposure.md)
+  Operator and user-facing interfaces: shared service model for automation,
+  inspection, authoring, and runtime control across CLI and GUI surfaces.
+- [canary_gameplay_and_tuning.md](canary_gameplay_and_tuning.md)
+  Scenario and tuning layer: canary mechanics, ECS-style setup logic, human-edited
+  parameters, and evaluation workflows.
 - [roadmap.md](roadmap.md)
   Strategic program view: product surfaces, delivery phases, and how CLI, MCP,
   native apps, and web applications fit together.
@@ -83,6 +92,11 @@ without guessing file names.
   [platform_and_build_profiles.md](platform_and_build_profiles.md) ->
   [application_layer_design.md](application_layer_design.md) ->
   [lightweight_frontend_integration.md](lightweight_frontend_integration.md)
+- Interface-surface path:
+  [plugin_and_abi_stability.md](plugin_and_abi_stability.md) ->
+  [web_runtime_service_interface.md](web_runtime_service_interface.md) ->
+  [cli_and_gui_interface_exposure.md](cli_and_gui_interface_exposure.md) ->
+  [canary_gameplay_and_tuning.md](canary_gameplay_and_tuning.md)
 - Product-and-content path:
   [physics_and_simulation.md](physics_and_simulation.md) ->
   [rendering_and_visualization.md](rendering_and_visualization.md) ->
@@ -104,3 +118,4 @@ meant to expose the whole current research surface, including:
 - physics and simulation
 - gameplay, authored mechanics, and application logic
 - native, Python, and web-facing frontend composition
+- web-runtime service interaction, CLI or GUI exposure, and canary-tuning flows

@@ -50,9 +50,10 @@ Full interactive developer or end-user desktop composition.
 Expected contents:
 
 - runtime profile
+- shared interface-services layer
 - selected compute backends
 - optional graphics module
-- optional application and tooling layers
+- optional application, CLI, GUI, and tooling layers
 - optional Python or JIT layers
 
 ### `mobile`
@@ -76,7 +77,9 @@ Expected contents:
 - portable core and selected runtime surfaces
 - explicit sandbox-safe filesystem, threading, and loading assumptions
 - validation and reporting paths that work without desktop-style process control
+- shared session and capability model above the runtime boundary
 - optional web application packaging layers on top of the same runtime contracts
+- optional canary and tuning flows exposed through service-mediated interfaces
 
 This profile should treat web applications as a real delivery target, not just as a
 future note attached to desktop or mobile work.
@@ -183,6 +186,7 @@ That clarity is required for:
 - credible pay-for-what-you-use builds
 - deployable runtime packaging
 - future frontend integration
+- shared CLI, GUI, web, and canary surfaces without desktop-only leakage
 - scalable modular development across multiple layers
 
 ## Current Design Consequence

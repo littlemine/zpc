@@ -125,12 +125,17 @@ flows:
 
 Turn core capabilities into product surfaces:
 
+- a shared interface-services layer for runtime control, resources, validation,
+  and scenario access
 - a CLI with stable commands and machine-readable output
+- native GUI tooling and application shells built on the same service model
 - an MCP server with stable tool contracts
 - packaging and deployment helpers for local, cluster, mobile, and web integration
   paths
 - web-facing packaging and browser-runtime integration points that reuse the core
   validation and reporting model
+- schema-driven canary scenario workflows for human tuning and evaluation across
+  CLI, GUI, and web consumers
 
 ### Track 4: Quality Gates
 
@@ -166,9 +171,11 @@ renegotiation.
 
 ### Phase 2: Platform Surface
 
+- introduce the shared interface-services layer above runtime and validation
 - introduce the first CLI workflows
 - introduce the first MCP tools
 - expose hardware discovery, validation, and benchmark reporting
+- begin the first scenario schema and canary evaluation conventions
 - begin coordinated multi-agent or multi-worker development once the interface
   contracts are stable
 
@@ -177,10 +184,13 @@ renegotiation.
 - improve packaging and deployment workflows
 - formalize server, desktop, mobile, and web integration targets
 - stabilize public automation interfaces
+- add the first web runtime-service and browser-facing adapters on top of the
+  shared service model
 
 ### Phase 4: Applications
 
 - build higher-level applications on top of the stabilized platform
+- add native GUI and product-facing canary tuning flows on top of shared services
 - reuse the same validation and benchmark pipelines for application upgrades
 - keep product-facing interfaces decoupled from backend-specific implementation
   churn
@@ -193,6 +203,8 @@ The most immediate work that best supports this roadmap is:
 - add concrete backend adapters beginning with the strongest existing seams
 - define the first validation and benchmark schema that both CLI and MCP can
   consume
+- define the shared interface-services vocabulary so CLI, GUI, web, and canary
+  modules do not fork the runtime-control model
 - keep interface boundaries explicit so future CLI, MCP, and applications do not
   depend on backend internals
 - consolidate enough runtime and tooling interfaces that work can be distributed
@@ -203,6 +215,8 @@ The most immediate work that best supports this roadmap is:
 - after the first native queue ABI bridge is stable, extend it toward richer
   dependency and signal propagation rather than duplicating backend submission
   concepts in parallel ad hoc APIs
+- add one CLI-first canary scenario path before building richer GUI or web tuning
+  experiences
 
 ## Architecture References
 
@@ -213,6 +227,9 @@ current foundation-first direction are:
 - [implementation_roadmap.md](implementation_roadmap.md)
 - [platform_and_build_profiles.md](platform_and_build_profiles.md)
 - [application_layer_design.md](application_layer_design.md)
+- [web_runtime_service_interface.md](web_runtime_service_interface.md)
+- [cli_and_gui_interface_exposure.md](cli_and_gui_interface_exposure.md)
+- [canary_gameplay_and_tuning.md](canary_gameplay_and_tuning.md)
 
 Those pages are the working architectural baseline for modularization and platform
 surface evolution.

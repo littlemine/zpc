@@ -68,6 +68,9 @@ The major downstream research tracks also include:
 - [rendering_and_visualization.md](rendering_and_visualization.md)
 - [physics_and_simulation.md](physics_and_simulation.md)
 - [gameplay_and_mechanics.md](gameplay_and_mechanics.md)
+- [web_runtime_service_interface.md](web_runtime_service_interface.md)
+- [cli_and_gui_interface_exposure.md](cli_and_gui_interface_exposure.md)
+- [canary_gameplay_and_tuning.md](canary_gameplay_and_tuning.md)
 
 The roadmap remains the strategic entry point, while those design pages carry the
 more specific layering and sequencing guidance.

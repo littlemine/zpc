@@ -124,13 +124,26 @@ Representative targets:
 - `zpc_py_cuda`
 - `zpc_jit_clang`
 - `zpc_jit_nvrtc`
+- `zpc_interface_services`
+- `zpc_cli`
+- `zpc_gui`
 - `zpc_web_runtime`
 - `zpc_web_app`
+- `zpc_canary_core`
+- `zpc_canary_cli`
+- `zpc_canary_gui`
+- `zpc_canary_web`
 
 Python, JIT, and web-facing layers should depend on the runtime and profile model
 that sits below them. Web application and WASM-oriented delivery should be treated
 as first-class consumers with their own packaging and sandbox constraints, not as a
-desktop afterthought.
+desktop afterthought. Interface services should provide the shared session,
+capability, validation, resource, and scenario model consumed by CLI, GUI, and web
+surfaces rather than allowing each surface to define its own runtime-control logic.
+
+Canary modules should remain product and authoring layers on top of simulation,
+runtime, validation, and application services. They should not redefine the
+portable core or the deployable ABI boundary.
 
 ### Layer 7: Compatibility Facades
 
@@ -148,7 +161,8 @@ the place where most ownership remains glued together.
 The intended direction is:
 
 - compile contract -> foundation -> validation/runtime -> backends or domain
-  modules -> graphics, Python, JIT, and tools -> compatibility facades
+  modules -> graphics, interface services, Python, JIT, and tools -> CLI, GUI,
+  web, and canary adapters -> compatibility facades
 
 The most important forbidden patterns are:
 
@@ -156,6 +170,8 @@ The most important forbidden patterns are:
 - graphics depending on compute backend internals
 - backends depending on each other
 - domain layers owning raw Python or JIT dependencies directly
+- CLI, GUI, or web adapters owning runtime state or scenario schemas directly
+- canary mechanics bypassing validation or application service boundaries
 - public ABI surfaces depending on facade targets
 
 ## Migration Strategy
@@ -182,6 +198,8 @@ This is not only about cleaner CMake. It directly supports:
 - future frontend-side composition such as `zpc::lite`-style packaging
 - browser-facing and WASM-style application delivery without re-entangling the core
 - clearer ownership for async runtime, graphics, and tooling work
+- one shared interface-services layer for CLI, GUI, web, and canary-facing product
+  surfaces
 - better scaling across multiple implementation agents or contributors once
   interfaces stabilize
 
@@ -198,3 +216,7 @@ rendering, simulation, gameplay, and frontend integration.
   target graph maps to delivery profiles
 - [implementation_roadmap.md](implementation_roadmap.md) for the recommended
   sequence of modularization work
+- [cli_and_gui_interface_exposure.md](cli_and_gui_interface_exposure.md) for the
+  shared interface-services model above the modular graph
+- [canary_gameplay_and_tuning.md](canary_gameplay_and_tuning.md) for the scenario
+  and tuning layer that should sit above runtime, validation, and app services

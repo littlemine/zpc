@@ -99,4 +99,8 @@ not pull graphics, runtime, or frontend choices back into lower-layer ownership.
   lower-layer graph this application layer should consume
 - [lightweight_frontend_integration.md](lightweight_frontend_integration.md) for the
   Python or DSL-facing composition path adjacent to application tooling
+- [cli_and_gui_interface_exposure.md](cli_and_gui_interface_exposure.md) for the
+  shared operator-facing and user-facing interface model above the app layer
+- [canary_gameplay_and_tuning.md](canary_gameplay_and_tuning.md) for the scenario
+  authoring and tuning flows that should surface through these applications
 - [roadmap.md](roadmap.md) for the broader product-surface direction
