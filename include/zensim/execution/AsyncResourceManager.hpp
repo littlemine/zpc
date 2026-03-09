@@ -80,6 +80,15 @@ namespace zs {
     size_t retired{0};
   };
 
+  struct AsyncResourceStateSnapshot {
+    size_t leaseCount{0};
+    u64 lastAccessEpoch{0};
+    bool dirty{false};
+    bool busy{false};
+    bool retired{false};
+    bool stale{false};
+  };
+
   struct AsyncResourceMaintenanceTicket {
     AsyncResourceHandle resource{};
     AsyncResourceMaintenanceDisposition disposition{
@@ -139,6 +148,8 @@ namespace zs {
     Lease acquire(AsyncResourceHandle resource);
 
     bool contains(AsyncResourceHandle resource) const;
+    bool describe(AsyncResourceHandle resource, const AsyncResourceDescriptor **descriptor,
+            AsyncResourceStateSnapshot *state = nullptr) const;
     bool touch(AsyncResourceHandle resource);
     bool mark_dirty(AsyncResourceHandle resource, bool dirty = true);
     bool is_dirty(AsyncResourceHandle resource) const;
@@ -265,6 +276,23 @@ namespace zs {
 
   inline bool AsyncResourceManager::contains(AsyncResourceHandle resource) const {
     return static_cast<bool>(find_entry_(resource));
+  }
+
+  inline bool AsyncResourceManager::describe(AsyncResourceHandle resource,
+                                             const AsyncResourceDescriptor **descriptor,
+                                             AsyncResourceStateSnapshot *state) const {
+    auto entry = find_entry_(resource);
+    if (!entry) return false;
+    if (descriptor) *descriptor = &entry->descriptor;
+    if (state) {
+      state->leaseCount = entry->leaseCount.load();
+      state->lastAccessEpoch = entry->lastAccessEpoch.load();
+      state->dirty = entry->dirty.load();
+      state->busy = entry->maintenanceInFlight.load();
+      state->retired = entry->retired.load();
+      state->stale = is_stale_(*entry, _epoch.load());
+    }
+    return true;
   }
 
   inline bool AsyncResourceManager::touch(AsyncResourceHandle resource) {

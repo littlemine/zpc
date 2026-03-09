@@ -21,7 +21,8 @@ The demo prints:
    a submission-event token
 * validation-report extension discovery and one published validation report summary plus JSON blob
 * resource-manager extension discovery, one registered resource, one lease, one explicit
-  maintenance submission, one stale sweep, and one retirement collection sequence
+   maintenance submission, one stale sweep, one retirement collection sequence, and multiple live
+   resource-info snapshots showing dirty or stale or lease-count transitions
 * native-queue extension discovery, one fake native queue submission with both a runtime
    prerequisite token and a foreign native-signal dependency, and one wait-on-signal call
 
@@ -49,8 +50,9 @@ The output should show, in order:
 * a host task callback line, a completed host event line, and a dependent-host line showing the
    prerequisite token that was consumed
 * a validation summary line and a JSON line containing ``zpc.validation.v1``
-* a resource extension line reporting version ``1.0`` followed by resource registration, lease,
-  maintenance, stale-sweep, and retirement lines with non-zero handles or counts
+* a resource extension line reporting version ``1.1`` followed by resource registration, initial
+   info, lease-state, dirty-state, post-maintenance, stale-sweep, and retirement lines with
+   non-zero handles or counts
 * a native extension line reporting minor version ``1``
 * a native event line showing non-zero signal token, incremented sync or record or wait counts,
    and distinct ``first_wait`` or ``last_wait`` tokens so the pre-submit foreign wait and explicit

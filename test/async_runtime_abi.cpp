@@ -207,7 +207,7 @@ int main() {
          &resourceExtensionDesc)
        == ZPC_RUNTIME_ABI_OK);
     assert(resourceExtensionDesc.extension_version_major == 1);
-    assert(resourceExtensionDesc.extension_version_minor == 0);
+    assert(resourceExtensionDesc.extension_version_minor == 1);
     const auto *resourceExtension =
       static_cast<const zpc_runtime_resource_manager_extension_v1_t *>(
           resourceExtensionDesc.function_table);
@@ -246,6 +246,23 @@ int main() {
           == ZPC_RUNTIME_ABI_OK);
         assert(containsResource == 1u);
 
+        zpc_runtime_resource_info_v1_t resourceInfo{};
+        resourceInfo.header =
+          zpc_runtime_make_header((uint32_t)sizeof(zpc_runtime_resource_info_v1_t));
+        assert(resourceExtension->query_resource_info(engine, resourceHandle, &resourceInfo)
+          == ZPC_RUNTIME_ABI_OK);
+        assert(string_from_view(resourceInfo.resource_label) == "abi-resource");
+        assert(string_from_view(resourceInfo.executor_name) == "inline");
+        assert(resourceInfo.priority == 3);
+        assert(resourceInfo.bytes == sizeof(ResourcePayload));
+        assert(resourceInfo.stale_after_epochs == 2);
+        assert(resourceInfo.lease_count == 0);
+        assert(resourceInfo.last_access_epoch == 0);
+        assert(resourceInfo.dirty == 0u);
+        assert(resourceInfo.busy == 0u);
+        assert(resourceInfo.retired == 0u);
+        assert(resourceInfo.stale == 0u);
+
         zpc_runtime_resource_manager_stats_v1_t resourceStats{};
         resourceStats.header =
           zpc_runtime_make_header((uint32_t)sizeof(zpc_runtime_resource_manager_stats_v1_t));
@@ -260,6 +277,13 @@ int main() {
         assert(lease != nullptr);
         assert(leasedPayload == resourceDesc.payload);
 
+        resourceInfo.header =
+          zpc_runtime_make_header((uint32_t)sizeof(zpc_runtime_resource_info_v1_t));
+        assert(resourceExtension->query_resource_info(engine, resourceHandle, &resourceInfo)
+          == ZPC_RUNTIME_ABI_OK);
+        assert(resourceInfo.lease_count == 1);
+        assert(resourceInfo.last_access_epoch == 0);
+
         resourceStats.header =
           zpc_runtime_make_header((uint32_t)sizeof(zpc_runtime_resource_manager_stats_v1_t));
         assert(resourceExtension->query_stats(engine, &resourceStats) == ZPC_RUNTIME_ABI_OK);
@@ -270,6 +294,14 @@ int main() {
         uint64_t epoch = 0;
         assert(resourceExtension->advance_epoch(engine, 2, &epoch) == ZPC_RUNTIME_ABI_OK);
         assert(epoch == 2);
+
+        resourceInfo.header =
+          zpc_runtime_make_header((uint32_t)sizeof(zpc_runtime_resource_info_v1_t));
+        assert(resourceExtension->query_resource_info(engine, resourceHandle, &resourceInfo)
+               == ZPC_RUNTIME_ABI_OK);
+        assert(resourceInfo.dirty == 1u);
+        assert(resourceInfo.stale == 1u);
+        assert(resourceInfo.last_access_epoch == 0);
 
         zpc_runtime_resource_maintenance_request_v1_t maintenanceRequest{};
         maintenanceRequest.header = zpc_runtime_make_header(
@@ -293,6 +325,14 @@ int main() {
         assert(resourceState.lastKind
           == static_cast<uint32_t>(zs::AsyncResourceMaintenanceKind::refresh));
         assert(resourceState.lastPayload == resourceDesc.payload);
+
+            resourceInfo.header =
+              zpc_runtime_make_header((uint32_t)sizeof(zpc_runtime_resource_info_v1_t));
+            assert(resourceExtension->query_resource_info(engine, resourceHandle, &resourceInfo)
+              == ZPC_RUNTIME_ABI_OK);
+            assert(resourceInfo.dirty == 0u);
+            assert(resourceInfo.stale == 0u);
+            assert(resourceInfo.last_access_epoch == 2);
 
         zpc_runtime_host_event_t maintenanceEvent{};
         maintenanceEvent.header = zpc_runtime_make_header((uint32_t)sizeof(zpc_runtime_host_event_t));
@@ -332,6 +372,10 @@ int main() {
         assert(resourceExtension->contains_resource(engine, resourceHandle, &containsResource)
           == ZPC_RUNTIME_ABI_OK);
         assert(containsResource == 0u);
+            resourceInfo.header =
+              zpc_runtime_make_header((uint32_t)sizeof(zpc_runtime_resource_info_v1_t));
+            assert(resourceExtension->query_resource_info(engine, resourceHandle, &resourceInfo)
+              == ZPC_RUNTIME_ABI_UNSUPPORTED_OPERATION);
 
     CountingTaskState countingState{};
     zpc_runtime_host_submit_payload_t payload{};

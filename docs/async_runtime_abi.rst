@@ -137,6 +137,9 @@ The current host-validated shape exposes:
 
 * stable registration through ``zpc_runtime_resource_desc_v1_t`` with opaque payload storage,
 	maintenance callback, and destroy callback hooks
+* stable inspection through ``zpc_runtime_resource_info_v1_t`` so hosts can query resource label,
+	executor, queue or backend metadata, dirty or busy or retired or stale flags, lease count, and
+	last-access epoch without taking ownership of the payload
 * explicit lease acquire or release through an opaque ``zpc_runtime_resource_lease_handle_t`` so
 	payload access does not leak C++ ownership types across the ABI boundary
 * ``touch``, ``mark_dirty``, ``advance_epoch``, and ``query_stats`` operations so external tools
@@ -152,6 +155,9 @@ maintenance callbacks receive a stable
 payload pointer, maintenance kind, epoch, lease count, bytes, and current stop flags. That keeps
 the queried extension useful for plugin-style hosts while preserving the internal C++ resource
 types as an implementation detail.
+
+The extension now reports minor version ``1`` to reflect the append-only addition of
+``query_resource_info`` beyond the original mutation-only surface.
 
 Native Queue Extension
 ----------------------

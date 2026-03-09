@@ -252,6 +252,27 @@ extern "C" {
     uint64_t reserved[4];
   } zpc_runtime_resource_manager_stats_v1_t;
 
+  typedef struct zpc_runtime_resource_info_v1_t {
+    zpc_runtime_abi_header_t header;
+    zpc_runtime_string_view_t resource_label;
+    zpc_runtime_string_view_t executor_name;
+    uint32_t domain_code;
+    uint32_t queue_code;
+    uint32_t backend_code;
+    int32_t priority;
+    uint64_t bytes;
+    uint64_t stale_after_epochs;
+    uint64_t lease_count;
+    uint64_t last_access_epoch;
+    uint32_t allow_maintenance_while_leased;
+    uint32_t evict_when_stale;
+    uint32_t dirty;
+    uint32_t retired;
+    uint32_t busy;
+    uint32_t stale;
+    uint64_t reserved[4];
+  } zpc_runtime_resource_info_v1_t;
+
   typedef int32_t (*zpc_runtime_resource_register_fn)(
       zpc_runtime_engine_handle_t *engine, const zpc_runtime_resource_desc_v1_t *desc,
       uint64_t *resource_handle);
@@ -272,6 +293,9 @@ extern "C" {
                                                            uint64_t *epoch);
   typedef int32_t (*zpc_runtime_resource_query_stats_fn)(
       zpc_runtime_engine_handle_t *engine, zpc_runtime_resource_manager_stats_v1_t *stats);
+    typedef int32_t (*zpc_runtime_resource_query_info_fn)(
+      zpc_runtime_engine_handle_t *engine, uint64_t resource_handle,
+      zpc_runtime_resource_info_v1_t *info);
   typedef int32_t (*zpc_runtime_resource_schedule_maintenance_fn)(
       zpc_runtime_engine_handle_t *engine, uint64_t resource_handle,
       const zpc_runtime_resource_maintenance_request_v1_t *request,
@@ -296,7 +320,8 @@ extern "C" {
     zpc_runtime_resource_schedule_maintenance_fn schedule_maintenance;
     zpc_runtime_resource_sweep_stale_fn sweep_stale;
     zpc_runtime_resource_collect_retired_fn collect_retired;
-    void *reserved[4];
+    zpc_runtime_resource_query_info_fn query_resource_info;
+    void *reserved[3];
   } zpc_runtime_resource_manager_extension_v1_t;
 
   typedef struct zpc_runtime_native_queue_desc_t {
@@ -621,6 +646,29 @@ namespace zs {
     for (auto &slot : stats->reserved) slot = 0;
   }
 
+  inline void zpc_runtime_fill_resource_info(
+      const AsyncResourceDescriptor &descriptor, const AsyncResourceStateSnapshot &snapshot,
+      zpc_runtime_resource_info_v1_t *info) {
+    info->header = zpc_runtime_make_header((uint32_t)sizeof(zpc_runtime_resource_info_v1_t));
+    info->resource_label = zpc_runtime_make_string_view(descriptor.label.asChars());
+    info->executor_name = zpc_runtime_make_string_view(descriptor.executor.asChars());
+    info->domain_code = static_cast<uint32_t>(descriptor.domain);
+    info->queue_code = static_cast<uint32_t>(descriptor.queue);
+    info->backend_code = static_cast<uint32_t>(descriptor.endpoint.backend);
+    info->priority = descriptor.priority;
+    info->bytes = descriptor.bytes;
+    info->stale_after_epochs = descriptor.staleAfterEpochs;
+    info->lease_count = snapshot.leaseCount;
+    info->last_access_epoch = snapshot.lastAccessEpoch;
+    info->allow_maintenance_while_leased = descriptor.allowMaintenanceWhileLeased ? 1u : 0u;
+    info->evict_when_stale = descriptor.evictWhenStale ? 1u : 0u;
+    info->dirty = snapshot.dirty ? 1u : 0u;
+    info->retired = snapshot.retired ? 1u : 0u;
+    info->busy = snapshot.busy ? 1u : 0u;
+    info->stale = snapshot.stale ? 1u : 0u;
+    for (auto &slot : info->reserved) slot = 0;
+  }
+
 }  // namespace zs
 
 struct zpc_runtime_engine_handle_t {
@@ -788,7 +836,7 @@ namespace zs {
       extension_desc->extension_name =
           zpc_runtime_make_string_view(zpc_runtime_resource_manager_extension_name);
       extension_desc->extension_version_major = 1;
-      extension_desc->extension_version_minor = 0;
+      extension_desc->extension_version_minor = 1;
       extension_desc->function_table = &engine->resource_manager_extension;
     } else {
       return ZPC_RUNTIME_ABI_UNSUPPORTED_OPERATION;
@@ -1002,6 +1050,25 @@ namespace zs {
     if (compatibility != ZPC_RUNTIME_ABI_OK) return compatibility;
     zpc_runtime_fill_resource_stats(engine->resource_manager->stats(),
                                     engine->resource_manager->current_epoch(), stats);
+    return ZPC_RUNTIME_ABI_OK;
+  }
+
+  inline int32_t zpc_runtime_resource_query_info(zpc_runtime_engine_handle_t *engine,
+                                                 uint64_t resource_handle,
+                                                 zpc_runtime_resource_info_v1_t *info) {
+    if (!engine || !engine->resource_manager || !info) return ZPC_RUNTIME_ABI_ERROR;
+    const int32_t compatibility = zpc_runtime_is_abi_compatible(
+        &info->header, (uint32_t)sizeof(zpc_runtime_resource_info_v1_t));
+    if (compatibility != ZPC_RUNTIME_ABI_OK) return compatibility;
+
+    const AsyncResourceDescriptor *descriptor = nullptr;
+    AsyncResourceStateSnapshot snapshot{};
+    if (!engine->resource_manager->describe(zpc_runtime_make_resource_handle(resource_handle),
+                                            &descriptor, &snapshot)
+        || !descriptor)
+      return ZPC_RUNTIME_ABI_UNSUPPORTED_OPERATION;
+
+    zpc_runtime_fill_resource_info(*descriptor, snapshot, info);
     return ZPC_RUNTIME_ABI_OK;
   }
 
@@ -1365,6 +1432,7 @@ namespace zs {
       &zpc_runtime_resource_schedule_maintenance;
     engine->resource_manager_extension.sweep_stale = &zpc_runtime_resource_sweep_stale;
     engine->resource_manager_extension.collect_retired = &zpc_runtime_resource_collect_retired;
+    engine->resource_manager_extension.query_resource_info = &zpc_runtime_resource_query_info;
     for (auto &slot : engine->resource_manager_extension.reserved) slot = nullptr;
 
     engine->table.header = zpc_runtime_make_header((uint32_t)sizeof(zpc_runtime_engine_v1_t));
@@ -1418,6 +1486,20 @@ namespace zs {
     static_assert(offsetof(zpc_runtime_resource_manager_extension_v1_t, register_resource)
             == sizeof(zpc_runtime_abi_header_t),
           "Resource manager extension function table order must remain append-only");
+    static_assert(offsetof(zpc_runtime_resource_manager_extension_v1_t, query_resource_info)
+                      == sizeof(zpc_runtime_abi_header_t)
+                             + sizeof(zpc_runtime_resource_register_fn)
+                             + sizeof(zpc_runtime_resource_contains_fn)
+                             + sizeof(zpc_runtime_resource_acquire_fn)
+                             + sizeof(zpc_runtime_resource_release_lease_fn)
+                             + sizeof(zpc_runtime_resource_touch_fn)
+                             + sizeof(zpc_runtime_resource_mark_dirty_fn)
+                             + sizeof(zpc_runtime_resource_advance_epoch_fn)
+                             + sizeof(zpc_runtime_resource_query_stats_fn)
+                             + sizeof(zpc_runtime_resource_schedule_maintenance_fn)
+                             + sizeof(zpc_runtime_resource_sweep_stale_fn)
+                             + sizeof(zpc_runtime_resource_collect_retired_fn),
+                  "Resource manager query-info entry must remain append-only");
   static_assert(offsetof(zpc_runtime_host_submit_payload_t, task)
                     == sizeof(zpc_runtime_abi_header_t),
                 "Host submit payload function pointer order must remain append-only");

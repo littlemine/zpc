@@ -270,16 +270,34 @@ int main() {
     resourceExtension->register_resource(engine, &resourceDesc, &resourceHandle);
     std::cout << "resource registered: handle=" << resourceHandle << "\n";
 
+    zpc_runtime_resource_info_v1_t resourceInfo{};
+    resourceInfo.header = zpc_runtime_make_header((uint32_t)sizeof(zpc_runtime_resource_info_v1_t));
+    resourceExtension->query_resource_info(engine, resourceHandle, &resourceInfo);
+    std::cout << "resource info: label=" << to_string(resourceInfo.resource_label)
+              << " executor=" << to_string(resourceInfo.executor_name)
+              << " dirty=" << resourceInfo.dirty
+              << " stale=" << resourceInfo.stale
+              << " leases=" << resourceInfo.lease_count << "\n";
+
     void *resourcePayload = nullptr;
     zpc_runtime_resource_lease_handle_t *resourceLease = nullptr;
     resourceExtension->acquire_resource(engine, resourceHandle, &resourcePayload, &resourceLease);
     std::cout << "resource lease: payload="
         << static_cast<DemoResourcePayload *>(resourcePayload)->value << "\n";
+    resourceInfo.header = zpc_runtime_make_header((uint32_t)sizeof(zpc_runtime_resource_info_v1_t));
+    resourceExtension->query_resource_info(engine, resourceHandle, &resourceInfo);
+    std::cout << "resource lease state: leases=" << resourceInfo.lease_count
+              << " last_access_epoch=" << resourceInfo.last_access_epoch << "\n";
     resourceExtension->release_lease(resourceLease);
 
     resourceExtension->mark_dirty(engine, resourceHandle, 1);
     uint64_t resourceEpoch = 0;
     resourceExtension->advance_epoch(engine, 2, &resourceEpoch);
+    resourceInfo.header = zpc_runtime_make_header((uint32_t)sizeof(zpc_runtime_resource_info_v1_t));
+    resourceExtension->query_resource_info(engine, resourceHandle, &resourceInfo);
+    std::cout << "resource dirty state: dirty=" << resourceInfo.dirty
+              << " stale=" << resourceInfo.stale
+              << " epoch=" << resourceEpoch << "\n";
 
     zpc_runtime_resource_maintenance_request_v1_t resourceRequest{};
     resourceRequest.header =
@@ -300,6 +318,11 @@ int main() {
     std::cout << "resource event: status=" << resourceEvent.status_code
         << " token=" << resourceEvent.native_signal_token << "\n";
     engineTable->release_submission(resourceSubmission);
+    resourceInfo.header = zpc_runtime_make_header((uint32_t)sizeof(zpc_runtime_resource_info_v1_t));
+    resourceExtension->query_resource_info(engine, resourceHandle, &resourceInfo);
+    std::cout << "resource post-maintenance: dirty=" << resourceInfo.dirty
+              << " stale=" << resourceInfo.stale
+              << " last_access_epoch=" << resourceInfo.last_access_epoch << "\n";
 
     uint64_t staleScheduled = 0;
     resourceExtension->mark_dirty(engine, resourceHandle, 1);
