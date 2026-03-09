@@ -280,6 +280,7 @@ set(ZENSIM_LIBRARY_FOUNDATION_INCLUDE_FILES
 set(ZENSIM_LIBRARY_VALIDATION_CORE_INCLUDE_FILES
   execution/ValidationCompare.hpp
   execution/ValidationFormat.hpp
+  execution/ValidationPersistence.hpp
   execution/ValidationSchema.hpp
 )
 set(ZENSIM_LIBRARY_ASYNC_RUNTIME_CORE_INCLUDE_FILES

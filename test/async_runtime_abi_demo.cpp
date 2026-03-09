@@ -1,3 +1,4 @@
+#include <filesystem>
 #include <iostream>
 #include <string>
 #include <vector>
@@ -177,6 +178,35 @@ int main() {
   zpc_runtime_string_view_t jsonView{};
   validationExtension->query_json(engine, &jsonView);
   std::cout << "validation json: " << to_string(jsonView) << "\n";
+
+  ValidationSuiteReport baselineReport = report;
+  baselineReport.records[0].outcome = ValidationOutcome::fail;
+  baselineReport.records[0].measurements[0].value = 80.0;
+  const auto baselinePath = std::filesystem::temp_directory_path()
+                          / "zpc_async_runtime_abi_demo_baseline.json";
+  std::error_code removeError;
+  std::filesystem::remove(baselinePath, removeError);
+  std::string persistenceError;
+  if (save_validation_report_json_file(baselineReport, baselinePath.string(), &persistenceError)
+      && validationExtension->compare_baseline_file(
+             engine, zpc_runtime_make_string_view(baselinePath.string().c_str()))
+             == ZPC_RUNTIME_ABI_OK) {
+    zpc_runtime_validation_comparison_summary_v1_t comparisonSummary{};
+    comparisonSummary.header = zpc_runtime_make_header(
+        (uint32_t)sizeof(zpc_runtime_validation_comparison_summary_v1_t));
+    validationExtension->query_comparison_summary(engine, &comparisonSummary);
+    std::cout << "validation comparison: suite=" << to_string(comparisonSummary.suite)
+              << " accepted=" << comparisonSummary.accepted
+              << " improved=" << comparisonSummary.improved
+              << " regressed=" << comparisonSummary.regressed << "\n";
+
+    zpc_runtime_string_view_t comparisonJsonView{};
+    validationExtension->query_comparison_json(engine, &comparisonJsonView);
+    std::cout << "validation comparison json: " << to_string(comparisonJsonView) << "\n";
+  } else {
+    std::cout << "validation comparison unavailable: " << persistenceError << "\n";
+  }
+  std::filesystem::remove(baselinePath, removeError);
 
   DemoNativeQueueState nativeState{};
   zpc_runtime_native_queue_desc_t nativeDesc{};

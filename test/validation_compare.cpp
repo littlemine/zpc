@@ -1,6 +1,10 @@
 #include <cassert>
+#include <filesystem>
+#include <string>
 
 #include "zensim/execution/ValidationCompare.hpp"
+#include "zensim/execution/ValidationFormat.hpp"
+#include "zensim/execution/ValidationPersistence.hpp"
 
 int main() {
   using namespace zs;
@@ -43,6 +47,26 @@ int main() {
   current.records.push_back(currentRegressed);
   current.records.push_back(currentAdded);
 
+    const auto baselinePath = std::filesystem::temp_directory_path()
+             / "zpc_validation_compare_baseline.json";
+    std::error_code removeError;
+    std::filesystem::remove(baselinePath, removeError);
+
+    std::string persistenceError;
+    assert(save_validation_report_json_file(baseline, baselinePath.string(), &persistenceError));
+    assert(persistenceError.empty());
+
+    ValidationSuiteReport loadedBaseline{};
+    assert(load_validation_report_json_file(baselinePath.string(), &loadedBaseline,
+              &persistenceError));
+    assert(persistenceError.empty());
+    assert(std::string(loadedBaseline.suite.asChars()) == "async");
+    assert(loadedBaseline.records.size() == 1);
+    assert(std::string(loadedBaseline.records[0].recordId.asChars())
+      == "async.cuda.queue-latency");
+    assert(loadedBaseline.records[0].measurements.size() == 1);
+    assert(loadedBaseline.records[0].measurements[0].value == 1.0);
+
   const auto report = compare_validation_reports(baseline, current);
   assert(report.suite == "async");
   assert(!report.accepted);
@@ -71,6 +95,37 @@ int main() {
   assert(!report.records[1].measurements[0].hasBaseline);
   assert(report.records[1].measurements[0].hasCurrent);
 
+  ValidationComparisonReport persistedReport{};
+  ValidationSuiteReport persistedBaseline{};
+  assert(compare_validation_report_to_baseline_file(
+      baselinePath.string(), current, &persistedReport, &persistedBaseline, &persistenceError));
+  assert(persistenceError.empty());
+  assert(persistedReport.summary.regressed == report.summary.regressed);
+  assert(persistedReport.summary.added == report.summary.added);
+  assert(persistedReport.records.size() == report.records.size());
+  assert(std::string(persistedBaseline.records[0].name.asChars()) == "queue-latency");
+
+  const std::string reportJson = format_validation_comparison_report_json(report);
+  assert(reportJson.find("\"suite\":\"async\"") != std::string::npos);
+  assert(reportJson.find("\"accepted\":false") != std::string::npos);
+  assert(reportJson.find("\"regressed\":1") != std::string::npos);
+  assert(reportJson.find("\"added\":1") != std::string::npos);
+  assert(reportJson.find("\"recordId\":\"async.cuda.queue-latency\"")
+      != std::string::npos);
+  assert(reportJson.find("\"status\":\"regressed\"") != std::string::npos);
+  assert(reportJson.find("\"baselineOutcome\":\"pass\"") != std::string::npos);
+  assert(reportJson.find("\"currentOutcome\":\"fail\"") != std::string::npos);
+  assert(reportJson.find("\"delta\":2") != std::string::npos);
+
+  const std::string summaryText = format_validation_comparison_summary_text(report);
+  assert(summaryText.find("suite=async accepted=false total=2") != std::string::npos);
+  assert(summaryText.find("regressed=1") != std::string::npos);
+  assert(summaryText.find("added=1") != std::string::npos);
+  assert(summaryText.find("- [regressed] queue-latency recordId=async.cuda.queue-latency backend=cuda executor=cuda_record target=gpu0 kind=benchmark baselineOutcome=pass currentOutcome=fail")
+      != std::string::npos);
+  assert(summaryText.find("* [regressed] latency unit=ms baselineValue=1 currentValue=3 delta=2 baselineAccepted=true currentAccepted=false")
+      != std::string::npos);
+
   ValidationRecord improvedBaseline = baselinePass;
   improvedBaseline.outcome = ValidationOutcome::fail;
   improvedBaseline.measurements[0].value = 3.5;
@@ -88,6 +143,9 @@ int main() {
   assert(improved.summary.improved == 1);
   assert(improved.records[0].status == ValidationDiffStatus::improved);
   assert(improved.records[0].measurements[0].status == ValidationDiffStatus::improved);
+  const std::string improvedText = format_validation_comparison_summary_text(improved);
+  assert(improvedText.find("accepted=true") != std::string::npos);
+  assert(improvedText.find("improved=1") != std::string::npos);
 
   ValidationRecord fallbackBaseline{};
   fallbackBaseline.suite = "async";
@@ -128,6 +186,8 @@ int main() {
   assert(idPreferred.records.size() == 1);
   assert(idPreferred.records[0].status == ValidationDiffStatus::unchanged);
   assert(idPreferred.records[0].name == "renamed-name");
+
+  std::filesystem::remove(baselinePath, removeError);
 
   return 0;
 }

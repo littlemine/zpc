@@ -148,17 +148,39 @@ extern "C" {
     uint64_t reserved[4];
   } zpc_runtime_validation_summary_v1_t;
 
+  typedef struct zpc_runtime_validation_comparison_summary_v1_t {
+    zpc_runtime_abi_header_t header;
+    zpc_runtime_string_view_t suite;
+    uint64_t accepted;
+    uint64_t total;
+    uint64_t unchanged;
+    uint64_t improved;
+    uint64_t regressed;
+    uint64_t added;
+    uint64_t removed;
+    uint64_t reserved[4];
+  } zpc_runtime_validation_comparison_summary_v1_t;
+
   typedef int32_t (*zpc_runtime_validation_query_summary_fn)(
       zpc_runtime_engine_handle_t *engine, zpc_runtime_validation_summary_v1_t *summary);
+  typedef int32_t (*zpc_runtime_validation_query_comparison_summary_fn)(
+      zpc_runtime_engine_handle_t *engine,
+      zpc_runtime_validation_comparison_summary_v1_t *summary);
   typedef int32_t (*zpc_runtime_validation_query_blob_fn)(zpc_runtime_engine_handle_t *engine,
                                                           zpc_runtime_string_view_t *view);
+  typedef int32_t (*zpc_runtime_validation_compare_baseline_file_fn)(
+      zpc_runtime_engine_handle_t *engine, zpc_runtime_string_view_t baseline_path);
 
   typedef struct zpc_runtime_validation_extension_v1_t {
     zpc_runtime_abi_header_t header;
     zpc_runtime_validation_query_summary_fn query_summary;
     zpc_runtime_validation_query_blob_fn query_json;
     zpc_runtime_validation_query_blob_fn query_text;
-    void *reserved[8];
+    zpc_runtime_validation_compare_baseline_file_fn compare_baseline_file;
+    zpc_runtime_validation_query_comparison_summary_fn query_comparison_summary;
+    zpc_runtime_validation_query_blob_fn query_comparison_json;
+    zpc_runtime_validation_query_blob_fn query_comparison_text;
+    void *reserved[4];
   } zpc_runtime_validation_extension_v1_t;
 
   typedef struct zpc_runtime_native_queue_desc_t {
@@ -276,7 +298,7 @@ extern "C" {
 #include <memory>
 #include "zensim/execution/AsyncRuntime.hpp"
 #include "zensim/execution/AsyncNativeQueueAdapter.hpp"
-#include "zensim/execution/ValidationFormat.hpp"
+#include "zensim/execution/ValidationPersistence.hpp"
 
 namespace zs {
 
@@ -305,6 +327,11 @@ namespace zs {
     for (size_t i = 0; i != count; ++i) value.buf[i] = view.data[i];
     value.buf[count] = '\0';
     return value;
+  }
+
+  inline std::string zpc_runtime_std_string_from_view(zpc_runtime_string_view_t view) {
+    if (!view.data || view.size == 0) return {};
+    return std::string{view.data, view.size};
   }
 
   inline bool zpc_runtime_string_view_equals(zpc_runtime_string_view_t view,
@@ -375,7 +402,11 @@ namespace zs {
     ValidationSuiteReport report{};
     std::string json{};
     std::string text{};
+    ValidationComparisonReport comparison{};
+    std::string comparisonJson{};
+    std::string comparisonText{};
     bool available{false};
+    bool comparisonAvailable{false};
 
     void publish(ValidationSuiteReport nextReport) {
       nextReport.refresh_summary();
@@ -383,6 +414,21 @@ namespace zs {
       json = format_validation_report_json(report);
       text = format_validation_summary_text(report);
       available = true;
+      comparison = ValidationComparisonReport{};
+      comparisonJson.clear();
+      comparisonText.clear();
+      comparisonAvailable = false;
+    }
+
+    bool compare_baseline_file(const std::string &path) {
+      if (!available) return false;
+      ValidationComparisonReport nextComparison{};
+      if (!compare_validation_report_to_baseline_file(path, report, &nextComparison)) return false;
+      comparison = zs::move(nextComparison);
+      comparisonJson = format_validation_comparison_report_json(comparison);
+      comparisonText = format_validation_comparison_summary_text(comparison);
+      comparisonAvailable = true;
+      return true;
     }
 
     void clear() noexcept {
@@ -390,6 +436,10 @@ namespace zs {
       json.clear();
       text.clear();
       available = false;
+      comparison = ValidationComparisonReport{};
+      comparisonJson.clear();
+      comparisonText.clear();
+      comparisonAvailable = false;
     }
   };
 
@@ -555,7 +605,7 @@ namespace zs {
       extension_desc->extension_name =
           zpc_runtime_make_string_view(zpc_runtime_validation_extension_name);
       extension_desc->extension_version_major = 1;
-      extension_desc->extension_version_minor = 0;
+      extension_desc->extension_version_minor = 1;
       extension_desc->function_table = &engine->validation_extension;
     } else {
       return ZPC_RUNTIME_ABI_UNSUPPORTED_OPERATION;
@@ -598,6 +648,56 @@ namespace zs {
     if (!engine || !view) return ZPC_RUNTIME_ABI_ERROR;
     if (!engine->validation_state.available) return ZPC_RUNTIME_ABI_UNSUPPORTED_OPERATION;
     *view = zpc_runtime_make_string_view(engine->validation_state.text.c_str());
+    return ZPC_RUNTIME_ABI_OK;
+  }
+
+  inline int32_t zpc_runtime_validation_compare_baseline_file(
+      zpc_runtime_engine_handle_t *engine, zpc_runtime_string_view_t baseline_path) {
+    if (!engine) return ZPC_RUNTIME_ABI_ERROR;
+    if (!engine->validation_state.available) return ZPC_RUNTIME_ABI_UNSUPPORTED_OPERATION;
+    const auto path = zpc_runtime_std_string_from_view(baseline_path);
+    if (path.empty()) return ZPC_RUNTIME_ABI_ERROR;
+    return engine->validation_state.compare_baseline_file(path) ? ZPC_RUNTIME_ABI_OK
+                                                                : ZPC_RUNTIME_ABI_ERROR;
+  }
+
+  inline int32_t zpc_runtime_validation_query_comparison_summary(
+      zpc_runtime_engine_handle_t *engine,
+      zpc_runtime_validation_comparison_summary_v1_t *summary) {
+    if (!engine || !summary) return ZPC_RUNTIME_ABI_ERROR;
+    const int32_t compatibility = zpc_runtime_is_abi_compatible(
+        &summary->header, (uint32_t)sizeof(zpc_runtime_validation_comparison_summary_v1_t));
+    if (compatibility != ZPC_RUNTIME_ABI_OK) return compatibility;
+    if (!engine->validation_state.comparisonAvailable) return ZPC_RUNTIME_ABI_UNSUPPORTED_OPERATION;
+
+    const auto &report = engine->validation_state.comparison;
+    summary->header = zpc_runtime_make_header(
+        (uint32_t)sizeof(zpc_runtime_validation_comparison_summary_v1_t));
+    summary->suite = zpc_runtime_make_string_view(report.suite.asChars());
+    summary->accepted = report.accepted ? 1u : 0u;
+    summary->total = report.summary.total;
+    summary->unchanged = report.summary.unchanged;
+    summary->improved = report.summary.improved;
+    summary->regressed = report.summary.regressed;
+    summary->added = report.summary.added;
+    summary->removed = report.summary.removed;
+    for (auto &slot : summary->reserved) slot = 0;
+    return ZPC_RUNTIME_ABI_OK;
+  }
+
+  inline int32_t zpc_runtime_validation_query_comparison_json(
+      zpc_runtime_engine_handle_t *engine, zpc_runtime_string_view_t *view) {
+    if (!engine || !view) return ZPC_RUNTIME_ABI_ERROR;
+    if (!engine->validation_state.comparisonAvailable) return ZPC_RUNTIME_ABI_UNSUPPORTED_OPERATION;
+    *view = zpc_runtime_make_string_view(engine->validation_state.comparisonJson.c_str());
+    return ZPC_RUNTIME_ABI_OK;
+  }
+
+  inline int32_t zpc_runtime_validation_query_comparison_text(
+      zpc_runtime_engine_handle_t *engine, zpc_runtime_string_view_t *view) {
+    if (!engine || !view) return ZPC_RUNTIME_ABI_ERROR;
+    if (!engine->validation_state.comparisonAvailable) return ZPC_RUNTIME_ABI_UNSUPPORTED_OPERATION;
+    *view = zpc_runtime_make_string_view(engine->validation_state.comparisonText.c_str());
     return ZPC_RUNTIME_ABI_OK;
   }
 
@@ -866,6 +966,14 @@ namespace zs {
     engine->validation_extension.query_summary = &zpc_runtime_validation_query_summary;
     engine->validation_extension.query_json = &zpc_runtime_validation_query_json;
     engine->validation_extension.query_text = &zpc_runtime_validation_query_text;
+    engine->validation_extension.compare_baseline_file =
+      &zpc_runtime_validation_compare_baseline_file;
+    engine->validation_extension.query_comparison_summary =
+      &zpc_runtime_validation_query_comparison_summary;
+    engine->validation_extension.query_comparison_json =
+      &zpc_runtime_validation_query_comparison_json;
+    engine->validation_extension.query_comparison_text =
+      &zpc_runtime_validation_query_comparison_text;
     for (auto &slot : engine->validation_extension.reserved) slot = nullptr;
 
     engine->native_queue_extension.header =
@@ -920,12 +1028,25 @@ namespace zs {
                 "Dependency list layout must remain fixed");
   static_assert(sizeof(zpc_runtime_validation_summary_v1_t) == 120,
                 "Validation summary layout must remain fixed");
+    static_assert(sizeof(zpc_runtime_validation_comparison_summary_v1_t) == 120,
+          "Validation comparison summary layout must remain fixed");
   static_assert(offsetof(zpc_runtime_host_submit_payload_t, task)
                     == sizeof(zpc_runtime_abi_header_t),
                 "Host submit payload function pointer order must remain append-only");
   static_assert(offsetof(zpc_runtime_validation_extension_v1_t, query_summary)
                     == sizeof(zpc_runtime_abi_header_t),
                 "Validation extension function table order must remain append-only");
+    static_assert(offsetof(zpc_runtime_validation_extension_v1_t, compare_baseline_file)
+            == sizeof(zpc_runtime_abi_header_t)
+               + sizeof(zpc_runtime_validation_query_summary_fn)
+               + 2 * sizeof(zpc_runtime_validation_query_blob_fn),
+          "Validation extension compare entry must remain append-only");
+    static_assert(offsetof(zpc_runtime_validation_extension_v1_t, query_comparison_summary)
+            == sizeof(zpc_runtime_abi_header_t)
+               + sizeof(zpc_runtime_validation_query_summary_fn)
+               + 2 * sizeof(zpc_runtime_validation_query_blob_fn)
+               + sizeof(zpc_runtime_validation_compare_baseline_file_fn),
+          "Validation extension comparison summary entry must remain append-only");
   static_assert(offsetof(zpc_runtime_native_queue_extension_v1_t, submit)
                     == sizeof(zpc_runtime_abi_header_t),
                 "Native queue extension function table order must remain append-only");

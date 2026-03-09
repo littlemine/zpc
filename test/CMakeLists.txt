@@ -114,6 +114,13 @@ target_link_libraries(validationcompare PRIVATE zpc_validation_core)
 add_test(ZsValidationCompare validationcompare)
 add_dependencies(zensim validationcompare)
 
+# validation persistence
+add_executable(validationpersistence validation_persistence.cpp)
+target_link_libraries(validationpersistence PRIVATE zpc_validation_core)
+
+add_test(ZsValidationPersistence validationpersistence)
+add_dependencies(zensim validationpersistence)
+
 # binary search
 add_executable(binarysearchtest binary_search.cpp)
 target_link_libraries(binarysearchtest PRIVATE zpc)

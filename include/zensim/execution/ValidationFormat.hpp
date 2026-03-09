@@ -3,6 +3,7 @@
 #include <sstream>
 #include <string>
 
+#include "zensim/execution/ValidationCompare.hpp"
 #include "zensim/execution/ValidationSchema.hpp"
 
 namespace zs {
@@ -169,6 +170,113 @@ namespace zs {
       oss << " kind=" << validation_record_kind_name(record.kind);
       oss << " accepted=" << (record.accepted() ? "true" : "false");
       if (record.durationNs) oss << " durationNs=" << record.durationNs;
+    }
+    return oss.str();
+  }
+
+  inline std::string format_validation_measurement_diff_json(
+      const ValidationMeasurementDiff &measurement) {
+    std::ostringstream oss;
+    oss << '{';
+    append_json_string_field(oss, "name", measurement.name);
+    oss << ',';
+    append_json_string_field(oss, "unit", measurement.unit);
+    oss << ",\"hasBaseline\":" << (measurement.hasBaseline ? "true" : "false");
+    oss << ",\"hasCurrent\":" << (measurement.hasCurrent ? "true" : "false");
+    oss << ",\"baselineValue\":" << measurement.baselineValue;
+    oss << ",\"currentValue\":" << measurement.currentValue;
+    oss << ",\"delta\":" << measurement.delta;
+    oss << ",\"baselineAccepted\":" << (measurement.baselineAccepted ? "true" : "false");
+    oss << ",\"currentAccepted\":" << (measurement.currentAccepted ? "true" : "false");
+    oss << ",\"status\":\"" << validation_diff_status_name(measurement.status) << '"';
+    oss << '}';
+    return oss.str();
+  }
+
+  inline std::string format_validation_record_diff_json(const ValidationRecordDiff &record) {
+    std::ostringstream oss;
+    oss << '{';
+    append_json_string_field(oss, "recordId", record.recordId);
+    oss << ',';
+    append_json_string_field(oss, "suite", record.suite);
+    oss << ',';
+    append_json_string_field(oss, "name", record.name);
+    oss << ',';
+    append_json_string_field(oss, "backend", record.backend);
+    oss << ',';
+    append_json_string_field(oss, "executor", record.executor);
+    oss << ',';
+    append_json_string_field(oss, "target", record.target);
+    oss << ",\"kind\":\"" << validation_record_kind_name(record.kind) << '"';
+    oss << ",\"hasBaseline\":" << (record.hasBaseline ? "true" : "false");
+    oss << ",\"hasCurrent\":" << (record.hasCurrent ? "true" : "false");
+    oss << ",\"baselineOutcome\":\"" << validation_outcome_name(record.baselineOutcome) << '"';
+    oss << ",\"currentOutcome\":\"" << validation_outcome_name(record.currentOutcome) << '"';
+    oss << ",\"status\":\"" << validation_diff_status_name(record.status) << '"';
+    oss << ",\"measurements\":[";
+    for (size_t i = 0; i < record.measurements.size(); ++i) {
+      if (i) oss << ',';
+      oss << format_validation_measurement_diff_json(record.measurements[i]);
+    }
+    oss << "]}";
+    return oss.str();
+  }
+
+  inline std::string format_validation_comparison_report_json(
+      const ValidationComparisonReport &report) {
+    std::ostringstream oss;
+    oss << '{';
+    append_json_string_field(oss, "suite", report.suite);
+    oss << ",\"accepted\":" << (report.accepted ? "true" : "false");
+    oss << ",\"summary\":{";
+    oss << "\"total\":" << report.summary.total;
+    oss << ",\"unchanged\":" << report.summary.unchanged;
+    oss << ",\"improved\":" << report.summary.improved;
+    oss << ",\"regressed\":" << report.summary.regressed;
+    oss << ",\"added\":" << report.summary.added;
+    oss << ",\"removed\":" << report.summary.removed;
+    oss << "},\"records\":[";
+    for (size_t i = 0; i < report.records.size(); ++i) {
+      if (i) oss << ',';
+      oss << format_validation_record_diff_json(report.records[i]);
+    }
+    oss << "]}";
+    return oss.str();
+  }
+
+  inline std::string format_validation_comparison_summary_text(
+      const ValidationComparisonReport &report) {
+    std::ostringstream oss;
+    oss << "suite=" << report.suite.asChars();
+    oss << " accepted=" << (report.accepted ? "true" : "false");
+    oss << " total=" << report.summary.total;
+    oss << " unchanged=" << report.summary.unchanged;
+    oss << " improved=" << report.summary.improved;
+    oss << " regressed=" << report.summary.regressed;
+    oss << " added=" << report.summary.added;
+    oss << " removed=" << report.summary.removed;
+
+    for (const auto &record : report.records) {
+      oss << "\n- [" << validation_diff_status_name(record.status) << "] ";
+      oss << record.name.asChars();
+      if (record.recordId.size()) oss << " recordId=" << record.recordId.asChars();
+      if (record.backend.size()) oss << " backend=" << record.backend.asChars();
+      if (record.executor.size()) oss << " executor=" << record.executor.asChars();
+      if (record.target.size()) oss << " target=" << record.target.asChars();
+      oss << " kind=" << validation_record_kind_name(record.kind);
+      oss << " baselineOutcome=" << validation_outcome_name(record.baselineOutcome);
+      oss << " currentOutcome=" << validation_outcome_name(record.currentOutcome);
+
+      for (const auto &measurement : record.measurements) {
+        oss << "\n  * [" << validation_diff_status_name(measurement.status) << "] ";
+        oss << measurement.name.asChars();
+        if (measurement.unit.size()) oss << " unit=" << measurement.unit.asChars();
+        if (measurement.hasBaseline) oss << " baselineValue=" << measurement.baselineValue;
+        if (measurement.hasCurrent) oss << " currentValue=" << measurement.currentValue;
+        oss << " delta=" << measurement.delta;
+        oss << " baselineAccepted=" << (measurement.baselineAccepted ? "true" : "false");
+        oss << " currentAccepted=" << (measurement.currentAccepted ? "true" : "false");
+      }
     }
     return oss.str();
   }

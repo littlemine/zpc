@@ -1,4 +1,6 @@
 #include <cassert>
+#include <filesystem>
+#include <string>
 #include <vector>
 
 #include "zensim/execution/AsyncRuntimeAbi.hpp"
@@ -152,6 +154,7 @@ int main() {
          engine, zs::zpc_runtime_make_string_view(zs::zpc_runtime_validation_extension_name),
          &validationExtensionDesc)
        == ZPC_RUNTIME_ABI_OK);
+    assert(validationExtensionDesc.extension_version_minor == 1);
     const auto *validationExtension =
       static_cast<const zpc_runtime_validation_extension_v1_t *>(validationExtensionDesc.function_table);
     assert(validationExtension != nullptr);
@@ -386,11 +389,63 @@ int main() {
     assert(text.find("suite=async-abi") != std::string::npos);
     assert(text.find("host-export") != std::string::npos);
 
+        zs::ValidationSuiteReport baselineReport = report;
+        baselineReport.records[0].outcome = zs::ValidationOutcome::fail;
+        baselineReport.records[0].measurements[0].value = 96.0;
+        const auto baselinePath = std::filesystem::temp_directory_path()
+            / "zpc_async_runtime_abi_baseline.json";
+        std::error_code removeError;
+        std::filesystem::remove(baselinePath, removeError);
+        std::string persistenceError;
+        assert(zs::save_validation_report_json_file(baselineReport, baselinePath.string(),
+                      &persistenceError));
+        assert(persistenceError.empty());
+
+        zpc_runtime_validation_comparison_summary_v1_t comparisonSummary{};
+        comparisonSummary.header = zpc_runtime_make_header(
+       (uint32_t)sizeof(zpc_runtime_validation_comparison_summary_v1_t));
+        assert(validationExtension->query_comparison_summary(engine, &comparisonSummary)
+          == ZPC_RUNTIME_ABI_UNSUPPORTED_OPERATION);
+
+        assert(validationExtension->compare_baseline_file(
+         engine, zs::zpc_runtime_make_string_view(baselinePath.string().c_str()))
+          == ZPC_RUNTIME_ABI_OK);
+        comparisonSummary.header = zpc_runtime_make_header(
+       (uint32_t)sizeof(zpc_runtime_validation_comparison_summary_v1_t));
+        assert(validationExtension->query_comparison_summary(engine, &comparisonSummary)
+          == ZPC_RUNTIME_ABI_OK);
+        assert(string_from_view(comparisonSummary.suite) == "async-abi");
+        assert(comparisonSummary.accepted == 1);
+        assert(comparisonSummary.total == 1);
+        assert(comparisonSummary.improved == 1);
+        assert(comparisonSummary.regressed == 0);
+
+        zpc_runtime_string_view_t comparisonJsonView{};
+        assert(validationExtension->query_comparison_json(engine, &comparisonJsonView)
+          == ZPC_RUNTIME_ABI_OK);
+        const auto comparisonJson = string_from_view(comparisonJsonView);
+        assert(comparisonJson.find("\"improved\":1") != std::string::npos);
+        assert(comparisonJson.find("\"baselineOutcome\":\"fail\"") != std::string::npos);
+        assert(comparisonJson.find("\"currentOutcome\":\"pass\"") != std::string::npos);
+
+        zpc_runtime_string_view_t comparisonTextView{};
+        assert(validationExtension->query_comparison_text(engine, &comparisonTextView)
+          == ZPC_RUNTIME_ABI_OK);
+        const auto comparisonText = string_from_view(comparisonTextView);
+        assert(comparisonText.find("accepted=true") != std::string::npos);
+        assert(comparisonText.find("improved=1") != std::string::npos);
+
+        std::filesystem::remove(baselinePath, removeError);
+
     zs::clear_async_runtime_validation_report(engine);
     validationSummary.header =
       zpc_runtime_make_header((uint32_t)sizeof(zpc_runtime_validation_summary_v1_t));
     assert(validationExtension->query_summary(engine, &validationSummary)
            == ZPC_RUNTIME_ABI_UNSUPPORTED_OPERATION);
+        comparisonSummary.header = zpc_runtime_make_header(
+       (uint32_t)sizeof(zpc_runtime_validation_comparison_summary_v1_t));
+        assert(validationExtension->query_comparison_summary(engine, &comparisonSummary)
+          == ZPC_RUNTIME_ABI_UNSUPPORTED_OPERATION);
 
     zs::destroy_async_runtime_abi_engine(engine);
 
