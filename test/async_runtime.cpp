@@ -311,6 +311,28 @@ static void test_scheduler_pressure() {
   assert(counter.load() == N);
 }
 
+static void test_scheduler_pause() {
+  AsyncScheduler scheduler{4};
+  atomic<int> counter{0};
+  constexpr int N = 32;
+
+  scheduler.pause();
+  assert(scheduler.paused());
+
+  for (int i = 0; i < N; ++i) {
+    scheduler.enqueue([&counter]() { counter.fetch_add(1); });
+  }
+
+  std::this_thread::sleep_for(std::chrono::milliseconds(20));
+  require(counter.load() == 0, "scheduler executed work while paused");
+  require(scheduler.numJobsRemaining() == N, "scheduler lost queued work while paused");
+
+  scheduler.resume();
+  require(!scheduler.paused(), "scheduler did not resume");
+  scheduler.wait();
+  require(counter.load() == N, "scheduler did not drain paused work after resume");
+}
+
 static void test_scheduler_runtime_interop() {
   AsyncScheduler scheduler{2};
   AsyncRuntime runtime{2};
@@ -415,6 +437,7 @@ int main() {
   run("generator", test_generator);
   run("scheduler", test_scheduler);
   run("scheduler_pressure", test_scheduler_pressure);
+  run("scheduler_pause", test_scheduler_pause);
   run("scheduler_runtime_interop", test_scheduler_runtime_interop);
   run("task_graph", test_task_graph);
 

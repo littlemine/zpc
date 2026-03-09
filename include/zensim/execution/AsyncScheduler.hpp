@@ -199,6 +199,14 @@ namespace zs {
     i32 current_worker_id() const noexcept {
       return _currentScheduler == this ? _currentWorkerId : -1;
     }
+    void pause() noexcept { _pauseState.store(1); }
+    void resume() noexcept {
+      if (_pauseState.exchange(0) != 0) {
+        _pauseState.notify_all();
+        wake_any_worker_();
+      }
+    }
+    bool paused() const noexcept { return _pauseState.load() != 0; }
     i32 resolve_worker_id(i32 workerId = -1) const noexcept {
       if (workerId >= 0) return workerId;
       return current_worker_id();
@@ -217,6 +225,7 @@ namespace zs {
     ConcurrentQueue<TaskHandle, 1024> _globalQueue{};
     atomic_size_t _remainingJobs{0};
     Atomic<u32> _stealCounter{0};
+    Atomic<u32> _pauseState{0};
   };
 
   inline AsyncScheduler::AsyncScheduler(size_t numThreads) {
@@ -241,6 +250,8 @@ namespace zs {
 
   inline void AsyncScheduler::shutdown() {
     if (!_workers) return;
+    _pauseState.store(0);
+    _pauseState.notify_all();
     for (size_t i = 0; i < _numWorkers; ++i) _workers[i].thread.request_stop();
     for (size_t i = 0; i < _numWorkers; ++i) {
       _workers[i].status.store(2);
@@ -378,26 +389,29 @@ namespace zs {
     } scope{this, workerIndex};
 
     while (!self.stop_requested()) {
+      worker.status.store(1);
+
+      while (_pauseState.load() != 0 && !self.stop_requested()) _pauseState.wait(1);
+      if (self.stop_requested()) break;
+
       TaskHandle task;
       if (worker.localQueue.try_dequeue(task)) {
-        worker.status.store(1);
         process_(worker, task);
         continue;
       }
 
       if (_globalQueue.try_dequeue(task)) {
-        worker.status.store(1);
         process_(worker, task);
         continue;
       }
 
       if (try_steal_(worker, task)) {
-        worker.status.store(1);
         process_(worker, task);
         continue;
       }
 
-      worker.status.store(0);
+      u32 expected = 1;
+      if (!worker.status.compare_exchange_strong(expected, 0)) continue;
       worker.status.wait(0);
     }
   }
