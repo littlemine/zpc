@@ -47,6 +47,12 @@ target_compile_features(asyncatomicbenchmark PRIVATE cxx_std_20)
 
 add_dependencies(zensim asyncatomicbenchmark)
 
+add_executable(concurrentqueuebenchmark concurrent_queue_benchmark.cpp)
+target_link_libraries(concurrentqueuebenchmark PRIVATE zpc)
+target_compile_features(concurrentqueuebenchmark PRIVATE cxx_std_20)
+
+add_dependencies(zensim concurrentqueuebenchmark)
+
 add_executable(smartpointertest smart_pointers.cpp)
 target_link_libraries(smartpointertest PRIVATE zpcbase)
 
@@ -126,6 +132,13 @@ target_link_libraries(validationpersistence PRIVATE zpc_validation_core)
 
 add_test(ZsValidationPersistence validationpersistence)
 add_dependencies(zensim validationpersistence)
+
+# interface services
+add_executable(interfaceservices interface_services.cpp)
+target_link_libraries(interfaceservices PRIVATE zpc zpc_canary_core)
+
+add_test(ZsInterfaceServices interfaceservices)
+add_dependencies(zensim interfaceservices)
 
 # binary search
 add_executable(binarysearchtest binary_search.cpp)

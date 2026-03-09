@@ -293,6 +293,14 @@ set(ZENSIM_LIBRARY_ASYNC_RUNTIME_CORE_INCLUDE_FILES
   execution/AsyncRuntimeAbi.hpp
   execution/AsyncScheduler.hpp
 )
+set(ZENSIM_LIBRARY_INTERFACE_SERVICE_INCLUDE_FILES
+  interface/InterfaceServices.hpp
+  interface/LocalInterfaceServices.hpp
+)
+set(ZENSIM_LIBRARY_CANARY_CORE_INCLUDE_FILES
+  interface/CanaryScenario.hpp
+  interface/LocalCanaryService.hpp
+)
 set(ZENSIM_LIBRARY_IO_INCLUDE_FILES
   io/IO.h
   io/MeshIO.hpp
@@ -497,6 +505,22 @@ target_sources(zpc_async_runtime_core
   ${ZENSIM_LIBRARY_ASYNC_RUNTIME_CORE_INCLUDE_FILES}
 )
 target_link_libraries(zpc_async_runtime_core INTERFACE zpccore_foundation zpc_validation_core)
+
+# Milestone 4 and 6 skeletons stay additive and opt-in so interface-surface work can
+# progress without reshaping existing compatibility assemblies or async internals.
+add_library(zpc_interface_services INTERFACE)
+target_sources(zpc_interface_services
+  INTERFACE
+  ${ZENSIM_LIBRARY_INTERFACE_SERVICE_INCLUDE_FILES}
+)
+target_link_libraries(zpc_interface_services INTERFACE zpc_async_runtime_core)
+
+add_library(zpc_canary_core INTERFACE)
+target_sources(zpc_canary_core
+  INTERFACE
+  ${ZENSIM_LIBRARY_CANARY_CORE_INCLUDE_FILES}
+)
+target_link_libraries(zpc_canary_core INTERFACE zpc_interface_services)
 
 # ############
 # zpc: core #
