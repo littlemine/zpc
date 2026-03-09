@@ -1,6 +1,9 @@
 #pragma once
 
+#include <cerrno>
+#include <cstdlib>
 #include <mutex>
+#include <unordered_map>
 #include <vector>
 
 #include "zensim/interface/CanaryScenario.hpp"
@@ -22,6 +25,13 @@ namespace zs {
         }
       }
       _scenarios.push_back(zs::move(descriptor));
+    }
+
+    void register_baseline(const SmallString &baselineId, ValidationSuiteReport report) {
+      if (baselineId.size() == 0) return;
+      report.refresh_summary();
+      std::lock_guard<std::mutex> lock(_mutex);
+      _baselines.insert_or_assign(baselineId.asChars(), zs::move(report));
     }
 
     std::vector<CanaryScenarioDescriptor> list_scenarios(
@@ -66,6 +76,42 @@ namespace zs {
         return result;
       }
 
+      ValidationRecord schemaRecord{};
+      schemaRecord.recordId = scenario.scenarioId;
+      schemaRecord.suite = scenario.scenarioId;
+      schemaRecord.name = "scenario_schema";
+      schemaRecord.kind = ValidationRecordKind::validation;
+      schemaRecord.outcome = ValidationOutcome::pass;
+      schemaRecord.note = "local_canary_schema";
+
+      bool accepted = true;
+      for (const auto &parameter : scenario.parameters) {
+        const auto *overrideValue = find_override_(request.overrides, parameter.name);
+        const auto *effectiveValue = overrideValue != nullptr ? overrideValue : default_or_null_(parameter);
+
+        ValidationMeasurement measurement{};
+        measurement.name = parameter.name;
+        measurement.unit = parameter.unit;
+        measurement.value = effectiveValue != nullptr ? 1.0 : 0.0;
+        if (parameter.required && effectiveValue == nullptr) {
+          schemaRecord.outcome = ValidationOutcome::fail;
+          accepted = false;
+        } else if (effectiveValue != nullptr && !validate_value_(parameter, *effectiveValue)) {
+          schemaRecord.outcome = ValidationOutcome::fail;
+          accepted = false;
+        }
+        schemaRecord.measurements.push_back(zs::move(measurement));
+      }
+
+      for (const auto &overrideValue : request.overrides) {
+        if (!has_parameter_(scenario, overrideValue.name)) {
+          schemaRecord.outcome = ValidationOutcome::fail;
+          accepted = false;
+        }
+      }
+
+      result.report.records.push_back(zs::move(schemaRecord));
+
       ValidationRecord record{};
       record.recordId = scenario.scenarioId;
       record.suite = scenario.scenarioId;
@@ -88,15 +134,111 @@ namespace zs {
 
       result.report.records.push_back(zs::move(record));
       result.report.refresh_summary();
-      result.accepted = result.report.summary.failed == 0 && result.report.summary.errored == 0;
-      _services.publish_validation(request.session, result.report);
+      result.accepted = accepted && result.report.summary.failed == 0 && result.report.summary.errored == 0;
+
+      const auto baselineKey = request.baselineId.size() ? request.baselineId : scenario.scenarioId;
+      ValidationComparisonReport comparison{};
+      const auto *baseline = find_baseline_(baselineKey);
+      if (request.compareAgainstBaseline && baseline != nullptr) {
+        comparison = compare_validation_reports(*baseline, result.report);
+        result.comparison = comparison;
+        result.hasComparison = true;
+        result.accepted = result.accepted && comparison.accepted;
+        _services.publish_validation(request.session, result.report, &comparison);
+      } else {
+        _services.publish_validation(request.session, result.report);
+      }
       return result;
     }
 
   private:
+    static const SmallString *find_override_(const std::vector<CanaryParameterOverride> &overrides,
+                                             const SmallString &name) {
+      for (const auto &overrideValue : overrides)
+        if (overrideValue.name == name) return &overrideValue.value;
+      return nullptr;
+    }
+
+    static const SmallString *default_or_null_(const CanaryParameterDescriptor &parameter) {
+      return parameter.defaultValue.size() != 0 ? &parameter.defaultValue : nullptr;
+    }
+
+    static bool has_parameter_(const CanaryScenarioDescriptor &scenario, const SmallString &name) {
+      for (const auto &parameter : scenario.parameters)
+        if (parameter.name == name) return true;
+      return false;
+    }
+
+    static bool parse_integer_(const SmallString &value, long long *parsed) {
+      if (parsed == nullptr || value.size() == 0) return false;
+      char *end = nullptr;
+      errno = 0;
+      const auto result = std::strtoll(value.asChars(), &end, 10);
+      if (errno != 0 || end == value.asChars() || *end != '\0') return false;
+      *parsed = result;
+      return true;
+    }
+
+    static bool parse_double_(const SmallString &value, double *parsed) {
+      if (parsed == nullptr || value.size() == 0) return false;
+      char *end = nullptr;
+      errno = 0;
+      const auto result = std::strtod(value.asChars(), &end);
+      if (errno != 0 || end == value.asChars() || *end != '\0') return false;
+      *parsed = result;
+      return true;
+    }
+
+    static bool validate_value_(const CanaryParameterDescriptor &parameter, const SmallString &value) {
+      switch (parameter.kind) {
+        case CanaryParameterKind::boolean:
+          return value == "true" || value == "false" || value == "1" || value == "0";
+        case CanaryParameterKind::integer: {
+          long long parsed = 0;
+          if (!parse_integer_(value, &parsed)) return false;
+          long long minimum = 0;
+          long long maximum = 0;
+          if (parameter.minValue.size() != 0 && parse_integer_(parameter.minValue, &minimum)
+              && parsed < minimum)
+            return false;
+          if (parameter.maxValue.size() != 0 && parse_integer_(parameter.maxValue, &maximum)
+              && parsed > maximum)
+            return false;
+          return true;
+        }
+        case CanaryParameterKind::floating_point: {
+          double parsed = 0.0;
+          if (!parse_double_(value, &parsed)) return false;
+          double minimum = 0.0;
+          double maximum = 0.0;
+          if (parameter.minValue.size() != 0 && parse_double_(parameter.minValue, &minimum)
+              && parsed < minimum)
+            return false;
+          if (parameter.maxValue.size() != 0 && parse_double_(parameter.maxValue, &maximum)
+              && parsed > maximum)
+            return false;
+          return true;
+        }
+        case CanaryParameterKind::enumeration:
+          for (const auto &option : parameter.options)
+            if (option.value == value) return true;
+          return false;
+        case CanaryParameterKind::string:
+        default:
+          return true;
+      }
+    }
+
+    const ValidationSuiteReport *find_baseline_(const SmallString &baselineId) const {
+      std::lock_guard<std::mutex> lock(_mutex);
+      auto it = _baselines.find(baselineId.asChars());
+      return it == _baselines.end() ? nullptr : &it->second;
+    }
+
     LocalInterfaceServices &_services;
     mutable std::mutex _mutex{};
     std::vector<CanaryScenarioDescriptor> _scenarios{};
+    std::unordered_map<std::string, ValidationSuiteReport> _baselines{};
   };
 
 }  // namespace zs

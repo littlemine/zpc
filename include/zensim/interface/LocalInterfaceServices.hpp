@@ -114,6 +114,8 @@ namespace zs {
       if (submission.desc.label.size() == 0) submission.desc.label = "submission";
       const auto executorName = submission.executor;
       const auto submissionLabel = submission.desc.label;
+      const auto submissionQueue = submission.desc.queue;
+      const auto submissionBackend = infer_backend_(executorName, submission.endpoint);
       record.cancellation = AsyncStopSource{};
       submission.cancellation = record.cancellation.token();
       remember_executor(submission.executor);
@@ -123,6 +125,8 @@ namespace zs {
       record.handle = handle;
       record.executor = submission_executor_name_(handle, executorName);
       record.label = submissionLabel;
+      record.backend = submissionBackend;
+      record.queue = submissionQueue;
       {
         std::lock_guard<std::mutex> lock(_mutex);
         auto *state = find_session_(session);
@@ -142,8 +146,8 @@ namespace zs {
       if (it == state->submissions.end()) return false;
       summary->submissionId = submissionId;
       summary->status = it->second.handle.status();
-      summary->backend = AsyncBackend::inline_host;
-      summary->queue = AsyncQueueClass::control;
+      summary->backend = it->second.backend;
+      summary->queue = it->second.queue;
       summary->executor = it->second.executor;
       summary->label = it->second.label;
       return true;
@@ -232,6 +236,8 @@ namespace zs {
       AsyncStopSource cancellation{};
       SmallString executor{"inline"};
       SmallString label{"submission"};
+      AsyncBackend backend{AsyncBackend::inline_host};
+      AsyncQueueClass queue{AsyncQueueClass::control};
     };
 
     struct SessionState {
@@ -255,6 +261,15 @@ namespace zs {
 
     static SmallString submission_executor_name_(const AsyncSubmissionHandle &, const SmallString &fallback) {
       return fallback.size() ? fallback : SmallString{"inline"};
+    }
+
+    static AsyncBackend infer_backend_(const SmallString &executor, const AsyncEndpoint &endpoint) {
+      if (endpoint.backend != AsyncBackend::inline_host || endpoint.nativeHandle != nullptr
+          || endpoint.device >= 0 || endpoint.stream >= 0)
+        return endpoint.backend;
+      if (executor == "thread_pool") return AsyncBackend::thread_pool;
+      if (executor == "inline") return AsyncBackend::inline_host;
+      return endpoint.backend;
     }
 
     bool query_resource_locked_(AsyncResourceHandle resource, InterfaceResourceInfo *info) const {
