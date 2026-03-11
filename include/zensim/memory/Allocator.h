@@ -249,7 +249,11 @@ namespace zs {
     static constexpr size_t s_chunk_granularity_bits = vmr_t::s_chunk_granularity_bits;
     static constexpr size_t s_chunk_granularity = vmr_t::s_chunk_granularity;
 
-    ZPC_CORE_API arena_virtual_memory_resource(ProcID did, size_t space);
+    /// @param did   Processor ID (unused on host, reserved for symmetry).
+    /// @param space Total address space to reserve (bytes).
+    /// @param hint  Allocation hint (e.g. huge_pages for MEM_LARGE_PAGES).
+    ZPC_CORE_API arena_virtual_memory_resource(ProcID did, size_t space,
+                                               VmrAllocHint hint = VmrAllocHint::none);
     ZPC_CORE_API ~arena_virtual_memory_resource();
     ZPC_CORE_API bool do_check_residency(size_t offset, size_t bytes) const override;
     ZPC_CORE_API bool do_commit(size_t offset, size_t bytes) override;
@@ -260,22 +264,32 @@ namespace zs {
 
     void *do_allocate(size_t /*bytes*/, size_t /*alignment*/) override { return _addr; }
 
+    /// Page-level protection via VirtualProtect.
+    ZPC_CORE_API bool do_protect(size_t offset, size_t bytes, PageAccess access) override;
+
+    size_t do_reserved_bytes() const noexcept override { return _reservedSpace; }
+
     size_t _granularity;
     const size_t _reservedSpace;
     void *_addr;
     std::vector<u64> _activeChunkMasks;
     ProcID _did;
+    VmrAllocHint _allocHint{VmrAllocHint::none};
   };
 
 #elif defined(ZS_PLATFORM_UNIX)
 
   template <> struct arena_virtual_memory_resource<host_mem_tag>
-      : vmr_t {  // default impl falls back to
+      : vmr_t {
     /// 2MB chunk granularity
     static constexpr size_t s_chunk_granularity_bits = vmr_t::s_chunk_granularity_bits;
     static constexpr size_t s_chunk_granularity = vmr_t::s_chunk_granularity;
 
-    ZPC_CORE_API arena_virtual_memory_resource(ProcID did, size_t space);
+    /// @param did   Processor ID (unused on host, reserved for symmetry).
+    /// @param space Total address space to reserve (bytes).
+    /// @param hint  Allocation hint (e.g. huge_pages for MAP_HUGETLB).
+    ZPC_CORE_API arena_virtual_memory_resource(ProcID did, size_t space,
+                                               VmrAllocHint hint = VmrAllocHint::none);
     ZPC_CORE_API ~arena_virtual_memory_resource();
     ZPC_CORE_API bool do_check_residency(size_t offset, size_t bytes) const override;
     ZPC_CORE_API bool do_commit(size_t offset, size_t bytes) override;
@@ -286,11 +300,17 @@ namespace zs {
 
     void *do_allocate(size_t /*bytes*/, size_t /*alignment*/) override { return _addr; }
 
+    /// Page-level protection via mprotect.
+    ZPC_CORE_API bool do_protect(size_t offset, size_t bytes, PageAccess access) override;
+
+    size_t do_reserved_bytes() const noexcept override { return _reservedSpace; }
+
     size_t _granularity;
     const size_t _reservedSpace;
     void *_addr;
     std::vector<u64> _activeChunkMasks;
     ProcID _did;
+    VmrAllocHint _allocHint{VmrAllocHint::none};
   };
 #endif
 

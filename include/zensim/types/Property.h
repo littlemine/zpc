@@ -3,17 +3,34 @@
 
 namespace zs {
 
-  // HOST, DEVICE, UM
-  enum struct memsrc_e : unsigned char { host = 0, device, um, shared = um };
+  // HOST, DEVICE, UM, FILE_MAPPED, SHARED_IPC
+  //
+  // NOTE: When adding new entries, update:
+  //   - MemoryBackendRegistry::_available[] array size
+  //   - MemoryResource.h: to_memory_source_tag(), memory_source_tag[]
+  //   - is_memory_tag() below
+  enum struct memsrc_e : unsigned char {
+    host = 0,
+    device,
+    um,
+    file_mapped,    ///< Memory-mapped file (MappedFile : vmr_t)
+    shared_ipc,     ///< Cross-process shared memory (SharedMemoryRegion)
+    //
+    shared = um     ///< Legacy alias for unified memory
+  };
   using host_mem_tag = wrapv<memsrc_e::host>;
   using device_mem_tag = wrapv<memsrc_e::device>;
   using um_mem_tag = wrapv<memsrc_e::um>;
   using shared_mem_tag = wrapv<memsrc_e::shared>;
+  using file_mapped_mem_tag = wrapv<memsrc_e::file_mapped>;
+  using shared_ipc_mem_tag = wrapv<memsrc_e::shared_ipc>;
   /// suggested
   constexpr auto mem_host_c = host_mem_tag{};
   constexpr auto mem_device_c = device_mem_tag{};
   constexpr auto mem_um_c = um_mem_tag{};
   constexpr auto mem_shared_c = shared_mem_tag{};
+  constexpr auto mem_file_mapped_c = file_mapped_mem_tag{};
+  constexpr auto mem_shared_ipc_c = shared_ipc_mem_tag{};
   /// deprecated
   constexpr auto mem_host = mem_host_c;
   constexpr auto mem_device = mem_device_c;
@@ -22,7 +39,8 @@ namespace zs {
 
   template <typename Tag> constexpr bool is_memory_tag(Tag = {}) noexcept {
     return (is_same_v<Tag, host_mem_tag> || is_same_v<Tag, device_mem_tag>
-            || is_same_v<Tag, um_mem_tag>);
+            || is_same_v<Tag, um_mem_tag> || is_same_v<Tag, file_mapped_mem_tag>
+            || is_same_v<Tag, shared_ipc_mem_tag>);
   }
 
   enum struct execspace_e : unsigned char { host = 0, seq = 0, openmp, cuda, musa, rocm, sycl };

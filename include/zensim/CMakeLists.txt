@@ -251,6 +251,7 @@ set(ZENSIM_LIBRARY_FOUNDATION_INCLUDE_FILES
   execution/Stacktrace.hpp
   execution/Atomics.hpp
   execution/Intrinsics.hpp
+  io/ByteStream.hpp
   io/Filesystem.hpp
   io/IO.h
   Logger.hpp
@@ -271,6 +272,7 @@ set(ZENSIM_LIBRARY_FOUNDATION_INCLUDE_FILES
   math/Vec.h
   math/VecInterface.hpp
   memory/Allocator.h
+  memory/MappedFile.hpp
   memory/MemOps.hpp
   memory/MemoryBackend.h
   memory/MemoryResource.h
@@ -303,6 +305,11 @@ set(ZENSIM_LIBRARY_ASYNC_RUNTIME_CORE_INCLUDE_FILES
   execution/AsyncRuntime.hpp
   execution/AsyncRuntimeAbi.hpp
   execution/AsyncScheduler.hpp
+  execution/ExecutionGraph.hpp
+)
+set(ZENSIM_LIBRARY_PROCESS_INCLUDE_FILES
+  process/SharedMemoryRegion.hpp
+  process/NamedChannel.hpp
 )
 set(ZENSIM_LIBRARY_INTERFACE_SERVICE_INCLUDE_FILES
   interface/InterfaceServices.hpp
@@ -539,6 +546,16 @@ target_sources(zpc_canary_core
 )
 target_link_libraries(zpc_canary_core INTERFACE zpc_interface_services)
 
+add_library(zpc_process INTERFACE)
+target_sources(zpc_process
+  INTERFACE
+  ${ZENSIM_LIBRARY_PROCESS_INCLUDE_FILES}
+)
+target_link_libraries(zpc_process INTERFACE zpcbase)
+if(NOT WIN32)
+  target_link_libraries(zpc_process INTERFACE rt)
+endif()
+
 # ############
 # zpc: core #
 # ############
@@ -567,7 +584,7 @@ if(ZS_ENABLE_PCH)
   )
 endif(ZS_ENABLE_PCH)
 
-target_link_libraries(zpccore PUBLIC zpcbase zpccore_foundation zpc_validation_core zpc_async_runtime_core)
+target_link_libraries(zpccore PUBLIC zpcbase zpccore_foundation zpc_validation_core zpc_async_runtime_core zpc_process)
 target_link_libraries(zpccore PRIVATE zswhereami)
 if(WIN32)
   # Required for WaitOnAddress / WakeByAddress* (futex primitives) in ConcurrencyPrimitive.cpp

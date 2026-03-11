@@ -88,7 +88,7 @@ namespace zs {
     std::unordered_map<unsigned char, vmr_factory_fn> _arenaVmrFactories;
     std::unordered_map<unsigned char, MemoryOpsBackend> _memOps;
 
-    bool _available[3]{};  // indexed by memsrc_e
+    bool _available[5]{};  // indexed by memsrc_e (host, device, um, file_mapped, shared_ipc)
 
     /// exec-space -> set of compatible mem-spaces
     std::unordered_map<unsigned char, std::vector<memsrc_e>> _execMemCompat;

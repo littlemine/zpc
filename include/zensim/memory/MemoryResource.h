@@ -48,6 +48,23 @@ namespace zs {
     return !(l == r);
   }
 
+  /// Page-level access protection flags.
+  /// Maps to VirtualProtect (Windows) / mprotect (POSIX).
+  enum class PageAccess : unsigned char {
+    none       = 0,       ///< PAGE_NOACCESS / PROT_NONE
+    read       = 1,       ///< PAGE_READONLY / PROT_READ
+    read_write = 2,       ///< PAGE_READWRITE / PROT_READ|PROT_WRITE
+    read_exec  = 3,       ///< PAGE_EXECUTE_READ / PROT_READ|PROT_EXEC
+    read_write_exec = 4,  ///< PAGE_EXECUTE_READWRITE / PROT_READ|PROT_WRITE|PROT_EXEC
+  };
+
+  /// Hints for virtual memory allocation behaviour.
+  enum class VmrAllocHint : unsigned char {
+    none       = 0,
+    huge_pages = 1,   ///< MEM_LARGE_PAGES (Windows) / MAP_HUGETLB (Linux)
+    no_reserve = 2,   ///< Reserve address space without backing pages
+  };
+
   struct ZPC_CORE_API vmr_t : public mr_t {
     static constexpr size_t s_chunk_granularity_bits = (size_t)21;
     static constexpr size_t s_chunk_granularity = (size_t)1 << s_chunk_granularity_bits;
@@ -67,6 +84,22 @@ namespace zs {
     }
     void* address(size_t offset = 0) const { return do_address(offset); }
 
+    /// Change page protection for a region within this virtual allocation.
+    /// @param offset   Byte offset (must be page-aligned for the platform).
+    /// @param bytes    Size of region to protect.
+    /// @param access   Desired protection mode.
+    /// @return true on success.
+    ///
+    /// Default implementation returns false (not supported).  Backends
+    /// that manage real virtual memory (host arena, mapped file) override.
+    bool protect(size_t offset, size_t bytes, PageAccess access) {
+      return do_protect(offset, bytes, access);
+    }
+
+    /// Query the total reserved address space (bytes).
+    /// Returns 0 if not applicable.
+    size_t reserved_bytes() const noexcept { return do_reserved_bytes(); }
+
   private:
     void* do_allocate(size_t, size_t) override { return nullptr; }
     void do_deallocate(void*, size_t, size_t) override {}
@@ -75,13 +108,20 @@ namespace zs {
     virtual bool do_evict(size_t, size_t) = 0;
     virtual bool do_check_residency(size_t, size_t) const = 0;
     virtual void* do_address(size_t) const = 0;
+
+    /// Override in subclasses that support page protection changes.
+    virtual bool do_protect(size_t, size_t, PageAccess) { return false; }
+
+    /// Override to report total reserved address space.
+    virtual size_t do_reserved_bytes() const noexcept { return 0; }
   };
 
   // using unsynchronized_pool_resource = pmr::unsynchronized_pool_resource;
   // using synchronized_pool_resource = pmr::synchronized_pool_resource;
   // template <typename T> using object_allocator = pmr::polymorphic_allocator<T>;
 
-  using mem_tags = variant<host_mem_tag, device_mem_tag, um_mem_tag>;
+  using mem_tags = variant<host_mem_tag, device_mem_tag, um_mem_tag,
+                          file_mapped_mem_tag, shared_ipc_mem_tag>;
 
   constexpr mem_tags to_memory_source_tag(memsrc_e loc) noexcept {
     mem_tags ret{};
@@ -95,14 +135,27 @@ namespace zs {
       case memsrc_e::um:
         ret = mem_um;
         break;
+      case memsrc_e::file_mapped:
+        ret = mem_file_mapped_c;
+        break;
+      case memsrc_e::shared_ipc:
+        ret = mem_shared_ipc_c;
+        break;
       default:;
     }
     return ret;
   }
 
-  constexpr const char* memory_source_tag[] = {"HOST", "DEVICE", "UM"};
+  /// Human-readable names indexed by memsrc_e.
+  constexpr const char* memory_source_tag[] = {
+    "HOST", "DEVICE", "UM", "FILE_MAPPED", "SHARED_IPC"
+  };
   constexpr const char* get_memory_tag_name(memsrc_e loc) {
-    return memory_source_tag[static_cast<unsigned char>(loc)];
+    const auto idx = static_cast<unsigned char>(loc);
+    // Guard against the legacy `shared = um` alias which maps to idx 2.
+    if (idx < sizeof(memory_source_tag) / sizeof(memory_source_tag[0]))
+      return memory_source_tag[idx];
+    return "UNKNOWN";
   }
 
   constexpr memsrc_e get_memory_tag_enum(const mem_tags& tag) {
@@ -112,6 +165,10 @@ namespace zs {
       return memsrc_e::device;
     else if (std::holds_alternative<um_mem_tag>(tag))
       return memsrc_e::um;
+    else if (std::holds_alternative<file_mapped_mem_tag>(tag))
+      return memsrc_e::file_mapped;
+    else if (std::holds_alternative<shared_ipc_mem_tag>(tag))
+      return memsrc_e::shared_ipc;
     return memsrc_e::host;
   }
 

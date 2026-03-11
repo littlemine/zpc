@@ -147,6 +147,14 @@ target_link_libraries(binarysearchtest PRIVATE zpc)
 add_test(ZsBinarySearch binarysearchtest)
 add_dependencies(zensim binarysearchtest)
 
+# async concurrency use-case tests (with process-level IPC)
+add_executable(asyncconcurrencyusecases async_concurrency_usecases.cpp)
+target_link_libraries(asyncconcurrencyusecases PRIVATE zpc)
+target_compile_features(asyncconcurrencyusecases PRIVATE cxx_std_20)
+
+add_test(ZsAsyncConcurrencyUsecases asyncconcurrencyusecases)
+add_dependencies(zensim asyncconcurrencyusecases)
+
 # sycl backend
 if(ZS_ENABLE_SYCL_ONEAPI OR ZS_ENABLE_SYCL_ACPP)
     #
