@@ -82,21 +82,29 @@ set(ZENSIM_LIBRARY_ZPC_SOURCE_FILES
   container/Vector.cpp
   container/TileVector.cpp
   container/DenseField.cpp
-  geometry/SparseGrid.cpp
-  geometry/AdaptiveGrid.cpp
-  geometry/Collider.cpp
-
-  geometry/Mesh.cpp
-  io/MeshIO.cpp
 
   math/matrix/Matrix.cpp
-  simulation/mpm/Simulator.cpp
-  simulation/sparsity/SparsityCompute.cpp
   resource/Resource.cpp
   ZpcInitialization.cpp
 )
 set(ZENSIM_LIBRARY_ZPC_VULKAN_SOURCE_FILES
+  # (kept empty; vulkan model sources moved to zpc_geometry)
+)
+# geometry module sources (built on top of zpc)
+set(ZENSIM_LIBRARY_ZPC_GEOMETRY_SOURCE_FILES
+  geometry/SparseGrid.cpp
+  geometry/AdaptiveGrid.cpp
+  geometry/Collider.cpp
+  geometry/Mesh.cpp
+  io/MeshIO.cpp
+)
+set(ZENSIM_LIBRARY_ZPC_GEOMETRY_VULKAN_SOURCE_FILES
   vulkan/VkModel.cpp
+)
+# simulation module sources (built on top of zpc)
+set(ZENSIM_LIBRARY_ZPC_SIMULATION_SOURCE_FILES
+  simulation/mpm/Simulator.cpp
+  simulation/sparsity/SparsityCompute.cpp
 )
 #set(ZENSIM_LIBRARY_ZPC_CUDA_SOURCE_FILES
 
@@ -367,14 +375,6 @@ set(ZENSIM_LIBRARY_ZPC_INCLUDE_FILES
   container/Bcht.hpp
   container/IndexBuckets.hpp
   container/RBTreeMap.hpp
-  geometry/PointDataGrid.hpp
-  geometry/OverlayGrid.hpp
-  geometry/AdaptiveGrid.hpp
-  geometry/AdaptiveGridUtils.hpp
-  geometry/Structure.hpp
-  geometry/Structurefree.hpp
-  geometry/SparseGrid.hpp
-  geometry/Collider.h
   math/matrix/SparseMatrix.hpp
   math/matrix/SparseMatrixOperations.hpp
   graph/ConnectedComponents.hpp
@@ -383,6 +383,20 @@ set(ZENSIM_LIBRARY_ZPC_INCLUDE_FILES
   resource/Resource.h
   Zpc.hpp
 
+)
+set(ZENSIM_LIBRARY_ZPC_GEOMETRY_INCLUDE_FILES
+  geometry/PointDataGrid.hpp
+  geometry/OverlayGrid.hpp
+  geometry/AdaptiveGrid.hpp
+  geometry/AdaptiveGridUtils.hpp
+  geometry/Structure.hpp
+  geometry/Structurefree.hpp
+  geometry/SparseGrid.hpp
+  geometry/Collider.h
+)
+set(ZENSIM_LIBRARY_ZPC_SIMULATION_INCLUDE_FILES
+  # simulation headers are in ZENSIM_LIBRARY_CORE_INCLUDE_FILES (zpccore)
+  # this list is for any simulation-specific additions
 )
 set(ZENSIM_LIBRARY_PY_INTEROP_INCLUDE_FILES
   py_interop/DenseFieldView.hpp
@@ -1043,13 +1057,6 @@ set_target_properties(zpc
 )
 target_link_libraries(zpc PUBLIC zpccore)
 
-if(ZS_ENABLE_VULKAN)
-
-  target_sources(zpc
-    PRIVATE ${ZENSIM_LIBRARY_ZPC_VULKAN_SOURCE_FILES}
-  )
-endif(ZS_ENABLE_VULKAN)
-
 if(ZS_ENABLE_OPENMP)
   target_link_libraries(zpc PUBLIC zpcomp)
 
@@ -1091,7 +1098,61 @@ if(ZS_ENABLE_OPENCL)
   target_link_libraries(zpc PUBLIC zpccl)
 endif(ZS_ENABLE_OPENCL)
 
-target_link_libraries(zensim INTERFACE zpc) # zpc -> zensim
+# ##############
+# zpc_geometry #
+# ##############
+if(ZS_BUILD_SHARED_LIBS)
+  add_library(zpc_geometry SHARED)
+  target_compile_definitions(zpc_geometry PRIVATE ZPC_PRIVATE ZPC_GEOMETRY_PRIVATE)
+else()
+  add_library(zpc_geometry STATIC)
+endif()
+
+target_sources(zpc_geometry
+  PRIVATE
+  ${ZENSIM_LIBRARY_ZPC_GEOMETRY_SOURCE_FILES}
+  ${ZENSIM_LIBRARY_ZPC_GEOMETRY_INCLUDE_FILES}
+)
+set_target_properties(zpc_geometry
+  PROPERTIES
+  POSITION_INDEPENDENT_CODE ON
+  RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}
+  LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}
+  ARCHIVE_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}
+)
+target_link_libraries(zpc_geometry PUBLIC zpc)
+
+if(ZS_ENABLE_VULKAN)
+  target_sources(zpc_geometry
+    PRIVATE ${ZENSIM_LIBRARY_ZPC_GEOMETRY_VULKAN_SOURCE_FILES}
+  )
+endif(ZS_ENABLE_VULKAN)
+
+# ################
+# zpc_simulation #
+# ################
+if(ZS_BUILD_SHARED_LIBS)
+  add_library(zpc_simulation SHARED)
+  target_compile_definitions(zpc_simulation PRIVATE ZPC_SIMULATION_PRIVATE)
+else()
+  add_library(zpc_simulation STATIC)
+endif()
+
+target_sources(zpc_simulation
+  PRIVATE
+  ${ZENSIM_LIBRARY_ZPC_SIMULATION_SOURCE_FILES}
+  ${ZENSIM_LIBRARY_ZPC_SIMULATION_INCLUDE_FILES}
+)
+set_target_properties(zpc_simulation
+  PROPERTIES
+  POSITION_INDEPENDENT_CODE ON
+  RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}
+  LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}
+  ARCHIVE_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}
+)
+target_link_libraries(zpc_simulation PUBLIC zpc)
+
+target_link_libraries(zensim INTERFACE zpc zpc_geometry zpc_simulation) # zpc + modules -> zensim
 if(ZS_ENABLE_CUDA)
   if(ZS_AUTO_DETECT_CUDA_ARCH)
     target_link_libraries(zensim INTERFACE zpc_cuda_arch_options)
@@ -1400,8 +1461,10 @@ if(ZS_ENABLE_JIT)
       POST_BUILD
       COMMAND ${CMAKE_COMMAND} -E copy $<TARGET_FILE:zpccore> $<TARGET_FILE_DIR:zpc_jit_clang>
       COMMAND ${CMAKE_COMMAND} -E copy $<TARGET_FILE:zpc> $<TARGET_FILE_DIR:zpc_jit_clang>
+      COMMAND ${CMAKE_COMMAND} -E copy $<TARGET_FILE:zpc_geometry> $<TARGET_FILE_DIR:zpc_jit_clang>
+      COMMAND ${CMAKE_COMMAND} -E copy $<TARGET_FILE:zpc_simulation> $<TARGET_FILE_DIR:zpc_jit_clang>
 
-      # DEPENDS zpc_jit_clang 
+      # DEPENDS zpc_jit_clang
       COMMENT "copying JIT-dependent zpc core runtime shared libraries"
     )
     if(ZS_ENABLE_OPENMP)

@@ -261,6 +261,46 @@ static_assert(false, "32-bit Windows systems are not supported")
 #define ZPC_FWD_DECL_TEMPLATE_CLASS extern template class ZPC_TEMPLATE_IMPORT
 #define ZPC_FWD_DECL_TEMPLATE_STRUCT extern template struct ZPC_TEMPLATE_IMPORT
 
+/// @note for geometry module built upon the zpc target (i.e. zpc_geometry)
+#ifdef ZPC_GEOMETRY_API
+#  undef ZPC_GEOMETRY_API
+#endif
+#ifdef ZPC_GEOMETRY_PRIVATE
+#  define ZPC_GEOMETRY_API ZPC_EXPORT
+#else
+#  define ZPC_GEOMETRY_API ZPC_IMPORT
+#endif
+
+#ifdef ZPC_GEOMETRY_TEMPLATE_EXPORT
+#  undef ZPC_GEOMETRY_TEMPLATE_EXPORT
+#endif
+#ifdef ZPC_GEOMETRY_TEMPLATE_IMPORT
+#  undef ZPC_GEOMETRY_TEMPLATE_IMPORT
+#endif
+
+#if defined(ZS_COMPILER_MSVC) && defined(ZS_BUILD_DLL)
+    #ifdef ZPC_GEOMETRY_PRIVATE
+        #define ZPC_GEOMETRY_TEMPLATE_EXPORT ZPC_EXPORT
+        #define ZPC_GEOMETRY_TEMPLATE_IMPORT
+    #else
+        #define ZPC_GEOMETRY_TEMPLATE_EXPORT
+        #define ZPC_GEOMETRY_TEMPLATE_IMPORT ZPC_IMPORT
+    #endif
+#else
+    #define ZPC_GEOMETRY_TEMPLATE_EXPORT
+    #define ZPC_GEOMETRY_TEMPLATE_IMPORT
+#endif
+
+/// @note for simulation module built upon the zpc target (i.e. zpc_simulation)
+#ifdef ZPC_SIMULATION_API
+#  undef ZPC_SIMULATION_API
+#endif
+#ifdef ZPC_SIMULATION_PRIVATE
+#  define ZPC_SIMULATION_API ZPC_EXPORT
+#else
+#  define ZPC_SIMULATION_API ZPC_IMPORT
+#endif
+
 /// @note for extension utilities built upon the zpc target (i.e. zpctool)
 #ifdef ZPC_EXTENSION_API
 #  undef ZPC_EXTENSION_API
