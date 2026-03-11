@@ -16,8 +16,8 @@ namespace zs {
       template <typename _Tp> using size_t = typename _Tp::size_type;
       template <typename _Tp> using index_t = typename _Tp::index_t;
       template <typename _Tp> using counter_t = typename _Tp::channel_counter_type;
-      template <typename _Tp> using dim_t = typename std::integral_constant<int, _Tp::dim>;
-      template <typename _Tp> using extent_t = typename std::integral_constant<int, _Tp::extent>;
+      template <typename _Tp> using dim_t = typename integral_constant<int, _Tp::dim>;
+      template <typename _Tp> using extent_t = typename integral_constant<int, _Tp::extent>;
     };
 
     using structure_view_t = decltype(proxy<space>(declval<Structure>()));
@@ -29,46 +29,46 @@ namespace zs {
     using channel_counter_type
         = detected_or_t<unsigned char, dof_detail::counter_t, structure_type>;
     static constexpr attrib_e entry_e
-        = std::is_arithmetic_v<value_type> ? attrib_e::scalar : attrib_e::vector;
+        = is_arithmetic_v<value_type> ? attrib_e::scalar : attrib_e::vector;
     static constexpr int deduced_dim = detected_or_t<
-        detected_or_t<std::integral_constant<int, 1>, dof_detail::extent_t, value_type>,
+        detected_or_t<integral_constant<int, 1>, dof_detail::extent_t, value_type>,
         dof_detail::dim_t, structure_type>::value;
 
     /// access by entry index
     template <typename svt, enable_if_t<is_same_v<svt, structure_view_t>> = 0>
     static constexpr auto get(svt obj, size_type i)
-        -> enable_if_type<std::is_convertible_v<RM_CVREF_T(obj(i)), value_type>, value_type> {
+        -> enable_if_type<is_convertible_v<RM_CVREF_T(obj(i)), value_type>, value_type> {
       return obj(i);
     }
     template <typename svt, enable_if_t<is_same_v<svt, structure_view_t>> = 0>
     static constexpr auto ref(svt obj, size_type i) -> enable_if_type<
-        std::is_reference_v<decltype(obj(i))> && is_same_v<decltype(get(obj, i)), value_type>,
+        is_reference_v<decltype(obj(i))> && is_same_v<decltype(get(obj, i)), value_type>,
         decltype(obj(i))> {
       return obj(i);
     }
     template <typename svt, enable_if_t<is_same_v<svt, structure_view_t>> = 0>
     static constexpr auto set(svt obj, size_type i, const value_type& v)
-        -> enable_if_type<std::is_assignable_v<decltype(ref(obj, i)), value_type>> {
+        -> enable_if_type<is_assignable_v<decltype(ref(obj, i)), value_type>> {
       ref(obj, i) = v;
     }
 
     /// access by channel and entry index
     template <typename svt, enable_if_t<is_same_v<svt, structure_view_t>> = 0>
     static constexpr auto get(svt obj, channel_counter_type chn, size_type i)
-        -> enable_if_type<std::is_convertible_v<RM_CVREF_T(obj(chn, i)), value_type>,
+        -> enable_if_type<is_convertible_v<RM_CVREF_T(obj(chn, i)), value_type>,
                             value_type> {
       return obj(chn, i);
     }
     template <typename svt, enable_if_t<is_same_v<svt, structure_view_t>> = 0>
     static constexpr auto ref(svt obj, channel_counter_type chn, size_type i)
-        -> enable_if_type<std::is_reference_v<decltype(
+        -> enable_if_type<is_reference_v<decltype(
                                 obj(chn, i))> && is_same_v<decltype(get(obj, chn, i)), value_type>,
                             decltype(obj(chn, i))> {
       return obj(chn, i);
     }
     template <typename svt, enable_if_t<is_same_v<svt, structure_view_t>> = 0>
     static constexpr auto set(svt obj, channel_counter_type chn, size_type i, const value_type& v)
-        -> enable_if_type<std::is_assignable_v<decltype(ref(obj, chn, i)), value_type>> {
+        -> enable_if_type<is_assignable_v<decltype(ref(obj, chn, i)), value_type>> {
       ref(obj, chn, i) = v;
     }
   };
@@ -157,15 +157,15 @@ namespace zs {
       }
     }
     template <typename V> constexpr auto set(size_type i, V&& v = {})
-        -> enable_if_type<std::is_lvalue_reference_v<decltype(ref(i))>> {
-      if constexpr ((std::is_arithmetic_v<remove_cvref_t<V>> && entry_e == attrib_e::scalar)
-                    || (!std::is_arithmetic_v<remove_cvref_t<V>> && entry_e == attrib_e::vector))
+        -> enable_if_type<is_lvalue_reference_v<decltype(ref(i))>> {
+      if constexpr ((is_arithmetic_v<remove_cvref_t<V>> && entry_e == attrib_e::scalar)
+                    || (!is_arithmetic_v<remove_cvref_t<V>> && entry_e == attrib_e::vector))
         traits::set(_structure, i, FWD(v));
       // V is a scalar
-      else if constexpr (std::is_arithmetic_v<remove_cvref_t<V>> && entry_e == attrib_e::vector)
+      else if constexpr (is_arithmetic_v<remove_cvref_t<V>> && entry_e == attrib_e::vector)
         ref(i / dim)[i % dim] = FWD(v);
       // V is a vector
-      else if constexpr (!std::is_arithmetic_v<remove_cvref_t<V>> && entry_e == attrib_e::scalar) {
+      else if constexpr (!is_arithmetic_v<remove_cvref_t<V>> && entry_e == attrib_e::scalar) {
         const size_type base = i * remove_cvref_t<V>::extent;
         for (int d = 0; d != remove_cvref_t<V>::extent; ++d) ref(base + d) = v[d];
       }
@@ -260,14 +260,14 @@ namespace zs {
         return traits::get(_structure, _chn, i);
     }
     template <typename V> constexpr auto set(size_type i, V&& v = {})
-        -> enable_if_type<std::is_lvalue_reference_v<decltype(ref(i))>> {
-      if constexpr (std::is_arithmetic_v<remove_cvref_t<V>> && entry_e == attrib_e::scalar)
+        -> enable_if_type<is_lvalue_reference_v<decltype(ref(i))>> {
+      if constexpr (is_arithmetic_v<remove_cvref_t<V>> && entry_e == attrib_e::scalar)
         traits::ref(_structure, _chn + i % dim, i / dim) = FWD(v);
       // V is a scalar
-      else if constexpr (std::is_arithmetic_v<remove_cvref_t<V>> && entry_e == attrib_e::vector)
+      else if constexpr (is_arithmetic_v<remove_cvref_t<V>> && entry_e == attrib_e::vector)
         ref(i / dim)[i % dim] = FWD(v);
       // V is a vector
-      else if constexpr (!std::is_arithmetic_v<remove_cvref_t<V>> && entry_e == attrib_e::scalar) {
+      else if constexpr (!is_arithmetic_v<remove_cvref_t<V>> && entry_e == attrib_e::scalar) {
         if constexpr (remove_cvref_t<V>::extent == dim) {
           /// more complex strategy
           if constexpr (traits::deduced_dim == dim)
@@ -277,7 +277,7 @@ namespace zs {
             for (int d = 0; d != dim; ++d) ref(base + d) = v[d];
           }
         }
-      } else if constexpr (!std::is_arithmetic_v<remove_cvref_t<V>> && entry_e == attrib_e::vector)
+      } else if constexpr (!is_arithmetic_v<remove_cvref_t<V>> && entry_e == attrib_e::vector)
         ref(i) = FWD(v);
     }
   };

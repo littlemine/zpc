@@ -8,6 +8,7 @@
 #include "VdbLevelSet.h"
 #include "zensim/Logger.hpp"
 #include "zensim/execution/Concurrency.h"
+#include "zensim/zpc_tpls/fmt/format.h"
 
 namespace zs {
 

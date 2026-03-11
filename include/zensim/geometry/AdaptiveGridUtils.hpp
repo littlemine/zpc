@@ -15,45 +15,6 @@ namespace zs {
   // ============================================================================
 
   // ============================================================================
-  // Forward declarations
-  // ============================================================================
-  template <typename ExecPol, typename AdaptiveGridT>
-  void ag_flood_fill(ExecPol &&pol, AdaptiveGridT &grid, size_t sdfChannel = 0);
-
-  template <typename ExecPol, typename AdaptiveGridT>
-  void ag_csg_union(ExecPol &&pol, AdaptiveGridT &dst, const AdaptiveGridT &src,
-                    size_t sdfChannel = 0);
-
-  template <typename ExecPol, typename AdaptiveGridT>
-  void ag_csg_intersection(ExecPol &&pol, AdaptiveGridT &dst, const AdaptiveGridT &src,
-                           size_t sdfChannel = 0);
-
-  template <typename ExecPol, typename AdaptiveGridT>
-  void ag_csg_difference(ExecPol &&pol, AdaptiveGridT &dst, const AdaptiveGridT &src,
-                         size_t sdfChannel = 0);
-
-  template <typename ExecPol, typename AdaptiveGridT>
-  void ag_dilate(ExecPol &&pol, AdaptiveGridT &grid, int iterations = 1);
-
-  template <typename ExecPol, typename AdaptiveGridT>
-  void ag_reinitialize_weno5(ExecPol &&pol, AdaptiveGridT &grid, size_t sdfChannel = 0,
-                             int iterations = 5,
-                             typename AdaptiveGridT::value_type dt = -1);
-
-  template <typename ExecPol, typename ScalarGridT, typename VelGridT>
-  void ag_advect_maccormack(ExecPol &&pol, ScalarGridT &field, const VelGridT &velocity,
-                            typename ScalarGridT::value_type dt, size_t sdfChannel = 0,
-                            size_t velChannel = 0);
-
-  template <typename ExecPol, typename AdaptiveGridT>
-  void ag_trim_narrow_band(ExecPol &&pol, AdaptiveGridT &grid, size_t sdfChannel = 0,
-                           typename AdaptiveGridT::value_type halfWidth = 3);
-
-  template <typename ExecPol, typename AdaptiveGridT>
-  void ag_extrapolate(ExecPol &&pol, AdaptiveGridT &grid, size_t sdfChannel = 0,
-                      int iterations = 3);
-
-  // ============================================================================
   //
   //  Topology Operations
   //
@@ -89,7 +50,8 @@ namespace zs {
         pol(range(nbs * bs), params, AgFillLevel<L>{});
       }
       if constexpr (L + 1 < NumLevels)
-        ag_fill_level<L + 1, NumLevels>(FWD(pol), grid, agv, chn, val);
+        ag_fill_level<L + 1, NumLevels, ExecPol, AdaptiveGridT, AgvT, space>(
+            FWD(pol), grid, agv, chn, val);
     }
   }  // namespace detail
 
@@ -98,8 +60,8 @@ namespace zs {
   void ag_fill(ExecPol &&pol, AdaptiveGridT &grid, size_t chn,
                typename AdaptiveGridT::value_type val) {
     auto agv = view<space>(grid);
-    detail::ag_fill_level<0, AdaptiveGridT::num_levels, ExecPol, AdaptiveGridT>(FWD(pol), grid,
-                                                                                 agv, chn, val);
+    detail::ag_fill_level<0, AdaptiveGridT::num_levels, ExecPol, AdaptiveGridT, decltype(agv),
+                          space>(FWD(pol), grid, agv, chn, val);
   }
 
   /// @brief Topology dilation kernel — for each active voxel at the leaf level,
@@ -152,7 +114,17 @@ namespace zs {
       auto newNbs = lev0.numBlocks();
       if (newNbs > prevNbs) {
         lev0.refitToPartition();
-        lev0.defaultInitialize();
+        // Zero-initialize only the newly added blocks (not the existing ones)
+        for (auto bi = prevNbs; bi < newNbs; ++bi) {
+          lev0.valueMask[bi].setOff();
+          lev0.childMask[bi].setOff();
+        }
+        auto gridV = view<space>(lev0.grid);
+        auto numCh = lev0.grid.numChannels();
+        for (size_t bi = prevNbs; bi < (size_t)newNbs; ++bi)
+          for (int ch = 0; ch < numCh; ++ch)
+            for (size_t ci = 0; ci < bs; ++ci)
+              gridV(ch, bi, ci) = 0;
         grid.complementTopo(FWD(pol));
       }
     }
@@ -354,7 +326,17 @@ namespace zs {
       auto newDstNbs = dstLev0.numBlocks();
       if (newDstNbs > prevDstNbs) {
         dstLev0.refitToPartition();
-        dstLev0.defaultInitialize();
+        // Zero-initialize only the newly added blocks (not the existing ones)
+        for (auto bi = prevDstNbs; bi < newDstNbs; ++bi) {
+          dstLev0.valueMask[bi].setOff();
+          dstLev0.childMask[bi].setOff();
+        }
+        auto gridV = view<space>(dstLev0.grid);
+        auto numCh = dstLev0.grid.numChannels();
+        for (size_t bi = prevDstNbs; bi < (size_t)newDstNbs; ++bi)
+          for (int ch = 0; ch < numCh; ++ch)
+            for (size_t ci = 0; ci < bs; ++ci)
+              gridV(ch, bi, ci) = 0;
         dst.complementTopo(pol);
       }
 
@@ -382,21 +364,21 @@ namespace zs {
   /// @brief CSG Union of two level set grids: dst = min(dst, src)
   template <typename ExecPol, typename AdaptiveGridT>
   void ag_csg_union(ExecPol &&pol, AdaptiveGridT &dst, const AdaptiveGridT &src,
-                    size_t sdfChannel) {
+                    size_t sdfChannel = 0) {
     detail::ag_csg_impl<0>(FWD(pol), dst, src, sdfChannel);
   }
 
   /// @brief CSG Intersection of two level set grids: dst = max(dst, src)
   template <typename ExecPol, typename AdaptiveGridT>
   void ag_csg_intersection(ExecPol &&pol, AdaptiveGridT &dst, const AdaptiveGridT &src,
-                           size_t sdfChannel) {
+                           size_t sdfChannel = 0) {
     detail::ag_csg_impl<1>(FWD(pol), dst, src, sdfChannel);
   }
 
   /// @brief CSG Difference of two level set grids: dst = max(dst, -src)
   template <typename ExecPol, typename AdaptiveGridT>
   void ag_csg_difference(ExecPol &&pol, AdaptiveGridT &dst, const AdaptiveGridT &src,
-                         size_t sdfChannel) {
+                         size_t sdfChannel = 0) {
     detail::ag_csg_impl<2>(FWD(pol), dst, src, sdfChannel);
   }
 
@@ -452,7 +434,7 @@ namespace zs {
   /// Voxels outside the narrow band receive +/- background based on sign propagation.
   template <typename ExecPol, typename AdaptiveGridT,
             execspace_e space = remove_reference_t<ExecPol>::exec_tag::value>
-  void ag_flood_fill(ExecPol &&pol, AdaptiveGridT &grid, size_t sdfChannel) {
+  void ag_flood_fill(ExecPol &&pol, AdaptiveGridT &grid, size_t sdfChannel = 0) {
     using value_type = typename AdaptiveGridT::value_type;
     using size_type = typename AdaptiveGridT::size_type;
     auto &lev0 = grid.level(dim_c<0>);
@@ -2235,7 +2217,17 @@ namespace zs {
     auto newDstNbs = dstLev0.numBlocks();
     if (newDstNbs > prevDstNbs) {
       dstLev0.refitToPartition();
-      dstLev0.defaultInitialize();
+      // Zero-initialize only the newly added blocks (not the existing ones)
+      for (auto bi = prevDstNbs; bi < newDstNbs; ++bi) {
+        dstLev0.valueMask[bi].setOff();
+        dstLev0.childMask[bi].setOff();
+      }
+      auto gridV = view<space>(dstLev0.grid);
+      auto numCh = dstLev0.grid.numChannels();
+      for (size_t bi = prevDstNbs; bi < (size_t)newDstNbs; ++bi)
+        for (int ch = 0; ch < numCh; ++ch)
+          for (size_t ci = 0; ci < bs; ++ci)
+            gridV(ch, bi, ci) = 0;
       dst.complementTopo(pol);
     }
 

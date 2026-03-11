@@ -169,6 +169,11 @@ renegotiation.
 - add first-class validation and benchmark targets
 - define stable internal contracts for CLI and MCP layers
 
+The memory subsystem has completed its foundation work: `MemoryBackendRegistry`
+decouples the portable core from backend-specific allocator headers and provides
+an always-present host backend. See
+[memory_backend_registry.md](memory_backend_registry.md).
+
 ### Phase 2: Platform Surface
 
 - introduce the shared interface-services layer above runtime and validation

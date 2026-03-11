@@ -1,5 +1,7 @@
 #include "zensim/vulkan/VkContext.hpp"
 
+#include "zensim/zpc_tpls/fmt/format.h"
+
 namespace zs {
 
   bool VulkanContext::retrieveQueue(vk::Queue &q, vk_queue_e e, u32 i) const noexcept {

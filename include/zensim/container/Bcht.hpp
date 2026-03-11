@@ -357,7 +357,7 @@ namespace zs {
     }
     bcht &operator=(bcht &&o) noexcept {
       if (this == &o) return *this;
-      bcht tmp(std::move(o));
+      bcht tmp(zs::move(o));
       swap(tmp);
       return *this;
     }

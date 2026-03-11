@@ -47,6 +47,9 @@ Use the docs in layers rather than reading them as one long sequence.
 The current direction is to turn the assembled product into a modular platform with:
 
 - an explicit portable foundation
+- a runtime registry for memory backends so device allocators and memory
+  operations register additively without compile-time coupling
+  ([memory_backend_registry.md](memory_backend_registry.md))
 - a runtime control plane for async execution and deployment-facing surfaces
 - optional backend and graphics modules
 - higher-level application and frontend integration layers built on top

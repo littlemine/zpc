@@ -223,6 +223,7 @@ int main(int argc, char* argv[]) {
     zs::reflect_tool::truncate_file(genHeaderPath);
 
     model.generatedHeaders.insert(genHeaderPath);
+    model.inputSourcePaths.push_back(inputSource);
     model.debugName = inputSource;
 
     if (!clang::tooling::runToolOnCodeWithArgs(

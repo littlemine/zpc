@@ -24,7 +24,7 @@ namespace zs {
     auto nV = mesh.nodes.size();
     auto nE = mesh.elems.size();
     bool ret = load_obj(file, &mesh.nodes, &mesh.norms, &mesh.uvs, &mesh.elems);
-    printf("mesh append: pos, tri [%d, %d] -> [%d, %d]\n", nV, nE, mesh.nodes.size(),
+    printf("mesh append: pos, tri [%zd, %zd] -> [%zd, %zd]\n", nV, nE, mesh.nodes.size(),
            mesh.elems.size());
     return ret;
   }

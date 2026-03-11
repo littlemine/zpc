@@ -356,7 +356,7 @@ void AdvancedRenderGraphExecutor::executeMultiQueue(
              .setPCommandBufferInfos(&cmdInfo);
 
     fences.emplace_back(*graph.ctx, false);
-    queue.submit2(1, &submitInfo, *fences.back(), graph.ctx->dispatcher);
+    (void)queue.submit2(1, &submitInfo, *fences.back(), graph.ctx->dispatcher);
   }
 
   // Wait for all queues to finish

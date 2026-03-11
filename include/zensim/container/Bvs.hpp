@@ -131,8 +131,8 @@ namespace zs {
       // sort in ascending order
       radix_sort_pair(pol, std::begin(keys), std::begin(indices), std::begin(sortedKeys),
                       std::begin(sortedIndices), bvs.size());
-      sts = std::move(sortedKeys);
-      auxIndices = std::move(sortedIndices);
+      sts = zs::move(sortedKeys);
+      auxIndices = zs::move(sortedIndices);
 
 #else
       /// merge sort based

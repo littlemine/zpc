@@ -10,6 +10,7 @@
 #include "VdbLevelSet.h"
 #include "zensim/Logger.hpp"
 #include "zensim/ZpcResource.hpp"
+#include "zensim/zpc_tpls/fmt/format.h"
 #include "zensim/container/Vector.hpp"
 #include "zensim/execution/Concurrency.h"
 #include "zensim/execution/ExecutionPolicy.hpp"
@@ -158,7 +159,7 @@ namespace zs {
             && ag->numBlocks(dim_c<2>) == cnts[2])) {
         throw std::runtime_error("adaptive grid is not successfully built yet.");
       }
-      return std::move(*ag);
+      return zs::move(*ag);
     }
 
     std::vector<unsigned int> cnts;

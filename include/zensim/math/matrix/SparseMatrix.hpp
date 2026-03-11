@@ -695,7 +695,7 @@ namespace zs {
 
     context.syncStreamSpare(pol.getStreamid());
 
-    _inds = std::move(orderedIndices);
+    _inds = zs::move(orderedIndices);
   }
 
   template <typename T, bool RowMajor, typename Ti, typename Tn, typename AllocatorT>
@@ -746,8 +746,8 @@ namespace zs {
 
     context.syncStreamSpare(pol.getStreamid());
 
-    _inds = std::move(orderedIndices);
-    _vals = std::move(orderedVals);
+    _inds = zs::move(orderedIndices);
+    _vals = zs::move(orderedVals);
   }
 #endif
 
@@ -775,7 +775,7 @@ namespace zs {
                  zs::begin(orderedIndices) + st, 0, std::max((int)bit_count(innerSize), 1));
     });
 
-    _inds = std::move(orderedIndices);
+    _inds = zs::move(orderedIndices);
   }
   template <typename T, bool RowMajor, typename Ti, typename Tn, typename AllocatorT>
   template <typename Policy>
@@ -800,8 +800,8 @@ namespace zs {
     });
     pol(range(nnz), [&](size_type no) { orderedVals[no] = _vals[srcIndices[no]]; });
 
-    _inds = std::move(orderedIndices);
-    _vals = std::move(orderedVals);
+    _inds = zs::move(orderedIndices);
+    _vals = zs::move(orderedVals);
   }
 
   template <execspace_e Space, typename SpMatT, bool Base = false, typename = void>

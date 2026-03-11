@@ -9,6 +9,7 @@
 #include "VdbLevelSet.h"
 #include "zensim/Logger.hpp"
 #include "zensim/execution/Concurrency.h"
+#include "zensim/zpc_tpls/fmt/format.h"
 #include "zensim/execution/ExecutionPolicy.hpp"
 #if ZS_ENABLE_OPENMP
 #  include "zensim/omp/execution/ExecutionPolicy.hpp"

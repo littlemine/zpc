@@ -207,6 +207,30 @@ namespace zs {
 
   static detail::ParkingLot<u32> g_lot;
 
+#if defined(_WIN32)
+  // Native Windows futex via WaitOnAddress / WakeByAddress (Windows 8+)
+  static FutexResult native_futex_wait_for(void *addr, u32 expected, i64 duration) {
+    BOOL ok;
+    if (duration < 0) {
+      ok = WaitOnAddress(addr, &expected, sizeof(u32), INFINITE);
+    } else {
+      ok = WaitOnAddress(addr, &expected, sizeof(u32), static_cast<DWORD>(duration));
+    }
+    if (ok) return FutexResult::awoken;
+    DWORD err = GetLastError();
+    if (err == ERROR_TIMEOUT) return FutexResult::timedout;
+    return FutexResult::value_changed;
+  }
+
+  static int native_futex_wake(void *addr, int count) {
+    if (count <= 1)
+      WakeByAddressSingle(addr);
+    else
+      WakeByAddressAll(addr);
+    return count;
+  }
+#endif
+
   static int emulated_futex_wake(void *addr, int count = detail::deduce_numeric_max<int>(),
                                  u32 wakeMask = 0xffffffff) {
     int woken = 0;
@@ -313,8 +337,14 @@ namespace zs {
       default:
         return FutexResult::value_changed;
     }
-#elif defined(_MSC_VER) || (defined(_WIN32) && defined(__INTEL_COMPILER))
-  return emulated_futex_wait_for(v, expected, duration, waitMask);
+#elif defined(_WIN32)
+    // Use native WaitOnAddress on Windows (available since Windows 8).
+    // WaitOnAddress does not support bit masks so we ignore waitMask here;
+    // callers that need bit-mask semantics still go through the parking lot.
+    if (waitMask == 0xffffffff) {
+      return native_futex_wait_for(reinterpret_cast<void *>(v), expected, duration);
+    }
+    return emulated_futex_wait_for(v, expected, duration, waitMask);
 #else
     return emulated_futex_wait_for(v, expected, duration, waitMask);
 #endif
@@ -347,8 +377,11 @@ namespace zs {
       default:
         return FutexResult::value_changed;
     }
-#elif defined(_MSC_VER) || (defined(_WIN32) && defined(__INTEL_COMPILER))
-  return emulated_futex_wait_for(v, expected, duration, waitMask);
+#elif defined(_WIN32)
+    if (waitMask == 0xffffffff) {
+      return native_futex_wait_for(reinterpret_cast<void *>(v), expected, duration);
+    }
+    return emulated_futex_wait_for(v, expected, duration, waitMask);
 #else
     return emulated_futex_wait_for(v, expected, duration, waitMask);
 #endif
@@ -365,7 +398,10 @@ namespace zs {
                       wakeMask);
     if (rc < 0) return 0;
     return static_cast<int>(rc);
-#elif defined(_MSC_VER) || (defined(_WIN32) && defined(__INTEL_COMPILER))
+#elif defined(_WIN32)
+    if (wakeMask == 0xffffffff) {
+      return native_futex_wake(reinterpret_cast<void *>(v), count);
+    }
     return emulated_futex_wake(v, count, wakeMask);
 #else
     return emulated_futex_wake(v, count, wakeMask);
@@ -379,7 +415,10 @@ namespace zs {
                       wakeMask);
     if (rc < 0) return 0;
     return static_cast<int>(rc);
-#elif defined(_MSC_VER) || (defined(_WIN32) && defined(__INTEL_COMPILER))
+#elif defined(_WIN32)
+    if (wakeMask == 0xffffffff) {
+      return native_futex_wake(reinterpret_cast<void *>(v), count);
+    }
     return emulated_futex_wake(v, count, wakeMask);
 #else
     return emulated_futex_wake(v, count, wakeMask);
@@ -451,38 +490,45 @@ namespace zs {
     return true;
   }
 
+  /// Epoch-based ConditionVariable implementation.
+  ///
+  /// The `seq` member is a monotonically increasing epoch counter.
+  ///
+  /// wait():  snapshot the current epoch, unlock the mutex, then sleep
+  ///          via Futex::wait until the epoch differs from the snapshot.
+  ///          Re-lock the mutex before returning.  Spurious wakeups are
+  ///          harmless because callers always re-check their predicate.
+  ///
+  /// notify_one/all():  increment the epoch and wake sleeping threads
+  ///          via Futex::wake.  Because the epoch strictly increases,
+  ///          a notify that races with a wait can never be lost -- the
+  ///          waiter will either see the new epoch before sleeping
+  ///          (Futex::wait returns value_changed immediately) or be
+  ///          woken by the Futex::wake call.
+
   void ConditionVariable::wait(Mutex &lk) noexcept {
-    g_lot.parkFor(
-        &seq, 0,
-        [this]() {
-          seq.store(1);
-          return true;
-        },
-        [&lk]() { lk.unlock(); }, (i64)-1);
+    const u32 epoch = seq.load(std::memory_order_acquire);
+    lk.unlock();
+    Futex::wait(&seq, epoch);
     lk.lock();
   }
 
   CvStatus ConditionVariable::wait_for(Mutex &lk, i64 duration) noexcept {
-    const auto res = g_lot.parkFor(
-        &seq, 0,
-        [this]() {
-          seq.store(1);
-          return true;
-        },
-        [&lk]() { lk.unlock(); }, duration);
+    const u32 epoch = seq.load(std::memory_order_acquire);
+    lk.unlock();
+    const auto res = Futex::wait_for(&seq, epoch, duration);
     lk.lock();
-    return res == detail::ParkResult::Timeout ? CvStatus::timeout : CvStatus::no_timeout;
+    return res == FutexResult::timedout ? CvStatus::timeout : CvStatus::no_timeout;
   }
 
   void ConditionVariable::notify_one() noexcept {
-    if (!seq.load(std::memory_order_relaxed)) return;
-    g_lot.unpark(&seq, [](const u32 &) { return detail::UnparkControl::RemoveBreak; });
+    seq.fetch_add(1, std::memory_order_release);
+    Futex::wake(&seq, 1);
   }
 
   void ConditionVariable::notify_all() noexcept {
-    if (!seq.load(std::memory_order_relaxed)) return;
-    seq.store(0, std::memory_order_release);
-    g_lot.unpark(&seq, [](const u32 &) { return detail::UnparkControl::RemoveContinue; });
+    seq.fetch_add(1, std::memory_order_release);
+    Futex::wake(&seq);
   }
 
 }  // namespace zs

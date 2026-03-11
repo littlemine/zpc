@@ -17,7 +17,7 @@ namespace zs {
 
     void register_scenario(CanaryScenarioDescriptor descriptor) {
       if (descriptor.scenarioId.size() == 0) return;
-      std::lock_guard<std::mutex> lock(_mutex);
+      std::lock_guard<Mutex> lock(_mutex);
       for (auto &existing : _scenarios) {
         if (existing.scenarioId == descriptor.scenarioId) {
           existing = zs::move(descriptor);
@@ -30,19 +30,19 @@ namespace zs {
     void register_baseline(const SmallString &baselineId, ValidationSuiteReport report) {
       if (baselineId.size() == 0) return;
       report.refresh_summary();
-      std::lock_guard<std::mutex> lock(_mutex);
+      std::lock_guard<Mutex> lock(_mutex);
       _baselines.insert_or_assign(baselineId.asChars(), zs::move(report));
     }
 
     bool has_baseline(const SmallString &baselineId) const {
       if (baselineId.size() == 0) return false;
-      std::lock_guard<std::mutex> lock(_mutex);
+      std::lock_guard<Mutex> lock(_mutex);
       return _baselines.find(baselineId.asChars()) != _baselines.end();
     }
 
     bool last_report(const SmallString &scenarioId, ValidationSuiteReport *report) const {
       if (scenarioId.size() == 0 || report == nullptr) return false;
-      std::lock_guard<std::mutex> lock(_mutex);
+      std::lock_guard<Mutex> lock(_mutex);
       auto it = _lastReports.find(scenarioId.asChars());
       if (it == _lastReports.end()) return false;
       *report = it->second;
@@ -51,7 +51,7 @@ namespace zs {
 
     bool promote_last_run_to_baseline(const SmallString &scenarioId, const SmallString &baselineId) {
       if (scenarioId.size() == 0 || baselineId.size() == 0) return false;
-      std::lock_guard<std::mutex> lock(_mutex);
+      std::lock_guard<Mutex> lock(_mutex);
       auto it = _lastReports.find(scenarioId.asChars());
       if (it == _lastReports.end()) return false;
       _baselines.insert_or_assign(baselineId.asChars(), it->second);
@@ -61,7 +61,7 @@ namespace zs {
     std::vector<CanaryScenarioDescriptor> list_scenarios(
         InterfaceSessionHandle session) const override {
       if (!_services.session_exists(session)) return {};
-      std::lock_guard<std::mutex> lock(_mutex);
+      std::lock_guard<Mutex> lock(_mutex);
       return _scenarios;
     }
 
@@ -69,7 +69,7 @@ namespace zs {
                            CanaryScenarioDescriptor *descriptor) const override {
       if (!_services.session_exists(session) || descriptor == nullptr || scenarioId.size() == 0)
         return false;
-      std::lock_guard<std::mutex> lock(_mutex);
+      std::lock_guard<Mutex> lock(_mutex);
       for (const auto &scenario : _scenarios) {
         if (scenario.scenarioId == scenarioId) {
           *descriptor = scenario;
@@ -161,7 +161,7 @@ namespace zs {
       result.accepted = accepted && result.report.summary.failed == 0 && result.report.summary.errored == 0;
 
       {
-        std::lock_guard<std::mutex> lock(_mutex);
+        std::lock_guard<Mutex> lock(_mutex);
         _lastReports.insert_or_assign(result.scenarioId.asChars(), result.report);
       }
 
@@ -259,13 +259,13 @@ namespace zs {
     }
 
     const ValidationSuiteReport *find_baseline_(const SmallString &baselineId) const {
-      std::lock_guard<std::mutex> lock(_mutex);
+      std::lock_guard<Mutex> lock(_mutex);
       auto it = _baselines.find(baselineId.asChars());
       return it == _baselines.end() ? nullptr : &it->second;
     }
 
     LocalInterfaceServices &_services;
-    mutable std::mutex _mutex{};
+    mutable Mutex _mutex{};
     std::vector<CanaryScenarioDescriptor> _scenarios{};
     std::unordered_map<std::string, ValidationSuiteReport> _baselines{};
     std::unordered_map<std::string, ValidationSuiteReport> _lastReports{};

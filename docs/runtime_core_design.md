@@ -115,6 +115,12 @@ The long-term split implied by this design is:
 than the place where control-plane and unrelated feature ownership remain mixed
 together.
 
+The memory subsystem already follows a parallel registry pattern:
+`MemoryBackendRegistry` lives in the portable foundation and accepts backend
+registrations at link time, removing compile-time coupling between the core and
+backend allocator headers. See
+[memory_backend_registry.md](memory_backend_registry.md).
+
 ## Strategic Outcome
 
 An explicit runtime core gives ZPC one coherent place to evolve:
@@ -135,6 +141,8 @@ product-specific and belongs above the runtime core.
 
 ## Related Pages
 
+- [memory_backend_registry.md](memory_backend_registry.md) for the parallel
+  runtime-registration pattern used by the memory subsystem
 - [async_runtime_abi.rst](async_runtime_abi.rst) for the current stable deployable
   boundary
 - [plugin_and_abi_stability.md](plugin_and_abi_stability.md) for the broader

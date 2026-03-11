@@ -131,8 +131,8 @@ namespace zs {
     constexpr mem_tags getTag() const { return to_memory_source_tag(_memsrc); }
 
     void swap(MemoryLocation& o) noexcept {
-      std::swap(_devid, o._devid);
-      std::swap(_memsrc, o._memsrc);
+      zs_swap(_devid, o._devid);
+      zs_swap(_memsrc, o._memsrc);
     }
     friend void swap(MemoryLocation& a, MemoryLocation& b) noexcept { a.swap(b); }
 
@@ -158,8 +158,8 @@ namespace zs {
     }
 
     void swap(MemoryProperty& o) noexcept {
-      std::swap(_traits, o._traits);
-      std::swap(static_cast<MemoryLocation&>(*this), static_cast<MemoryLocation&>(o));
+      zs_swap(_traits, o._traits);
+      MemoryLocation::swap(o);
     }
     friend void swap(MemoryProperty& a, MemoryProperty& b) noexcept { a.swap(b); }
 

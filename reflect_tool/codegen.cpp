@@ -534,6 +534,12 @@ namespace zs::reflect_tool {
        << "// ============================================================\n"
        << "#include <zensim/reflect/ZpcReflectRegistry.hpp>\n\n";
 
+    // Include original source files so reflected types are complete definitions
+    for (auto& src : model.inputSourcePaths) {
+      os << fmt::format("#include \"{}\"\n", src);
+    }
+    os << "\n";
+
     // Include all generated per-source headers
     for (auto& h : model.generatedHeaders) {
       os << fmt::format("#include \"{}\"\n", h);

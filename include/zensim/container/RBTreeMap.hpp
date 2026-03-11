@@ -34,8 +34,8 @@ namespace zs {
       Value second{};
 
       Node() = default;
-      explicit Node(Key k) : first(std::move(k)) {}
-      explicit Node(Key k, Value v) : first(std::move(k)), second(std::move(v)) {}
+      explicit Node(Key k) : first(zs::move(k)) {}
+      explicit Node(Key k, Value v) : first(zs::move(k)), second(zs::move(v)) {}
       ~Node() = default;
 
       inline bool isRed() const noexcept { return this->color == RED; }

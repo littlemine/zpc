@@ -102,8 +102,8 @@ namespace zs {
       nodeIds[loc] = nodeid;
     });
 
-    _primIds = std::move(primIds);
-    _nodeIds = std::move(nodeIds);
+    _primIds = zs::move(primIds);
+    _nodeIds = zs::move(nodeIds);
   }
 
   template <execspace_e space, typename BvttFrontT, typename = void> struct BvttFrontView {

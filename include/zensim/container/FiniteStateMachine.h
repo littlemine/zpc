@@ -13,7 +13,7 @@ namespace zs {
         return self.onEvent(s, forward<Event>(event));
       });
       //[&](auto & s) ->optional<StateVariant> { return self.onEvent(s, (event)); });
-      if (newState) _state = *std::move(newState);
+      if (newState) _state = *zs::move(newState);
     }
 
   private:

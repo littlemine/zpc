@@ -172,7 +172,7 @@ namespace zs {
       AsyncResourceDescriptor descriptor{};
       AsyncResourceCallbacks callbacks{};
       void *payload{nullptr};
-      mutable std::mutex payloadMutex{};
+      mutable Mutex payloadMutex{};
       Atomic<u64> leaseCount{0};
       Atomic<u64> lastAccessEpoch{0};
       atomic_bool dirty{false};
@@ -180,12 +180,12 @@ namespace zs {
       atomic_bool maintenanceInFlight{false};
 
       void *payload_snapshot() const noexcept {
-        std::lock_guard<std::mutex> lock(payloadMutex);
+        std::lock_guard<Mutex> lock(payloadMutex);
         return payload;
       }
 
       void destroy_payload_if_needed() noexcept {
-        std::lock_guard<std::mutex> lock(payloadMutex);
+        std::lock_guard<Mutex> lock(payloadMutex);
         if (!payload || !callbacks.destroy) return;
         void *current = payload;
         payload = nullptr;
@@ -203,7 +203,7 @@ namespace zs {
     static bool is_stale_(const Entry &entry, u64 epoch) noexcept;
 
     AsyncRuntime &_runtime;
-    mutable std::mutex _mutex{};
+    mutable Mutex _mutex{};
     std::unordered_map<u64, Shared<Entry>> _entries{};
     Atomic<u64> _nextId{0};
     Atomic<u64> _epoch{0};
@@ -234,7 +234,7 @@ namespace zs {
   inline AsyncResourceManager::~AsyncResourceManager() {
     std::vector<Shared<Entry>> entries;
     {
-      std::lock_guard<std::mutex> lock(_mutex);
+      std::lock_guard<Mutex> lock(_mutex);
       entries.reserve(_entries.size());
       for (auto &kv : _entries) entries.push_back(kv.second);
       _entries.clear();
@@ -254,14 +254,14 @@ namespace zs {
     entry->payload = payload;
     entry->lastAccessEpoch.store(_epoch.load());
 
-    std::lock_guard<std::mutex> lock(_mutex);
+    std::lock_guard<Mutex> lock(_mutex);
     _entries.insert_or_assign(entry->handle.id, entry);
     return entry->handle;
   }
 
   inline Shared<AsyncResourceManager::Entry> AsyncResourceManager::find_entry_(
       AsyncResourceHandle resource) const {
-    std::lock_guard<std::mutex> lock(_mutex);
+    std::lock_guard<Mutex> lock(_mutex);
     if (auto it = _entries.find(resource.id); it != _entries.end()) return it->second;
     return {};
   }
@@ -396,7 +396,7 @@ namespace zs {
   AsyncResourceManager::schedule_stale_maintenance(AsyncResourceMaintenanceRequest request) {
     std::vector<Shared<Entry>> entries;
     {
-      std::lock_guard<std::mutex> lock(_mutex);
+      std::lock_guard<Mutex> lock(_mutex);
       entries.reserve(_entries.size());
       for (auto &kv : _entries) entries.push_back(kv.second);
     }
@@ -416,7 +416,7 @@ namespace zs {
   }
 
   inline size_t AsyncResourceManager::collect_retired() {
-    std::lock_guard<std::mutex> lock(_mutex);
+    std::lock_guard<Mutex> lock(_mutex);
     size_t removed = 0;
     for (auto it = _entries.begin(); it != _entries.end();) {
       auto &entry = it->second;
@@ -434,7 +434,7 @@ namespace zs {
 
   inline AsyncResourceManagerStats AsyncResourceManager::stats() const {
     AsyncResourceManagerStats snapshot{};
-    std::lock_guard<std::mutex> lock(_mutex);
+    std::lock_guard<Mutex> lock(_mutex);
     snapshot.total = _entries.size();
     for (const auto &kv : _entries) {
       const auto &entry = kv.second;

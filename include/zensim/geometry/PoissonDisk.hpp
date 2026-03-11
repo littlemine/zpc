@@ -12,6 +12,7 @@
 #include "zensim/math/Vec.h"
 // #include <taskflow/taskflow.hpp>
 #include "zensim/execution/Concurrency.h"
+#include "zensim/execution/ManagedThread.hpp"
 #include "zensim/geometry/LevelSetInterface.h"
 #include "zensim/io/Filesystem.hpp"
 

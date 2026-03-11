@@ -176,7 +176,7 @@ namespace zs {
 
     Collider() noexcept = default;
     constexpr Collider(LS &&ls, collider_e t = collider_e::Sticky)
-        : levelset{std::move(ls)}, type{t} {}
+        : levelset{zs::move(ls)}, type{t} {}
     constexpr Collider(const LS &ls, collider_e t = collider_e::Sticky) : levelset{ls}, type{t} {}
 
     // levelset
@@ -208,7 +208,7 @@ namespace zs {
 
     LevelSetBoundary() = default;
     constexpr LevelSetBoundary(LS &&ls, collider_e t = collider_e::Sticky)
-        : levelset{std::move(ls)}, type{t} {}
+        : levelset{zs::move(ls)}, type{t} {}
     constexpr LevelSetBoundary(const LS &ls, collider_e t = collider_e::Sticky)
         : levelset{ls}, type{t} {}
 

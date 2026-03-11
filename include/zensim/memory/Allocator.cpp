@@ -10,8 +10,12 @@
 #  include <sys/mman.h>
 #  include <unistd.h>
 #elif defined(ZS_PLATFORM_WINDOWS)
-#  define NOMINMAX
-#  define WIN32_LEAN_AND_MEAN
+#  ifndef NOMINMAX
+#    define NOMINMAX
+#  endif
+#  ifndef WIN32_LEAN_AND_MEAN
+#    define WIN32_LEAN_AND_MEAN
+#  endif
 #  include <windows.h>
 #endif
 

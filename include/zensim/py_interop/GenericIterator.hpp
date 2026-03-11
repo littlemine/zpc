@@ -1,5 +1,6 @@
 #pragma once
 #include "zensim/math/Vec.h"
+#include "zensim/math/bit/Bits.h"
 #include "zensim/types/Property.h"
 
 namespace zs {

@@ -139,6 +139,7 @@ namespace zs::reflect_tool {
     lo.CPlusPlus = true;
     clang::PrintingPolicy pp(lo);
     pp.SuppressTagKeyword = true;
+    pp.Bool = true;  // print 'bool' instead of '_Bool'
     return type.getAsString(pp);
   }
 

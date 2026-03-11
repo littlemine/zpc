@@ -59,6 +59,14 @@ Target outcome:
   product
 - `zpc` preserved as a compatibility assembly target
 
+Progress:
+
+- The memory subsystem has completed this milestone for allocators and memory
+  operations. `MemoryBackendRegistry` provides an always-present host backend,
+  `Resource.h` no longer includes backend-specific allocator headers, and device
+  backends register additively at link time. See
+  [memory_backend_registry.md](memory_backend_registry.md).
+
 Rules for this milestone:
 
 - preserve behavior when a backend is enabled

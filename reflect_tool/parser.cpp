@@ -75,7 +75,7 @@ namespace zs::reflect_tool {
     if (Reason != EnterFile || !deps || !sm) return;
 
     clang::FileID fid = sm->getFileID(Loc);
-    if (auto fe = sm->getFileEntryForID(fid)) {
+    if (auto fe = sm->getFileEntryRefForID(fid)) {
       std::string path = fe->getName().str();
       if (!path.empty()) {
         std::replace(path.begin(), path.end(), '\\', '/');
@@ -270,11 +270,20 @@ namespace zs::reflect_tool {
     visitor.TraverseDecl(context.getTranslationUnitDecl());
 
     // ---- Generate code ---------------------------------------------------
-    if (!collectedTypes.empty()) {
-      emit_reflected_header(headerPath, collectedTypes, verbose);
+    // Deduplicate: skip types already emitted by a previous source file.
+    std::vector<CollectedType> uniqueTypes;
+    for (auto& ct : collectedTypes) {
+      if (compilerState.emittedHashes.count(ct.typeHash))
+        continue;
+      compilerState.emittedHashes[ct.typeHash] = true;
+      uniqueTypes.push_back(std::move(ct));
+    }
+
+    if (!uniqueTypes.empty()) {
+      emit_reflected_header(headerPath, uniqueTypes, verbose);
 
       // Register types in the compiler state for the final register source.
-      for (auto& ct : collectedTypes)
+      for (auto& ct : uniqueTypes)
         compilerState.reflectedTypes.push_back(ct);
     }
 

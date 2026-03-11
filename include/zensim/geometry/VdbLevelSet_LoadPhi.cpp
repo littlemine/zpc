@@ -12,6 +12,7 @@
 #include "VdbLevelSet.h"
 #include "zensim/Logger.hpp"
 #include "zensim/execution/Concurrency.h"
+#include "zensim/zpc_tpls/fmt/format.h"
 #include "zensim/memory/MemoryResource.h"
 #include "zensim/types/Property.h"
 

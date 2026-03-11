@@ -7,7 +7,9 @@
 
 /// @note Windows
 #if defined(_WIN64)
-#  define ZS_PLATFORM_WINDOWS
+#  ifndef ZS_PLATFORM_WINDOWS
+#    define ZS_PLATFORM_WINDOWS
+#  endif
 // ref vcruntime.h
 #  ifndef ZPC_ACRTIMP
 #    if defined _CRTIMP && !defined _VCRT_DEFINED_CRTIMP

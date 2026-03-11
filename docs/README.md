@@ -19,6 +19,7 @@ hosting UIs, and without the old generated-doc flow.
 
 - Understand the platform core:
   [foundation_layer.md](foundation_layer.md) ->
+  [memory_backend_registry.md](memory_backend_registry.md) ->
   [runtime_core_design.md](runtime_core_design.md) ->
   [architecture_and_modularization.md](architecture_and_modularization.md)
 - Understand shipping shapes and platform reach:
@@ -40,6 +41,7 @@ hosting UIs, and without the old generated-doc flow.
 ### Platform Architecture
 
 - [foundation_layer.md](foundation_layer.md)
+- [memory_backend_registry.md](memory_backend_registry.md)
 - [runtime_core_design.md](runtime_core_design.md)
 - [plugin_and_abi_stability.md](plugin_and_abi_stability.md)
 - [architecture_and_modularization.md](architecture_and_modularization.md)

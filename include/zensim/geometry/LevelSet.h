@@ -229,10 +229,10 @@ namespace zs {
       // only allows a pair of the same type of levelsets
       match([&ret](auto &&src, auto &&dst) {
         if constexpr (is_same_v<RM_CVREF_T(src), RM_CVREF_T(dst)>)
-          ret = zs::make_tuple(std::move(src), std::move(dst));
+          ret = zs::make_tuple(zs::move(src), zs::move(dst));
         else
           throw std::runtime_error("heterogeneous levelset queue is not supported.");
-      })(std::move(ls0), std::move(ls1));
+      })(zs::move(ls0), zs::move(ls1));
       return ret;
     }
 

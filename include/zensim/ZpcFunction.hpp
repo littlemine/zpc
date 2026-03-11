@@ -228,15 +228,15 @@ namespace zs {
     function &operator=(function &&o) noexcept {
       if (this != &o) {
         if (_manageFn) (*_manageFn)(_storage.data(), nullptr, manage_op_e::destruct);
-        _erasedFn = nullptr;
-        _manageFn = nullptr;
         if (o) {
-          o._manageFn(const_cast<void *>(o._storage.data()), _storage.data(), manage_op_e::clone);
+          memcpy(_storage.data(), o._storage.data(), function_storage::capacity);
           _erasedFn = o._erasedFn;
           _manageFn = o._manageFn;
-          o._manageFn(const_cast<void *>(o._storage.data()), nullptr, manage_op_e::destruct);
           o._erasedFn = nullptr;
           o._manageFn = nullptr;
+        } else {
+          _erasedFn = nullptr;
+          _manageFn = nullptr;
         }
       }
       return *this;

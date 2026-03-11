@@ -1,5 +1,6 @@
 #include "zensim/vulkan/VkShader.hpp"
 
+#include "zensim/zpc_tpls/fmt/format.h"
 #include <shaderc/shaderc.hpp>
 #include <spirv_cross/spirv_glsl.hpp>
 

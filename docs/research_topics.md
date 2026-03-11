@@ -19,6 +19,9 @@ without guessing file names.
 - [foundation_layer.md](foundation_layer.md)
   Portable always-on substrate: compile-safe utilities, memory, threading,
   filesystem, logging, and portability boundaries.
+- [memory_backend_registry.md](memory_backend_registry.md)
+  Runtime memory backend registry: decouples the portable core from
+  backend-specific allocator headers through additive link-time registration.
 - [runtime_core_design.md](runtime_core_design.md)
   Async control plane: executors, endpoints, scheduler direction, native queue
   integration, and validation-aware runtime ownership.
@@ -83,10 +86,11 @@ without guessing file names.
 ## Suggested Reading Paths
 
 - Platform-first path:
-  [foundation_layer.md](foundation_layer.md) ->
-  [runtime_core_design.md](runtime_core_design.md) ->
-  [architecture_and_modularization.md](architecture_and_modularization.md) ->
-  [implementation_roadmap.md](implementation_roadmap.md)
+[foundation_layer.md](foundation_layer.md) ->
+[memory_backend_registry.md](memory_backend_registry.md) ->
+[runtime_core_design.md](runtime_core_design.md) ->
+[architecture_and_modularization.md](architecture_and_modularization.md) ->
+[implementation_roadmap.md](implementation_roadmap.md)
 - Delivery-first path:
   [roadmap.md](roadmap.md) ->
   [platform_and_build_profiles.md](platform_and_build_profiles.md) ->

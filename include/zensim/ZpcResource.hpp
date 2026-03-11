@@ -251,6 +251,32 @@ namespace zs {
     tuple<D, pointer> _storage;
   };
 
+  // UniquePtr comparison operators
+  template <typename T, typename D>
+  constexpr bool operator==(const UniquePtr<T, D>& a, decltype(nullptr)) noexcept {
+    return !a;
+  }
+  template <typename T, typename D>
+  constexpr bool operator==(decltype(nullptr), const UniquePtr<T, D>& a) noexcept {
+    return !a;
+  }
+  template <typename T, typename D>
+  constexpr bool operator!=(const UniquePtr<T, D>& a, decltype(nullptr)) noexcept {
+    return static_cast<bool>(a);
+  }
+  template <typename T, typename D>
+  constexpr bool operator!=(decltype(nullptr), const UniquePtr<T, D>& a) noexcept {
+    return static_cast<bool>(a);
+  }
+  template <typename T1, typename D1, typename T2, typename D2>
+  constexpr bool operator==(const UniquePtr<T1, D1>& a, const UniquePtr<T2, D2>& b) noexcept {
+    return a.get() == b.get();
+  }
+  template <typename T1, typename D1, typename T2, typename D2>
+  constexpr bool operator!=(const UniquePtr<T1, D1>& a, const UniquePtr<T2, D2>& b) noexcept {
+    return a.get() != b.get();
+  }
+
   namespace detail {
     template <typename From, typename To>
     struct shared_ptr_compatible : bool_constant<is_convertible_v<From*, To*>> {};
@@ -440,6 +466,17 @@ namespace zs {
     friend class SharedPtr;
     template <typename U>
     friend class WeakPtr;
+
+    template <typename To, typename From>
+    friend SharedPtr<To> static_pointer_cast(const SharedPtr<From>&) noexcept;
+    template <typename To, typename From>
+    friend SharedPtr<To> static_pointer_cast(SharedPtr<From>&&) noexcept;
+    template <typename To, typename From>
+    friend SharedPtr<To> dynamic_pointer_cast(const SharedPtr<From>&) noexcept;
+    template <typename To, typename From>
+    friend SharedPtr<To> dynamic_pointer_cast(SharedPtr<From>&&) noexcept;
+    template <typename To, typename From>
+    friend SharedPtr<To> const_pointer_cast(const SharedPtr<From>&) noexcept;
 
     SharedPtr(pointer p, detail::SharedControlBlockBase* control, int) noexcept
         : _ptr{p}, _control{control} {}
@@ -663,18 +700,95 @@ namespace zs {
     return UniquePtr<T>(new T(FWD(args)...));
   }
 
-  template <typename T, enable_if_t<is_array_v<T> && (std::extent<T>::value == 0)> = 0>
+  template <typename T, enable_if_t<is_array_v<T> && (extent<T>::value == 0)> = 0>
   auto make_unique(size_t count) -> UniquePtr<remove_extent_t<T>[]> {
     using element_type = remove_extent_t<T>;
     return UniquePtr<element_type[]>(new element_type[count]());
   }
+
+  // --- SharedPtr cast functions ---
+
+  template <typename To, typename From>
+  SharedPtr<To> static_pointer_cast(const SharedPtr<From>& r) noexcept {
+    auto p = static_cast<To*>(r._ptr);
+    if (r._control) r._control->add_strong();
+    return SharedPtr<To>(p, r._control, 0);
+  }
+
+  template <typename To, typename From>
+  SharedPtr<To> static_pointer_cast(SharedPtr<From>&& r) noexcept {
+    auto p = static_cast<To*>(r._ptr);
+    r._ptr = nullptr;
+    auto ctrl = zs::exchange(r._control, nullptr);
+    return SharedPtr<To>(p, ctrl, 0);
+  }
+
+  template <typename To, typename From>
+  SharedPtr<To> dynamic_pointer_cast(const SharedPtr<From>& r) noexcept {
+    if (auto p = dynamic_cast<To*>(r._ptr)) {
+      if (r._control) r._control->add_strong();
+      return SharedPtr<To>(p, r._control, 0);
+    }
+    return SharedPtr<To>{};
+  }
+
+  template <typename To, typename From>
+  SharedPtr<To> dynamic_pointer_cast(SharedPtr<From>&& r) noexcept {
+    if (auto p = dynamic_cast<To*>(r._ptr)) {
+      r._ptr = nullptr;
+      auto ctrl = zs::exchange(r._control, nullptr);
+      return SharedPtr<To>(p, ctrl, 0);
+    }
+    return SharedPtr<To>{};
+  }
+
+  template <typename To, typename From>
+  SharedPtr<To> const_pointer_cast(const SharedPtr<From>& r) noexcept {
+    auto p = const_cast<To*>(r._ptr);
+    if (r._control) r._control->add_strong();
+    return SharedPtr<To>(p, r._control, 0);
+  }
+
+  // --- SharedPtr comparison operators ---
+
+  template <typename T1, typename T2>
+  constexpr bool operator==(const SharedPtr<T1>& a, const SharedPtr<T2>& b) noexcept {
+    return a.get() == b.get();
+  }
+
+  template <typename T1, typename T2>
+  constexpr bool operator!=(const SharedPtr<T1>& a, const SharedPtr<T2>& b) noexcept {
+    return a.get() != b.get();
+  }
+
+  template <typename T>
+  constexpr bool operator==(const SharedPtr<T>& a, decltype(nullptr)) noexcept {
+    return !a;
+  }
+
+  template <typename T>
+  constexpr bool operator==(decltype(nullptr), const SharedPtr<T>& a) noexcept {
+    return !a;
+  }
+
+  template <typename T>
+  constexpr bool operator!=(const SharedPtr<T>& a, decltype(nullptr)) noexcept {
+    return static_cast<bool>(a);
+  }
+
+  template <typename T>
+  constexpr bool operator!=(decltype(nullptr), const SharedPtr<T>& a) noexcept {
+    return static_cast<bool>(a);
+  }
+
+  // --- make functions ---
 
   template <typename T, typename... Args, enable_if_t<!is_array_v<T>> = 0>
   auto make_shared(Args&&... args) -> SharedPtr<T> {
     return SharedPtr<T>(new T(FWD(args)...));
   }
 
-  template <typename T, enable_if_t<is_array_v<T> && (std::extent<T>::value == 0)> = 0>
+  template <typename T, enable_if_t<is_array_v<T> && (extent<T>::value == 0)> = 0>
   auto make_shared(size_t count) -> SharedPtr<remove_extent_t<T>[]> {
     using element_type = remove_extent_t<T>;
     return SharedPtr<element_type[]>(new element_type[count]());

@@ -96,7 +96,7 @@ namespace zs {
   public:
     AsyncNativeQueueExecutor(std::string executorName, AsyncNativeQueueDescriptor descriptor,
                              AsyncNativeQueueBinding binding)
-        : _name{std::move(executorName)}, _descriptor{descriptor}, _binding{std::move(binding)} {}
+        : _name{zs::move(executorName)}, _descriptor{descriptor}, _binding{zs::move(binding)} {}
 
     AsyncBackend backend() const noexcept override {
       return async_backend_from_code(_descriptor.backendCode);
@@ -142,8 +142,8 @@ namespace zs {
   inline Shared<AsyncNativeQueueExecutor> make_native_queue_executor(
       std::string executorName, AsyncNativeQueueDescriptor descriptor,
       AsyncNativeQueueBinding binding) {
-    return zs::make_shared<AsyncNativeQueueExecutor>(std::move(executorName), descriptor,
-                             std::move(binding));
+    return zs::make_shared<AsyncNativeQueueExecutor>(zs::move(executorName), descriptor,
+                             zs::move(binding));
   }
 
 #if defined(ZS_ENABLE_CUDA) && ZS_ENABLE_CUDA

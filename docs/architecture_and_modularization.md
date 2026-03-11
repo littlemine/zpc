@@ -52,6 +52,13 @@ Responsibilities:
 - logging and filesystem plumbing after abstraction
 - shared low-level non-backend utilities
 
+The memory subsystem now uses a runtime registry (`MemoryBackendRegistry`) that
+lives in this layer. The registry owns the host backend by default and accepts
+additive registrations from device backends at link time. This removes the
+compile-time `#if` chains that previously forced the foundation to `#include`
+backend-specific allocator headers. See
+[memory_backend_registry.md](memory_backend_registry.md) for details.
+
 This is the layer that `minimal` builds should always be able to consume.
 
 ### Layer 2: Validation And Runtime Control Plane
@@ -86,6 +93,11 @@ Representative targets:
 
 Each backend should depend downward on foundation and, where needed, runtime core.
 Backends should not depend on each other.
+
+For the memory subsystem this is already realized: each backend registers its
+allocator factories and memory-operation callbacks with
+`MemoryBackendRegistry::instance()` from its own `.cpp` file. The foundation
+never includes backend-specific headers.
 
 ### Layer 4: Domain Modules
 
@@ -186,6 +198,12 @@ The lowest-risk sequence is:
 - keep `zpc` and related umbrella targets as compatibility entry points throughout
   the transition
 
+The memory subsystem has already completed the first concrete step of this
+strategy: `MemoryBackendRegistry` provides an always-present host backend,
+`Resource.h` no longer includes backend-specific allocator headers, and device
+backends register additively at link time. See
+[memory_backend_registry.md](memory_backend_registry.md).
+
 This avoids breaking current consumers while still moving the codebase toward a
 cleaner graph.
 
@@ -212,6 +230,8 @@ rendering, simulation, gameplay, and frontend integration.
 ## Related Pages
 
 - [foundation_layer.md](foundation_layer.md) for the portable always-on substrate
+- [memory_backend_registry.md](memory_backend_registry.md) for the runtime
+  memory backend registry that realizes backend-module separation for allocators
 - [platform_and_build_profiles.md](platform_and_build_profiles.md) for how the
   target graph maps to delivery profiles
 - [implementation_roadmap.md](implementation_roadmap.md) for the recommended

@@ -700,7 +700,7 @@ struct zpc_runtime_engine_handle_t {
   uint64_t capability_mask{ZPC_RUNTIME_ABI_CAP_ASYNC_SUBMIT | ZPC_RUNTIME_ABI_CAP_NATIVE_QUEUE
                            | ZPC_RUNTIME_ABI_CAP_VALIDATION | ZPC_RUNTIME_ABI_CAP_HOT_UPGRADE
                            | ZPC_RUNTIME_ABI_CAP_RESOURCE_MANAGER};
-  std::mutex signal_registry_mutex{};
+  zs::Mutex signal_registry_mutex{};
   std::unordered_map<uint64_t, zs::AsyncEvent> signal_registry{};
   zpc_runtime_host_submit_extension_v1_t host_submit_extension{};
   zpc_runtime_validation_extension_v1_t validation_extension{};
@@ -768,7 +768,7 @@ namespace zs {
   inline void zpc_runtime_register_submission_signal(
       zpc_runtime_engine_handle_t *engine, uint64_t token, AsyncEvent event) {
     if (!engine || !token) return;
-    std::lock_guard<std::mutex> lock(engine->signal_registry_mutex);
+    std::lock_guard<zs::Mutex> lock(engine->signal_registry_mutex);
     engine->signal_registry[token] = zs::move(event);
   }
 
@@ -776,7 +776,7 @@ namespace zs {
                                                   uint64_t token,
                                                   AsyncEvent *event) {
     if (!engine || !token || !event) return false;
-    std::lock_guard<std::mutex> lock(engine->signal_registry_mutex);
+    std::lock_guard<zs::Mutex> lock(engine->signal_registry_mutex);
     const auto found = engine->signal_registry.find(token);
     if (found == engine->signal_registry.end()) return false;
     *event = found->second;

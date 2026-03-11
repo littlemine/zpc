@@ -137,7 +137,7 @@ namespace zs {
     }
     HashTable &operator=(HashTable &&o) noexcept {
       if (this == &o) return *this;
-      HashTable tmp(std::move(o));
+      HashTable tmp(zs::move(o));
       swap(tmp);
       return *this;
     }

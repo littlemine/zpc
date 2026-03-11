@@ -661,7 +661,7 @@ namespace zs {
     using SeqPolicies =
         typename build_seq<sizeof...(Ranges)>::template uniform_types_t<zs::tuple,
                                                                         SequentialExecutionPolicy>;
-    par_exec<Is...>(SeqPolicies{}, std::move(ranges), FWD(bodies)...);
+    par_exec<Is...>(SeqPolicies{}, zs::move(ranges), FWD(bodies)...);
   }
 
   //

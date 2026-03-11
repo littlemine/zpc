@@ -1,6 +1,7 @@
 #include "VkCommand.hpp"
 
 #include "zensim/ZpcFunctional.hpp"
+#include "zensim/zpc_tpls/fmt/format.h"
 
 namespace zs {
 

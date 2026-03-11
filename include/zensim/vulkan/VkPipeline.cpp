@@ -1,6 +1,7 @@
 #include "zensim/vulkan/VkPipeline.hpp"
 
 #include "zensim/vulkan/VkBuffer.hpp"
+#include "zensim/zpc_tpls/fmt/format.h"
 #include "zensim/vulkan/VkImage.hpp"
 #include "zensim/vulkan/VkRenderPass.hpp"
 #include "zensim/vulkan/VkShader.hpp"

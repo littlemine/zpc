@@ -46,9 +46,9 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
   )
 endif()
 
-# On MSVC, silence some warnings in LLVM/Clang headers
+# On MSVC, silence some warnings in LLVM/Clang headers and ensure /utf-8 for fmt
 if(MSVC)
-  target_compile_options(zpc_reflect_tool PRIVATE /W3 /wd4624 /wd4291 /wd4141)
+  target_compile_options(zpc_reflect_tool PRIVATE /W3 /wd4624 /wd4291 /wd4141 /Zc:preprocessor /Zc:__cplusplus /utf-8 /bigobj /EHsc)
 endif()
 
 message(STATUS "[zpc] Built zpc_reflect_tool executable")

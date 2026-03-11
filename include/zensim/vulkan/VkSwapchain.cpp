@@ -1,5 +1,6 @@
 #include "zensim/vulkan/VkSwapchain.hpp"
 
+#include "zensim/zpc_tpls/fmt/format.h"
 #include "zensim/Logger.hpp"
 #include "zensim/types/Iterator.h"
 #include "zensim/vulkan/VkImage.hpp"

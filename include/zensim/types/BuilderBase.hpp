@@ -9,7 +9,7 @@ namespace zs {
 
   public:
     constexpr Object &target() noexcept { return object; }
-    constexpr operator Object() noexcept { return std::move(object); }
+    constexpr operator Object() noexcept { return zs::move(object); }
   };
 
 }  // namespace zs

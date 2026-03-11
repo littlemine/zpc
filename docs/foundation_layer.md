@@ -62,6 +62,23 @@ That compiled ownership should eventually include the platform-safe parts of:
 - filesystem context services
 - general non-backend utility code
 
+### Memory Backend Registry (Realized)
+
+The memory and allocator infrastructure now uses a runtime registry
+(`MemoryBackendRegistry`) instead of compile-time `#if` chains to bind
+backend-specific allocators and memory operations. The host backend registers
+automatically inside the portable foundation. Device backends register from
+their own compilation units at link time, so the foundation never needs to
+`#include` backend-specific headers.
+
+This is the first concrete realization of the dependency discipline described
+above: the foundation owns the registry contract and the always-available host
+backend, while heavyweight SDK-dependent backends remain optional additive
+registrations.
+
+See [memory_backend_registry.md](memory_backend_registry.md) for the full
+design.
+
 ## Portability Boundaries
 
 Several current seams need to be hardened before ZPC can claim a credible portable
@@ -117,6 +134,8 @@ core usable across desktop, mobile, web, and future constrained targets.
 
 ## Related Pages
 
+- [memory_backend_registry.md](memory_backend_registry.md) for the runtime
+  memory backend registry that decouples the foundation from backend SDKs
 - [runtime_core_design.md](runtime_core_design.md) for the async control-plane layer
   built on top of the foundation
 - [architecture_and_modularization.md](architecture_and_modularization.md) for the

@@ -46,7 +46,7 @@ namespace zs {
       // cleanup present history
       for (PresentOperationInfo &presentInfo : presentHistory) {
         if ((VkFence)presentInfo.cleanupFence != VK_NULL_HANDLE)
-          ctx.device.waitForFences(1, &presentInfo.cleanupFence, true, UINT64_MAX, ctx.dispatcher);
+          (void)ctx.device.waitForFences(1, &presentInfo.cleanupFence, true, UINT64_MAX, ctx.dispatcher);
         cleanupPresentInfo(presentInfo);
       }
       // cleanup old swapchains

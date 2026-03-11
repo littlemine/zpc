@@ -23,20 +23,20 @@ namespace zs {
 
     void remember_executor(const SmallString &executor) {
       if (executor.size() == 0) return;
-      std::lock_guard<std::mutex> lock(_mutex);
+      std::lock_guard<Mutex> lock(_mutex);
       for (const auto &known : _knownExecutors)
         if (known == executor) return;
       _knownExecutors.push_back(executor);
     }
 
     bool session_exists(InterfaceSessionHandle session) const {
-      std::lock_guard<std::mutex> lock(_mutex);
+      std::lock_guard<Mutex> lock(_mutex);
       return find_session_(session) != nullptr;
     }
 
     bool publish_validation(InterfaceSessionHandle session, ValidationSuiteReport report,
                             const ValidationComparisonReport *comparison = nullptr) {
-      std::lock_guard<std::mutex> lock(_mutex);
+      std::lock_guard<Mutex> lock(_mutex);
       auto *state = find_session_(session);
       if (!state) return false;
       state->latestReport = zs::move(report);
@@ -57,7 +57,7 @@ namespace zs {
 
     InterfaceSessionHandle open_session(const InterfaceSessionDescriptor &descriptor) override {
       if (descriptor.label.size() == 0) return {};
-      std::lock_guard<std::mutex> lock(_mutex);
+      std::lock_guard<Mutex> lock(_mutex);
       SessionState state{};
       const auto handle = InterfaceSessionHandle{_nextSessionId.fetch_add(1) + 1};
       state.handle = handle;
@@ -67,14 +67,14 @@ namespace zs {
     }
 
     bool close_session(InterfaceSessionHandle session) override {
-      std::lock_guard<std::mutex> lock(_mutex);
+      std::lock_guard<Mutex> lock(_mutex);
       return _sessions.erase(session.id) != 0;
     }
 
     bool describe_session(InterfaceSessionHandle session,
                           InterfaceSessionDescriptor *descriptor) const override {
       if (descriptor == nullptr) return false;
-      std::lock_guard<std::mutex> lock(_mutex);
+      std::lock_guard<Mutex> lock(_mutex);
       auto *state = find_session_(session);
       if (!state) return false;
       *descriptor = state->descriptor;
@@ -84,7 +84,7 @@ namespace zs {
     bool query_capabilities(InterfaceSessionHandle session,
                             InterfaceCapabilitySnapshot *capabilities) const override {
       if (capabilities == nullptr) return false;
-      std::lock_guard<std::mutex> lock(_mutex);
+      std::lock_guard<Mutex> lock(_mutex);
       auto *state = find_session_(session);
       if (!state) return false;
       capabilities->profile = state->descriptor.profile.size() ? state->descriptor.profile : "runtime";
@@ -128,7 +128,7 @@ namespace zs {
       record.backend = submissionBackend;
       record.queue = submissionQueue;
       {
-        std::lock_guard<std::mutex> lock(_mutex);
+        std::lock_guard<Mutex> lock(_mutex);
         auto *state = find_session_(session);
         if (!state) return {};
         state->submissions.insert_or_assign(handle.id(), zs::move(record));
@@ -139,7 +139,7 @@ namespace zs {
     bool query_submission(InterfaceSessionHandle session, u64 submissionId,
                           InterfaceSubmissionSummary *summary) const override {
       if (summary == nullptr) return false;
-      std::lock_guard<std::mutex> lock(_mutex);
+      std::lock_guard<Mutex> lock(_mutex);
       auto *state = find_session_(session);
       if (!state) return false;
       auto it = state->submissions.find(submissionId);
@@ -154,7 +154,7 @@ namespace zs {
     }
 
     bool cancel_submission(InterfaceSessionHandle session, u64 submissionId) override {
-      std::lock_guard<std::mutex> lock(_mutex);
+      std::lock_guard<Mutex> lock(_mutex);
       auto *state = find_session_(session);
       if (!state) return false;
       auto it = state->submissions.find(submissionId);
@@ -166,7 +166,7 @@ namespace zs {
     bool latest_snapshot(InterfaceSessionHandle session,
                          InterfaceValidationSnapshot *snapshot) const override {
       if (snapshot == nullptr) return false;
-      std::lock_guard<std::mutex> lock(_mutex);
+      std::lock_guard<Mutex> lock(_mutex);
       auto *state = find_session_(session);
       if (!state) return false;
       *snapshot = state->latestSnapshot;
@@ -176,7 +176,7 @@ namespace zs {
     bool latest_report(InterfaceSessionHandle session,
                        ValidationSuiteReport *report) const override {
       if (report == nullptr) return false;
-      std::lock_guard<std::mutex> lock(_mutex);
+      std::lock_guard<Mutex> lock(_mutex);
       auto *state = find_session_(session);
       if (!state) return false;
       *report = state->latestReport;
@@ -186,7 +186,7 @@ namespace zs {
     bool latest_comparison(InterfaceSessionHandle session,
                            ValidationComparisonReport *report) const override {
       if (report == nullptr) return false;
-      std::lock_guard<std::mutex> lock(_mutex);
+      std::lock_guard<Mutex> lock(_mutex);
       auto *state = find_session_(session);
       if (!state || !state->latestSnapshot.hasComparison) return false;
       *report = state->latestComparison;
@@ -195,7 +195,7 @@ namespace zs {
 
     std::vector<InterfaceResourceInfo> list_resources(InterfaceSessionHandle session) const override {
       if (!_resourceManager || !session.valid()) return {};
-      std::lock_guard<std::mutex> lock(_mutex);
+      std::lock_guard<Mutex> lock(_mutex);
       if (!find_session_(session)) return {};
       std::vector<InterfaceResourceInfo> resources;
       for (const auto &entry : _resourceHandles) {
@@ -208,7 +208,7 @@ namespace zs {
     bool query_resource(InterfaceSessionHandle session, AsyncResourceHandle resource,
                         InterfaceResourceInfo *info) const override {
       if (!_resourceManager || !session.valid() || info == nullptr) return false;
-      std::lock_guard<std::mutex> lock(_mutex);
+      std::lock_guard<Mutex> lock(_mutex);
       if (!find_session_(session)) return false;
       return query_resource_locked_(resource, info);
     }
@@ -224,7 +224,7 @@ namespace zs {
 
     void remember_resource(AsyncResourceHandle resource) {
       if (!resource.valid()) return;
-      std::lock_guard<std::mutex> lock(_mutex);
+      std::lock_guard<Mutex> lock(_mutex);
       for (const auto &known : _resourceHandles)
         if (known == resource) return;
       _resourceHandles.push_back(resource);
@@ -293,7 +293,7 @@ namespace zs {
 
     AsyncRuntime &_runtime;
     AsyncResourceManager *_resourceManager{nullptr};
-    mutable std::mutex _mutex{};
+    mutable Mutex _mutex{};
     Atomic<u64> _nextSessionId{0};
     std::unordered_map<u64, SessionState> _sessions{};
     std::vector<SmallString> _knownExecutors{};

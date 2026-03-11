@@ -84,13 +84,12 @@ namespace zs {
 #endif
     args.push_back("-DZPC_JIT_MODE");
 
-    clang::IntrusiveRefCntPtr<clang::DiagnosticOptions> diagnostic_options
-        = new clang::DiagnosticOptions();
+    clang::DiagnosticOptions diagnostic_options;
     std::unique_ptr<clang::TextDiagnosticPrinter> text_diagnostic_printer
-        = std::make_unique<clang::TextDiagnosticPrinter>(llvm::errs(), &*diagnostic_options);
+        = std::make_unique<clang::TextDiagnosticPrinter>(llvm::errs(), diagnostic_options);
     clang::IntrusiveRefCntPtr<clang::DiagnosticIDs> diagnostic_ids;
     std::unique_ptr<clang::DiagnosticsEngine> diagnostic_engine
-        = std::make_unique<clang::DiagnosticsEngine>(diagnostic_ids, &*diagnostic_options,
+        = std::make_unique<clang::DiagnosticsEngine>(diagnostic_ids, diagnostic_options,
                                                      text_diagnostic_printer.release());
 
     clang::CompilerInstance compiler_instance;

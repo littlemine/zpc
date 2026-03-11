@@ -1,6 +1,5 @@
 #pragma once
 
-#include <mutex>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -257,7 +256,7 @@ namespace zs {
 
   private:
     explicit AsyncSubmissionHandle(Shared<AsyncSubmissionState> state)
-        : _state{std::move(state)} {}
+        : _state{zs::move(state)} {}
 
     Shared<AsyncSubmissionState> _state{};
 
@@ -267,7 +266,7 @@ namespace zs {
   class AsyncInlineExecutor : public AsyncExecutor {
   public:
     explicit AsyncInlineExecutor(std::string executorName = "inline")
-        : _name{std::move(executorName)} {}
+        : _name{zs::move(executorName)} {}
 
     AsyncBackend backend() const noexcept override { return AsyncBackend::inline_host; }
     std::string_view name() const noexcept override { return _name; }
@@ -324,7 +323,7 @@ namespace zs {
     void dispatch(const Shared<AsyncSubmissionState> &state,
                   const Shared<AsyncExecutor> &executor) const;
 
-    mutable std::mutex _mutex{};
+    mutable Mutex _mutex{};
     std::unordered_map<std::string, Shared<AsyncExecutor>> _executors{};
     Atomic<u64> _nextSubmissionId{0};
   };
@@ -341,7 +340,7 @@ namespace zs {
   }
 
   inline AsyncThreadPoolExecutor::AsyncThreadPoolExecutor(std::string executorName, size_t workerCount)
-      : _name{std::move(executorName)} {
+      : _name{zs::move(executorName)} {
     if (workerCount == 0) workerCount = 1;
     if (workerCount > 16) workerCount = 16;
     _workerCount = workerCount;
@@ -349,7 +348,7 @@ namespace zs {
     for (size_t i = 0; i != workerCount; ++i) {
       auto worker = zs::make_unique<ManagedThread>();
       worker->start([this](ManagedThread &thread) { worker_loop(thread); }, "async-worker");
-      _workers.push_back(std::move(worker));
+      _workers.push_back(zs::move(worker));
     }
   }
 
@@ -455,18 +454,18 @@ namespace zs {
   }
 
   inline bool AsyncRuntime::contains_executor(const std::string &name) const {
-    std::lock_guard<std::mutex> lock(_mutex);
+    std::lock_guard<Mutex> lock(_mutex);
     return _executors.find(name) != _executors.end();
   }
 
   inline void AsyncRuntime::register_executor(std::string name,
                                               Shared<AsyncExecutor> executor) {
-    std::lock_guard<std::mutex> lock(_mutex);
-    _executors.insert_or_assign(std::move(name), std::move(executor));
+    std::lock_guard<Mutex> lock(_mutex);
+    _executors.insert_or_assign(zs::move(name), zs::move(executor));
   }
 
   inline Shared<AsyncExecutor> AsyncRuntime::get_executor(const SmallString &name) const {
-    std::lock_guard<std::mutex> lock(_mutex);
+    std::lock_guard<Mutex> lock(_mutex);
     if (auto it = _executors.find(name.asChars()); it != _executors.end()) return it->second;
     return {};
   }

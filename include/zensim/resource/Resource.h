@@ -4,6 +4,7 @@
 #include <iostream>
 #include <sstream>
 #include <stdexcept>
+#include <string_view>
 #include <vector>
 
 #include "zensim/Reflection.h"
@@ -11,22 +12,10 @@
 #include "zensim/ZpcFunction.hpp"
 #include "zensim/memory/MemOps.hpp"
 #include "zensim/memory/MemoryResource.h"
-// #include "zensim/types/Pointers.hpp"
-#include "zensim/memory/Allocator.h"
+#include "zensim/memory/MemoryBackend.h"
 #include "zensim/types/SmallVector.hpp"
 #include "zensim/types/Tuple.h"
 #include "zensim/types/Property.h"
-#if ZS_ENABLE_CUDA
-#  include "zensim/cuda/memory/Allocator.h"
-#elif ZS_ENABLE_MUSA
-#  include "zensim/musa/memory/Allocator.h"
-#elif ZS_ENABLE_ROCM
-#  include "zensim/rocm/memory/Allocator.h"
-#elif ZS_ENABLE_SYCL
-#  include "zensim/sycl/memory/Allocator.h"
-#endif
-#if ZS_ENABLE_OPENMP
-#endif
 
 namespace zs {
 
@@ -51,8 +40,8 @@ namespace zs {
     }
 
     friend void swap(ZSPmrAllocator &a, ZSPmrAllocator &b) noexcept {
-      std::swap(a.res, b.res);
-      std::swap(a.location, b.location);
+      zs_swap(a.res, b.res);
+      zs_swap(a.location, b.location);
     }
 
     constexpr resource_type *resource() noexcept { return res.get(); }
@@ -92,7 +81,16 @@ namespace zs {
       return ret;
     }
 
-    /// owning upstream should specify deleter
+    /// @brief Initialise the allocator with a pre-built resource, its location
+    /// and a cloner callable that can recreate an equivalent resource.
+    void init(UniquePtr<resource_type> resource, MemoryLocation loc,
+              function<UniquePtr<resource_type>()> clonerFn) {
+      res = zs::move(resource);
+      location = loc;
+      cloner = zs::move(clonerFn);
+    }
+
+    /// @deprecated Legacy template-based setup.  Prefer init() or get_memory_source().
     template <template <typename Tag> class ResourceT, typename... Args, size_t... Is>
     void setOwningUpstream(mem_tags tag, ProcID devid, zs::tuple<Args...> args,
                            index_sequence<Is...>) {
@@ -115,6 +113,7 @@ namespace zs {
                     << std::endl;
       })(tag);
     }
+    /// @deprecated Legacy template-based setup.  Prefer init() or get_memory_source().
     template <template <typename Tag> class ResourceT, typename MemTag, typename... Args>
     void setOwningUpstream(MemTag tag, ProcID devid, Args &&...args) {
       if constexpr (is_same_v<MemTag, mem_tags>)
@@ -148,34 +147,13 @@ namespace zs {
   extern template struct ZPC_TEMPLATE_IMPORT ZSPmrAllocator<false, byte>;
   extern template struct ZPC_TEMPLATE_IMPORT ZSPmrAllocator<true, byte>;
 
-  /// @note might not be sufficient for multi-GPU-context scenarios
+  /// @note Queries the runtime registry for execution-space ? memory-space compatibility.
   template <typename Policy, bool is_virtual, typename T>
-  bool valid_memspace_for_execution(const Policy &pol,
+  bool valid_memspace_for_execution(const Policy &,
                                     const ZSPmrAllocator<is_virtual, T> &allocator) {
     constexpr execspace_e space = Policy::exec_tag::value;
-#if ZS_ENABLE_CUDA
-    if constexpr (space == execspace_e::cuda)
-      return allocator.location.memspace() == memsrc_e::device
-             || allocator.location.memspace() == memsrc_e::um;
-#elif ZS_ENABLE_MUSA
-    if constexpr (space == execspace_e::musa)
-      return allocator.location.memspace() == memsrc_e::device
-             || allocator.location.memspace() == memsrc_e::um;
-#elif ZS_ENABLE_ROCM
-    if constexpr (space == execspace_e::rocm)
-      return allocator.location.memspace() == memsrc_e::device
-             || allocator.location.memspace() == memsrc_e::um;
-#elif ZS_ENABLE_SYCL
-    if constexpr (space == execspace_e::sycl)
-      return allocator.location.memspace() == memsrc_e::device
-             || allocator.location.memspace() == memsrc_e::um;
-#endif
-#if ZS_ENABLE_OPENMP
-    if constexpr (space == execspace_e::openmp)
-      return allocator.location.memspace() == memsrc_e::host;
-#endif
-    /// @note sequential (host)
-    return allocator.location.memspace() == memsrc_e::host;
+    return MemoryBackendRegistry::instance().valid_memspace_for_execution(
+        space, allocator.location.memspace());
   }
 
   template <typename Allocator> struct is_zs_allocator : false_type {};
@@ -185,89 +163,29 @@ namespace zs {
       = conditional_t<is_zs_allocator<Allocator>::value, typename Allocator::is_virtual,
                       false_type>;
 
+  /// @brief Compile-time query kept for backward compatibility in template code
+  /// that still uses tag-dispatch.  Prefers the runtime registry when possible.
   template <typename MemTag> constexpr bool is_memory_source_available(MemTag) noexcept {
-    if constexpr (is_same_v<MemTag, device_mem_tag>)
-      return ZS_ENABLE_DEVICE;
-    else if constexpr (is_same_v<MemTag, um_mem_tag>)
-      return ZS_ENABLE_DEVICE;
-    else if constexpr (is_same_v<MemTag, host_mem_tag>)
+    if constexpr (is_same_v<MemTag, host_mem_tag>)
       return true;
+    // For device/um the compile-time flag is still the conservative answer;
+    // at runtime the registry may have additional backends registered.
+    else if constexpr (is_same_v<MemTag, device_mem_tag> || is_same_v<MemTag, um_mem_tag>)
+      return ZS_ENABLE_DEVICE;
     return false;
   }
 
-  inline ZPC_API ZSPmrAllocator<> get_memory_source(memsrc_e mre, ProcID devid,
-                                                    std::string_view advice = std::string_view{}) {
-    const mem_tags tag = to_memory_source_tag(mre);
-    ZSPmrAllocator<> ret{};
-    if (advice.empty()) {
-      if (mre == memsrc_e::um) {
-        if (devid < -1)
-          match([&ret, devid](auto tag) {
-            if constexpr (is_memory_source_available(tag) || is_same_v<RM_CVREF_T(tag), mem_tags>)
-              ret.setOwningUpstream<advisor_memory_resource>(tag, devid, "READ_MOSTLY");
-            else
-              std::cerr << "invalid allocations of memory resource \""
-                        << get_var_type_str(tag) << "\" with advice \"READ_MOSTLY\""
-                        << std::endl;
-          })(tag);
-        else
-          match([&ret, devid](auto tag) {
-            if constexpr (is_memory_source_available(tag) || is_same_v<RM_CVREF_T(tag), mem_tags>)
-              ret.setOwningUpstream<advisor_memory_resource>(tag, devid, "PREFERRED_LOCATION");
-            else
-              std::cerr << "invalid allocations of memory resource \""
-                        << get_var_type_str(tag) << "\" with advice \"PREFERRED_LOCATION\""
-                        << std::endl;
-          })(tag);
-      } else {
-        // match([&ret](auto &tag) { ret.setNonOwningUpstream<raw_memory_resource>(tag); })(tag);
-        match([&ret, devid](auto tag) {
-          if constexpr (is_memory_source_available(tag) || is_same_v<RM_CVREF_T(tag), mem_tags>)
-            ret.setOwningUpstream<default_memory_resource>(tag, devid);
-          else
-            std::cerr << "invalid default allocations of memory resource \""
-                      << get_var_type_str(tag) << "\"" << std::endl;
-        })(tag);
-        // ret.setNonOwningUpstream<raw_memory_resource>(tag);
-      }
-    } else
-      match([&ret, &advice, devid](auto tag) {
-        if constexpr (is_memory_source_available(tag) || is_same_v<RM_CVREF_T(tag), mem_tags>)
-          ret.setOwningUpstream<advisor_memory_resource>(tag, devid, advice);
-        else
-          std::cerr << "invalid advice \"" << advice << "\" for allocations of memory resource \""
-                    << get_var_type_str(tag) << "\"" << std::endl;
-      })(tag);
-    return ret;
+  /// @brief Runtime query: is a particular memory source available?
+  inline bool is_memory_source_available(memsrc_e mre) noexcept {
+    return MemoryBackendRegistry::instance().is_available(mre);
   }
 
-  inline ZPC_API ZSPmrAllocator<true> get_virtual_memory_source(memsrc_e mre, ProcID devid,
-                                                                size_t bytes,
-                                                                std::string_view option = "STACK") {
-    const mem_tags tag = to_memory_source_tag(mre);
-    ZSPmrAllocator<true> ret{};
-    if (mre == memsrc_e::um)
-      throw std::runtime_error("no corresponding virtual memory resource for [um]");
-    match([&ret, devid, bytes, option](auto tag) {
-      if constexpr (!is_same_v<decltype(tag), um_mem_tag>)
-        if constexpr (is_memory_source_available(tag)) {
-          if (option == "ARENA")
-            ret.setOwningUpstream<arena_virtual_memory_resource>(tag, devid, bytes);
-          else if (option == "STACK" || option.empty())
-            ret.setOwningUpstream<stack_virtual_memory_resource>(tag, devid, bytes);
-          else {
-            std::ostringstream oss;
-            oss << "unknown vmr option [" << option << "]\n";
-            throw std::runtime_error(oss.str());
-          }
-          return;
-        }
-      std::cerr << "invalid option \"" << option
-                << "\" for allocations of virtual memory resource \""
-                << get_var_type_str(tag).asChars() << "\"." << std::endl;
-    })(tag);
-    return ret;
-  }
+  ZPC_API ZSPmrAllocator<> get_memory_source(memsrc_e mre, ProcID devid,
+                                             std::string_view advice = std::string_view{});
+
+  ZPC_API ZSPmrAllocator<true> get_virtual_memory_source(memsrc_e mre, ProcID devid,
+                                                         size_t bytes,
+                                                         std::string_view option = "STACK");
 
   template <execspace_e space> constexpr bool initialize_backend(wrapv<space>) noexcept {
     return false;
@@ -276,31 +194,8 @@ namespace zs {
   struct ZPC_API Resource {
     static std::atomic_ullong &counter() noexcept;
     static Resource &instance() noexcept;
-    static void copy(MemoryEntity dst, MemoryEntity src, size_t numBytes) {
-      if (dst.location.onHost() && src.location.onHost())
-        zs::copy(mem_host, dst.ptr, src.ptr, numBytes);
-      else {
-        if constexpr (is_memory_source_available(mem_device)) {
-          if (!dst.location.onHost() && !src.location.onHost())
-            zs::copyDtoD(mem_device, dst.ptr, src.ptr, numBytes);
-          else if (dst.location.onHost() && !src.location.onHost())
-            zs::copyDtoH(mem_device, dst.ptr, src.ptr, numBytes);
-          else if (!dst.location.onHost() && src.location.onHost())
-            zs::copyHtoD(mem_device, dst.ptr, src.ptr, numBytes);
-        } else
-          throw std::runtime_error("There is no corresponding device backend for Resource::copy");
-      }
-    }
-    static void memset(MemoryEntity dst, char ch, size_t numBytes) {
-      if (dst.location.onHost())
-        zs::memset(mem_host, dst.ptr, ch, numBytes);
-      else {
-        if constexpr (is_memory_source_available(mem_device))
-          zs::memset(mem_device, dst.ptr, ch, numBytes);
-        else
-          throw std::runtime_error("There is no corresponding device backend for Resource::memset");
-      }
-    }
+    static void copy(MemoryEntity dst, MemoryEntity src, size_t numBytes);
+    static void memset(MemoryEntity dst, char ch, size_t numBytes);
 
     struct AllocationRecord {
       mem_tags tag{};

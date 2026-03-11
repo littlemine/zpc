@@ -103,6 +103,8 @@ namespace zs::reflect_tool {
   struct ReflectionModel {
     std::string debugName;
     std::set<std::string> generatedHeaders;
+    /// Original input source files (need to be #include'd before reflected headers)
+    std::vector<std::string> inputSourcePaths;
   };
 
   // -----------------------------------------------------------------------

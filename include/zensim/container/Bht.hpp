@@ -229,7 +229,7 @@ namespace zs {
     }
     bht &operator=(bht &&o) noexcept {
       if (this == &o) return *this;
-      bht tmp(std::move(o));
+      bht tmp(zs::move(o));
       swap(tmp);
       return *this;
     }

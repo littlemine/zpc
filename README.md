@@ -9,6 +9,7 @@ This repo is going through rapid changes, and we do not promise ABI compatibilit
 See [git wiki](https://github.com/zensim-dev/zpc/wiki) page for more build details.
 See [Specification](Specification.md) for more usage info.
 See [docs/roadmap.md](docs/roadmap.md) for the platform direction and delivery priorities.
+See [docs/memory_backend_registry.md](docs/memory_backend_registry.md) for the runtime memory backend design.
 See [docs/README.md](docs/README.md) for a repository-friendly docs portal with images and quick navigation.
 
 ## **Compilation**

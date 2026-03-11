@@ -1,9 +1,10 @@
 set(ZENSIM_LIBRARY_CORE_SOURCE_FILES
-  math/probability/Probability.cpp
-  math/matrix/MatrixTransform.cpp
-  memory/MemOps.cpp
-  memory/Allocator.cpp
-  profile/CppTimers.cpp
+math/probability/Probability.cpp
+math/matrix/MatrixTransform.cpp
+memory/MemOps.cpp
+memory/Allocator.cpp
+memory/MemoryBackend.cpp
+profile/CppTimers.cpp
   execution/Stacktrace.cpp
   # execution/ExecutionPolicy.cpp
   execution/ConcurrencyPrimitive.cpp
@@ -172,6 +173,7 @@ set(ZENSIM_LIBRARY_CORE_INCLUDE_FILES
   # memory
   memory/MemOps.hpp
   memory/Allocator.h
+  memory/MemoryBackend.h
   memory/MemoryResource.h
 
   # meta
@@ -262,6 +264,7 @@ set(ZENSIM_LIBRARY_FOUNDATION_INCLUDE_FILES
   math/VecInterface.hpp
   memory/Allocator.h
   memory/MemOps.hpp
+  memory/MemoryBackend.h
   memory/MemoryResource.h
   meta/Functional.h
   meta/Meta.h
@@ -552,9 +555,10 @@ endif(ZS_ENABLE_PCH)
 
 target_link_libraries(zpccore PUBLIC zpcbase zpccore_foundation zpc_validation_core zpc_async_runtime_core)
 target_link_libraries(zpccore PRIVATE zswhereami)
-# if (WIN32)
-#   target_link_libraries(zpccore PUBLIC synchronization)
-# endif(WIN32)
+if(WIN32)
+  # Required for WaitOnAddress / WakeByAddress* (futex primitives) in ConcurrencyPrimitive.cpp
+  target_link_libraries(zpccore PUBLIC synchronization)
+endif()
 target_compile_options(zpccore
   PUBLIC $<$<COMPILE_LANGUAGE:CXX>: $<IF:$<CXX_COMPILER_ID:MSVC,Intel>, /Zc:preprocessor /Zc:__cplusplus /utf-8 /bigobj $<IF:$<CONFIG:Debug>, , /O2> /EHsc, $<IF:$<CXX_COMPILER_ID:Clang>, -Xclang -O3, -O3> >> # -fuse-ld=lld -fvisibility=hidden># -flto=thin -fsanitize=cfi
 )
@@ -573,7 +577,7 @@ set_target_properties(zpccore
   ARCHIVE_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}
 )
 
-# target_link_libraries(zpc_cxx_deps INTERFACE $<IF:$<CXX_COMPILER_ID:MSVC>, synchronization.lib, >)
+# synchronization.lib is linked via zpccore for WaitOnAddress / WakeByAddress*
 
 if(ZS_ENABLE_OPENMP)
   target_compile_definitions(zpc_cxx_deps INTERFACE ZS_ENABLE_OPENMP=1)
@@ -655,15 +659,15 @@ if(ZS_ENABLE_OPENMP)
   target_link_libraries(zpcomp PUBLIC zpc_omp_deps zpccore)
 
   if(WIN32)
-    target_compile_options(zpcomp # MSVC, GNU, Clang, Intel
-      # PUBLIC $<$<COMPILE_LANGUAGE:CXX>: /openmp:llvm /openmp:experimental>
-      PUBLIC $<$<COMPILE_LANGUAGE:CXX>: /openmp>
-    )
     include(CheckCXXCompilerFlag)
     check_cxx_compiler_flag("/openmp:experimental" MSVC_SUPPORT_OPENMP_EXPERIMENTAL)
     if(MSVC_SUPPORT_OPENMP_EXPERIMENTAL)
       target_compile_options(zpcomp
         PUBLIC $<$<COMPILE_LANGUAGE:CXX>: /openmp:experimental>
+      )
+    else()
+      target_compile_options(zpcomp
+        PUBLIC $<$<COMPILE_LANGUAGE:CXX>: /openmp>
       )
     endif()
   else()
@@ -1366,6 +1370,10 @@ if(ZS_ENABLE_JIT)
     )
     find_package(LLVM CONFIG)
     find_package(Clang CONFIG HINTS "${LLVM_DIR}/../clang" "${LLVM_DIR}/../lib/cmake/clang")
+    # Fix $(Configuration) placeholder from multi-config LLVM builds for Ninja
+    if(LLVM_LIBRARY_DIR MATCHES "\\$\\(Configuration\\)")
+        string(REPLACE "$(Configuration)" "${CMAKE_BUILD_TYPE}" LLVM_LIBRARY_DIR "${LLVM_LIBRARY_DIR}")
+    endif()
     get_target_property(jit_dep_libs zpc_jit_deps INTERFACE_LINK_LIBRARIES)
     foreach(lib ${jit_dep_libs})
       if(TARGET ${lib})
