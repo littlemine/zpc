@@ -216,3 +216,11 @@ target_compile_features(renderbenchmarksmoke PRIVATE cxx_std_17)
 
 add_test(ZsRenderBenchmarkSmoke renderbenchmarksmoke)
 add_dependencies(zensim renderbenchmarksmoke)
+
+# render end-to-end (requires Vulkan GPU at runtime)
+add_executable(rendere2e render/render_e2e.cpp)
+target_link_libraries(rendere2e PRIVATE zpc_render_capture)
+target_compile_features(rendere2e PRIVATE cxx_std_17)
+
+add_test(ZsRenderE2E rendere2e)
+add_dependencies(zensim rendere2e)
