@@ -1,5 +1,6 @@
 #pragma once
 
+#include <string>
 #include <vector>
 
 #include "zensim/execution/AsyncResourceManager.hpp"
@@ -60,6 +61,7 @@ namespace zs {
   };
 
   struct InterfaceValidationSnapshot {
+    u64 reportId{0};
     SmallString suite{};
     SmallString schemaVersion{"zpc.validation.v1"};
     ValidationSummary summary{};
@@ -115,6 +117,25 @@ namespace zs {
                                ValidationSuiteReport *report) const = 0;
     virtual bool latest_comparison(InterfaceSessionHandle session,
                                    ValidationComparisonReport *report) const = 0;
+    virtual std::vector<InterfaceValidationSnapshot> list_snapshots(
+        InterfaceSessionHandle session) const = 0;
+    virtual bool snapshot(InterfaceSessionHandle session, u64 reportId,
+                          InterfaceValidationSnapshot *snapshot) const = 0;
+    virtual bool report(InterfaceSessionHandle session, u64 reportId,
+                        ValidationSuiteReport *report) const = 0;
+    virtual bool comparison(InterfaceSessionHandle session, u64 reportId,
+                            ValidationComparisonReport *report) const = 0;
+    virtual bool format_latest_report(InterfaceSessionHandle session, InterfaceReportFormat format,
+                                      std::string *output) const = 0;
+    virtual bool format_latest_comparison(InterfaceSessionHandle session,
+                                          InterfaceReportFormat format,
+                                          std::string *output) const = 0;
+    virtual bool format_report(InterfaceSessionHandle session, u64 reportId,
+                               InterfaceReportFormat format,
+                               std::string *output) const = 0;
+    virtual bool format_comparison(InterfaceSessionHandle session, u64 reportId,
+                                   InterfaceReportFormat format,
+                                   std::string *output) const = 0;
   };
 
   class InterfaceResourceService {

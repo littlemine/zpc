@@ -1,4 +1,5 @@
 #include <cstdio>
+#include <string>
 
 #include "zensim/interface/LocalCanaryService.hpp"
 
@@ -140,6 +141,49 @@ int main() {
     return 1;
   }
 
+  std::vector<zs::InterfaceValidationSnapshot> snapshots = services.list_snapshots(session);
+  if (snapshots.size() != 1 || snapshots.front().reportId == 0 || !snapshots.front().hasComparison) {
+    std::fprintf(stderr, "missing validation history\n");
+    return 1;
+  }
+
+  zs::InterfaceValidationSnapshot firstSnapshot{};
+  if (!services.snapshot(session, snapshots.front().reportId, &firstSnapshot)
+      || firstSnapshot.summary.total != 2) {
+    std::fprintf(stderr, "missing validation snapshot by id\n");
+    return 1;
+  }
+
+  std::string latestSummary;
+  if (!services.format_latest_report(session, zs::InterfaceReportFormat::summary, &latestSummary)
+      || latestSummary.find("suite=demo") == std::string::npos) {
+    std::fprintf(stderr, "missing formatted latest validation summary\n");
+    return 1;
+  }
+
+  std::string latestReportJson;
+  if (!services.format_report(session, snapshots.front().reportId, zs::InterfaceReportFormat::json,
+                              &latestReportJson)
+      || latestReportJson.find("\"suite\":\"demo\"") == std::string::npos) {
+    std::fprintf(stderr, "missing formatted validation report\n");
+    return 1;
+  }
+
+  std::string latestComparisonText;
+  if (!services.format_latest_comparison(session, zs::InterfaceReportFormat::text,
+                                         &latestComparisonText)
+      || latestComparisonText.find("accepted=true") == std::string::npos) {
+    std::fprintf(stderr, "missing formatted validation comparison\n");
+    return 1;
+  }
+
+  zs::ValidationComparisonReport firstComparison{};
+  if (!services.comparison(session, snapshots.front().reportId, &firstComparison)
+      || firstComparison.summary.total != 2) {
+    std::fprintf(stderr, "missing validation comparison by id\n");
+    return 1;
+  }
+
   zs::ValidationSuiteReport lastRun{};
   if (!canaryService.last_report("demo", &lastRun) || lastRun.suite != "demo") {
     std::fprintf(stderr, "missing last canary report\n");
@@ -188,6 +232,21 @@ int main() {
   const auto badResult = canaryService.run_scenario(badRequest);
   if (badResult.accepted) {
     std::fprintf(stderr, "invalid canary override unexpectedly accepted\n");
+    return 1;
+  }
+
+  snapshots = services.list_snapshots(session);
+  if (snapshots.size() != 3 || snapshots.back().summary.failed != 1
+      || snapshots.back().reportId == snapshots.front().reportId) {
+    std::fprintf(stderr, "validation history growth mismatch\n");
+    return 1;
+  }
+
+  std::string badComparisonJson;
+  if (!services.format_comparison(session, snapshots.back().reportId,
+                                  zs::InterfaceReportFormat::json, &badComparisonJson)
+      || badComparisonJson.find("\"accepted\":false") == std::string::npos) {
+    std::fprintf(stderr, "missing formatted bad comparison\n");
     return 1;
   }
 
