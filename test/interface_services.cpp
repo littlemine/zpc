@@ -1,6 +1,8 @@
 #include <cstdio>
+#include <cstdlib>
 #include <string>
 
+#include "zensim/execution/AsyncBackendProfile.hpp"
 #include "zensim/interface/LocalCanaryService.hpp"
 
 int main() {
@@ -244,11 +246,122 @@ int main() {
 
   std::string badComparisonJson;
   if (!services.format_comparison(session, snapshots.back().reportId,
-                                  zs::InterfaceReportFormat::json, &badComparisonJson)
+                                   zs::InterfaceReportFormat::json, &badComparisonJson)
       || badComparisonJson.find("\"accepted\":false") == std::string::npos) {
     std::fprintf(stderr, "missing formatted bad comparison\n");
     return 1;
   }
+
+  // ---- Candidate 2: profile-aware capability discovery ----
+  services.register_backend_profile("vulkan", zs::make_vulkan_backend_profile());
+  services.register_backend_profile("cuda", zs::make_cuda_backend_profile());
+
+  zs::InterfaceCapabilitySnapshot profileCapabilities{};
+  if (!services.query_capabilities(session, &profileCapabilities)) {
+    std::fprintf(stderr, "profile-aware query_capabilities failed\n");
+    return 1;
+  }
+
+  if (profileCapabilities.backendProfiles.size() != 2) {
+    std::fprintf(stderr, "expected 2 backend profiles, got %zu\n",
+                 profileCapabilities.backendProfiles.size());
+    return 1;
+  }
+
+  bool foundVulkan = false, foundCuda = false;
+  for (const auto &b : profileCapabilities.backends) {
+    if (b == zs::AsyncBackend::vulkan) foundVulkan = true;
+    if (b == zs::AsyncBackend::cuda) foundCuda = true;
+  }
+  if (!foundVulkan || !foundCuda) {
+    std::fprintf(stderr, "profile-derived backends missing vulkan or cuda\n");
+    return 1;
+  }
+
+  bool hasCompute = false, hasGraphics = false, hasCollective = false;
+  for (const auto &q : profileCapabilities.queues) {
+    if (q == zs::AsyncQueueClass::compute) hasCompute = true;
+    if (q == zs::AsyncQueueClass::graphics) hasGraphics = true;
+    if (q == zs::AsyncQueueClass::collective) hasCollective = true;
+  }
+  if (!hasCompute || !hasGraphics || !hasCollective) {
+    std::fprintf(stderr, "profile-derived queues missing compute, graphics, or collective\n");
+    return 1;
+  }
+
+  const auto &vulkanSummary = profileCapabilities.backendProfiles[0];
+  const auto &cudaSummary = profileCapabilities.backendProfiles[1];
+  if (vulkanSummary.name != "vulkan" || vulkanSummary.presentationReady != true
+      || vulkanSummary.crossPlatformScore != 10) {
+    std::fprintf(stderr, "vulkan profile summary mismatch\n");
+    return 1;
+  }
+  if (cudaSummary.name != "cuda" || cudaSummary.collectiveReady != true
+      || cudaSummary.performanceScore != 10) {
+    std::fprintf(stderr, "cuda profile summary mismatch\n");
+    return 1;
+  }
+
+  const auto profileList = services.list_backend_profiles();
+  if (profileList.size() != 2 || profileList[0].name != "vulkan"
+      || profileList[1].name != "cuda") {
+    std::fprintf(stderr, "list_backend_profiles mismatch\n");
+    return 1;
+  }
+
+  // ---- Candidate 3: baseline save/load/provenance ----
+  const std::string baselinePath = "test_canary_baseline.json";
+  std::string saveError;
+  if (!canaryService.save_baseline("demo", baselinePath, "demo", "initial save", &saveError)) {
+    std::fprintf(stderr, "save_baseline failed: %s\n", saveError.c_str());
+    return 1;
+  }
+
+  std::string loadError;
+  if (!canaryService.load_baseline("demo-loaded", baselinePath, "demo", "loaded from file",
+                                    &loadError)) {
+    std::fprintf(stderr, "load_baseline failed: %s\n", loadError.c_str());
+    return 1;
+  }
+
+  if (!canaryService.has_baseline("demo-loaded")) {
+    std::fprintf(stderr, "loaded baseline not found\n");
+    return 1;
+  }
+
+  zs::CanaryBaselineProvenance loadedProvenance{};
+  if (!canaryService.describe_baseline("demo-loaded", &loadedProvenance)
+      || loadedProvenance.scenarioId != "demo" || loadedProvenance.note != "loaded from file"
+      || loadedProvenance.timestamp == 0) {
+    std::fprintf(stderr, "loaded baseline provenance mismatch\n");
+    return 1;
+  }
+
+  const auto allBaselines = canaryService.list_baselines();
+  bool foundDemo = false, foundPromoted = false, foundLoaded = false;
+  for (const auto &b : allBaselines) {
+    if (b.baselineId == "demo") foundDemo = true;
+    if (b.baselineId == "demo-promoted") foundPromoted = true;
+    if (b.baselineId == "demo-loaded") foundLoaded = true;
+  }
+  if (!foundDemo || !foundPromoted || !foundLoaded) {
+    std::fprintf(stderr, "list_baselines missing expected entries\n");
+    return 1;
+  }
+
+  zs::CanaryScenarioRunRequest loadedBaselineRequest{};
+  loadedBaselineRequest.session = session;
+  loadedBaselineRequest.scenarioId = "demo";
+  loadedBaselineRequest.baselineId = "demo-loaded";
+  loadedBaselineRequest.overrides.push_back(zs::CanaryParameterOverride{"speed", "2.5"});
+  const auto loadedResult = canaryService.run_scenario(loadedBaselineRequest);
+  if (!loadedResult.accepted || !loadedResult.hasComparison) {
+    std::fprintf(stderr, "run with loaded baseline failed\n");
+    return 1;
+  }
+
+  // cleanup baseline file
+  std::remove(baselinePath.c_str());
 
   if (!services.close_session(session) || services.describe_session(session, &describedSession)) {
     std::fprintf(stderr, "session lifecycle mismatch\n");

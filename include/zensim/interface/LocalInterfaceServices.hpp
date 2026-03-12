@@ -5,6 +5,7 @@
 #include <vector>
 
 #include "zensim/ZpcAsync.hpp"
+#include "zensim/execution/AsyncBackendProfile.hpp"
 #include "zensim/execution/ValidationFormat.hpp"
 #include "zensim/interface/InterfaceServices.hpp"
 
@@ -28,6 +29,27 @@ namespace zs {
       for (const auto &known : _knownExecutors)
         if (known == executor) return;
       _knownExecutors.push_back(executor);
+    }
+
+    void register_backend_profile(const SmallString &name, const AsyncBackendProfile &profile) {
+      if (name.size() == 0) return;
+      std::lock_guard<Mutex> lock(_mutex);
+      for (auto &existing : _registeredProfiles) {
+        if (existing.first == name) {
+          existing.second = profile;
+          return;
+        }
+      }
+      _registeredProfiles.push_back({name, profile});
+    }
+
+    std::vector<InterfaceBackendProfileSummary> list_backend_profiles() const {
+      std::lock_guard<Mutex> lock(_mutex);
+      std::vector<InterfaceBackendProfileSummary> summaries;
+      summaries.reserve(_registeredProfiles.size());
+      for (const auto &entry : _registeredProfiles)
+        summaries.push_back(make_profile_summary_(entry.first, entry.second));
+      return summaries;
     }
 
     bool session_exists(InterfaceSessionHandle session) const {
@@ -101,14 +123,28 @@ namespace zs {
       capabilities->backends.clear();
       capabilities->queues.clear();
       capabilities->executors.clear();
+      capabilities->backendProfiles.clear();
       for (const auto &executor : _knownExecutors) {
         if (_runtime.contains_executor(executor.asChars())) {
           capabilities->executors.push_back(executor);
         }
       }
-      if (!capabilities->executors.empty()) {
-        capabilities->backends.push_back(AsyncBackend::inline_host);
-        capabilities->queues.push_back(AsyncQueueClass::control);
+      if (_registeredProfiles.empty()) {
+        if (!capabilities->executors.empty()) {
+          capabilities->backends.push_back(AsyncBackend::inline_host);
+          capabilities->queues.push_back(AsyncQueueClass::control);
+        }
+      } else {
+        for (const auto &entry : _registeredProfiles) {
+          const auto backend = async_backend_from_code(entry.second.backendCode);
+          bool found = false;
+          for (const auto &b : capabilities->backends)
+            if (b == backend) { found = true; break; }
+          if (!found) capabilities->backends.push_back(backend);
+          collect_profile_queues_(entry.second, capabilities->queues);
+          capabilities->backendProfiles.push_back(
+              make_profile_summary_(entry.first, entry.second));
+        }
       }
       capabilities->supportsValidationReports = true;
       capabilities->supportsBenchmarkReports = true;
@@ -358,6 +394,42 @@ namespace zs {
       std::vector<ValidationHistoryEntry> validationHistory{};
     };
 
+    static InterfaceBackendProfileSummary make_profile_summary_(
+        const SmallString &name, const AsyncBackendProfile &profile) {
+      InterfaceBackendProfileSummary summary{};
+      summary.name = name;
+      summary.backendCode = profile.backendCode;
+      summary.utilityMask = profile.utilityMask;
+      summary.queueCapacity = profile.queueCapacity;
+      summary.crossPlatformScore = profile.crossPlatformScore;
+      summary.performanceScore = profile.performanceScore;
+      summary.interactiveScore = profile.interactiveScore;
+      summary.presentationReady = profile.presentationReady;
+      summary.collectiveReady = profile.collectiveReady;
+      summary.mobileReady = profile.mobileReady;
+      return summary;
+    }
+
+    static void collect_profile_queues_(const AsyncBackendProfile &profile,
+                                        std::vector<AsyncQueueClass> &queues) {
+      auto push_unique = [&](AsyncQueueClass q) {
+        for (const auto &existing : queues)
+          if (existing == q) return;
+        queues.push_back(q);
+      };
+      push_unique(AsyncQueueClass::compute);
+      if (profile.supports_queue(async_queue_code(AsyncQueueClass::transfer)))
+        push_unique(AsyncQueueClass::transfer);
+      if (profile.supports_queue(async_queue_code(AsyncQueueClass::copy)))
+        push_unique(AsyncQueueClass::copy);
+      if (profile.supports_queue(async_queue_code(AsyncQueueClass::graphics)))
+        push_unique(AsyncQueueClass::graphics);
+      if (profile.supports_queue(async_queue_code(AsyncQueueClass::present)))
+        push_unique(AsyncQueueClass::present);
+      if (profile.supports_queue(async_queue_code(AsyncQueueClass::collective)))
+        push_unique(AsyncQueueClass::collective);
+    }
+
     static const ValidationHistoryEntry *find_validation_history_(
         const std::vector<ValidationHistoryEntry> &history, u64 reportId) {
       for (const auto &entry : history)
@@ -450,6 +522,7 @@ namespace zs {
     std::unordered_map<u64, SessionState> _sessions{};
     std::vector<SmallString> _knownExecutors{};
     std::vector<AsyncResourceHandle> _resourceHandles{};
+    std::vector<std::pair<SmallString, AsyncBackendProfile>> _registeredProfiles{};
   };
 
 }  // namespace zs

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cerrno>
+#include <chrono>
 #include <cstdlib>
 #include <mutex>
 #include <unordered_map>
@@ -8,6 +9,7 @@
 
 #include "zensim/interface/CanaryScenario.hpp"
 #include "zensim/interface/LocalInterfaceServices.hpp"
+#include "zensim/execution/ValidationPersistence.hpp"
 
 namespace zs {
 
@@ -55,6 +57,79 @@ namespace zs {
       auto it = _lastReports.find(scenarioId.asChars());
       if (it == _lastReports.end()) return false;
       _baselines.insert_or_assign(baselineId.asChars(), it->second);
+      return true;
+    }
+
+    bool save_baseline(const SmallString &baselineId, const std::string &path,
+                       const SmallString &scenarioId = {}, const SmallString &note = {},
+                       std::string *errorMessage = nullptr) {
+      std::lock_guard<Mutex> lock(_mutex);
+      auto it = _baselines.find(baselineId.asChars());
+      if (it == _baselines.end()) {
+        detail::set_validation_persistence_error(errorMessage, "baseline not found");
+        return false;
+      }
+      if (!save_validation_report_json_file(it->second, path, errorMessage)) return false;
+      CanaryBaselineProvenance provenance{};
+      provenance.baselineId = baselineId;
+      provenance.scenarioId = scenarioId;
+      provenance.note = note;
+      provenance.timestamp = current_timestamp_();
+      _provenance.insert_or_assign(baselineId.asChars(), zs::move(provenance));
+      return true;
+    }
+
+    bool load_baseline(const SmallString &baselineId, const std::string &path,
+                       const SmallString &scenarioId = {}, const SmallString &note = {},
+                       std::string *errorMessage = nullptr) {
+      if (baselineId.size() == 0) {
+        detail::set_validation_persistence_error(errorMessage, "baselineId must not be empty");
+        return false;
+      }
+      ValidationSuiteReport report{};
+      if (!load_validation_report_json_file(path, &report, errorMessage)) return false;
+      std::lock_guard<Mutex> lock(_mutex);
+      _baselines.insert_or_assign(baselineId.asChars(), zs::move(report));
+      CanaryBaselineProvenance provenance{};
+      provenance.baselineId = baselineId;
+      provenance.scenarioId = scenarioId;
+      provenance.note = note;
+      provenance.timestamp = current_timestamp_();
+      _provenance.insert_or_assign(baselineId.asChars(), zs::move(provenance));
+      return true;
+    }
+
+    std::vector<CanaryBaselineProvenance> list_baselines() const {
+      std::lock_guard<Mutex> lock(_mutex);
+      std::vector<CanaryBaselineProvenance> result;
+      result.reserve(_baselines.size());
+      for (const auto &entry : _baselines) {
+        auto it = _provenance.find(entry.first);
+        if (it != _provenance.end()) {
+          result.push_back(it->second);
+        } else {
+          CanaryBaselineProvenance provenance{};
+          provenance.baselineId = SmallString{entry.first.c_str()};
+          result.push_back(zs::move(provenance));
+        }
+      }
+      return result;
+    }
+
+    bool describe_baseline(const SmallString &baselineId,
+                           CanaryBaselineProvenance *provenance) const {
+      if (baselineId.size() == 0 || provenance == nullptr) return false;
+      std::lock_guard<Mutex> lock(_mutex);
+      auto it = _provenance.find(baselineId.asChars());
+      if (it == _provenance.end()) {
+        if (_baselines.find(baselineId.asChars()) == _baselines.end()) return false;
+        provenance->baselineId = baselineId;
+        provenance->scenarioId = {};
+        provenance->note = {};
+        provenance->timestamp = 0;
+        return true;
+      }
+      *provenance = it->second;
       return true;
     }
 
@@ -264,11 +339,18 @@ namespace zs {
       return it == _baselines.end() ? nullptr : &it->second;
     }
 
+    static u64 current_timestamp_() noexcept {
+      const auto now = std::chrono::steady_clock::now();
+      return static_cast<u64>(
+          std::chrono::duration_cast<std::chrono::milliseconds>(now.time_since_epoch()).count());
+    }
+
     LocalInterfaceServices &_services;
     mutable Mutex _mutex{};
     std::vector<CanaryScenarioDescriptor> _scenarios{};
     std::unordered_map<std::string, ValidationSuiteReport> _baselines{};
     std::unordered_map<std::string, ValidationSuiteReport> _lastReports{};
+    std::unordered_map<std::string, CanaryBaselineProvenance> _provenance{};
   };
 
 }  // namespace zs

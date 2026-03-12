@@ -41,6 +41,13 @@ namespace zs {
     SmallString value{};
   };
 
+  struct CanaryBaselineProvenance {
+    SmallString baselineId{};
+    SmallString scenarioId{};
+    SmallString note{};
+    u64 timestamp{0};
+  };
+
   struct CanaryScenarioRunRequest {
     InterfaceSessionHandle session{};
     SmallString scenarioId{};

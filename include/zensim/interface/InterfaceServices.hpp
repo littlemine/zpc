@@ -3,6 +3,7 @@
 #include <string>
 #include <vector>
 
+#include "zensim/execution/AsyncBackendProfile.hpp"
 #include "zensim/execution/AsyncResourceManager.hpp"
 #include "zensim/execution/AsyncRuntime.hpp"
 #include "zensim/execution/ValidationCompare.hpp"
@@ -40,11 +41,25 @@ namespace zs {
     bool remote{false};
   };
 
+  struct InterfaceBackendProfileSummary {
+    SmallString name{};
+    u8 backendCode{async_backend_code(AsyncBackend::inline_host)};
+    u32 utilityMask{0};
+    u32 queueCapacity{0};
+    u32 crossPlatformScore{0};
+    u32 performanceScore{0};
+    u32 interactiveScore{0};
+    bool presentationReady{false};
+    bool collectiveReady{false};
+    bool mobileReady{false};
+  };
+
   struct InterfaceCapabilitySnapshot {
     SmallString profile{};
     std::vector<AsyncBackend> backends{};
     std::vector<AsyncQueueClass> queues{};
     std::vector<SmallString> executors{};
+    std::vector<InterfaceBackendProfileSummary> backendProfiles{};
     bool supportsValidationReports{false};
     bool supportsBenchmarkReports{false};
     bool supportsResourceInspection{false};
