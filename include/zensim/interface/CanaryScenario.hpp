@@ -33,6 +33,7 @@ namespace zs {
     SmallString version{};
     std::vector<SmallString> systems{};
     std::vector<SmallString> metrics{};
+    std::vector<ValidationMetadataEntry> metadata{};
     std::vector<CanaryParameterDescriptor> parameters{};
   };
 

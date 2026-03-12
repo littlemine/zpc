@@ -41,6 +41,8 @@ int main() {
     passRecord.backend = "thread_pool";
     passRecord.executor = "thread_pool";
     passRecord.target = "host";
+    passRecord.set_metadata("audio.sampleRate", "48000");
+    passRecord.set_metadata("audio.bufferSize", "256");
     passRecord.kind = ValidationRecordKind::benchmark;
     passRecord.outcome = ValidationOutcome::pass;
     passRecord.durationNs = 1200;
@@ -73,6 +75,7 @@ int main() {
 
     ValidationSuiteReport report{};
     report.suite = "async";
+    report.set_metadata("profile", "runtime");
     report.records.push_back(passRecord);
     report.records.push_back(failRecord);
     report.records.push_back(skipRecord);
@@ -80,8 +83,11 @@ int main() {
     report.refresh_summary();
 
     assert(report.schemaVersion == "zpc.validation.v1");
-  assert(report.records[0].has_stable_id());
-  assert(report.records[0].recordId == "async.runtime.latency");
+   assert(report.records[0].has_stable_id());
+   assert(report.records[0].recordId == "async.runtime.latency");
+    assert(report.records[0].has_metadata("audio.sampleRate"));
+    assert(report.records[0].metadata_value("audio.sampleRate") == "48000");
+    assert(report.metadata_value("profile") == "runtime");
     assert(report.summary.total == 4);
     assert(report.summary.passed == 1);
     assert(report.summary.failed == 1);

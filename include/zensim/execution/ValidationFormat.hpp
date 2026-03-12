@@ -82,6 +82,20 @@ namespace zs {
     oss << '"';
   }
 
+  inline void append_validation_metadata_json(std::ostringstream &oss,
+                                              const std::vector<ValidationMetadataEntry> &metadata) {
+    oss << '"' << "metadata" << "\":[";
+    for (size_t i = 0; i < metadata.size(); ++i) {
+      if (i) oss << ',';
+      oss << '{';
+      append_json_string_field(oss, "key", metadata[i].key);
+      oss << ',';
+      append_json_string_field(oss, "value", metadata[i].value);
+      oss << '}';
+    }
+    oss << ']';
+  }
+
   inline std::string format_validation_record_json(const ValidationRecord &record) {
     std::ostringstream oss;
     oss << '{';
@@ -102,6 +116,8 @@ namespace zs {
     oss << ",\"outcome\":\"" << validation_outcome_name(record.outcome) << '"';
     oss << ",\"durationNs\":" << record.durationNs;
     oss << ",\"accepted\":" << (record.accepted() ? "true" : "false");
+    oss << ',';
+    append_validation_metadata_json(oss, record.metadata);
     oss << ",\"measurements\":[";
     for (size_t i = 0; i < record.measurements.size(); ++i) {
       if (i) oss << ',';
@@ -133,6 +149,8 @@ namespace zs {
     append_json_string_field(oss, "schemaVersion", report.schemaVersion);
     oss << ',';
     append_json_string_field(oss, "suite", report.suite);
+    oss << ',';
+    append_validation_metadata_json(oss, report.metadata);
     oss << ",\"summary\":{";
     oss << "\"total\":" << report.summary.total;
     oss << ",\"passed\":" << report.summary.passed;
@@ -170,6 +188,8 @@ namespace zs {
       oss << " kind=" << validation_record_kind_name(record.kind);
       oss << " accepted=" << (record.accepted() ? "true" : "false");
       if (record.durationNs) oss << " durationNs=" << record.durationNs;
+      for (const auto &metadata : record.metadata)
+        oss << " metadata." << metadata.key.asChars() << '=' << metadata.value.asChars();
     }
     return oss.str();
   }
@@ -180,8 +200,13 @@ namespace zs {
     std::ostringstream oss;
     oss << format_validation_summary_text(report);
 
+    for (const auto &metadata : report.metadata)
+      oss << "\nmetadata." << metadata.key.asChars() << '=' << metadata.value.asChars();
+
     for (const auto &record : report.records) {
       if (record.note.size()) oss << "\n  note=" << record.note.asChars();
+      for (const auto &metadata : record.metadata)
+        oss << "\n  metadata." << metadata.key.asChars() << '=' << metadata.value.asChars();
       for (const auto &measurement : record.measurements) {
         oss << "\n  * " << measurement.name.asChars() << '=' << measurement.value;
         if (measurement.unit.size()) oss << ' ' << measurement.unit.asChars();

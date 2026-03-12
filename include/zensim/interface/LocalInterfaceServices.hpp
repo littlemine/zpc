@@ -1,6 +1,7 @@
 #pragma once
 
 #include <mutex>
+#include <string>
 #include <unordered_map>
 #include <vector>
 
@@ -13,6 +14,7 @@ namespace zs {
   class LocalInterfaceServices final : public InterfaceSessionService,
                                        public InterfaceRuntimeControlService,
                                        public InterfaceValidationService,
+                                       public InterfaceScenarioService,
                                        public InterfaceResourceService {
   public:
     explicit LocalInterfaceServices(AsyncRuntime &runtime,
@@ -20,6 +22,11 @@ namespace zs {
         : _runtime{runtime}, _resourceManager{resourceManager} {
       _knownExecutors.push_back("inline");
       _knownExecutors.push_back("thread_pool");
+    }
+
+    void attach_scenario_service(const InterfaceScenarioService *scenarioService) {
+      std::lock_guard<Mutex> lock(_mutex);
+      _scenarioService = scenarioService;
     }
 
     void remember_executor(const SmallString &executor) {
@@ -48,6 +55,8 @@ namespace zs {
       entry.snapshot.schemaVersion = report.schemaVersion;
       entry.snapshot.summary = report.summary;
       entry.snapshot.hasComparison = comparison != nullptr;
+      entry.artifacts = make_validation_artifacts_(entry.snapshot, report.suite,
+                                                   comparison != nullptr);
       entry.report = zs::move(report);
       if (comparison) {
         entry.comparison = *comparison;
@@ -293,6 +302,23 @@ namespace zs {
       return format_validation_comparison_(entry->comparison, format, output);
     }
 
+    std::vector<InterfaceArtifactInfo> list_artifacts(InterfaceSessionHandle session) const override {
+      if (!session.valid()) return {};
+      std::lock_guard<Mutex> lock(_mutex);
+      auto *state = find_session_(session);
+      if (!state) return {};
+      std::vector<InterfaceArtifactInfo> artifacts;
+      for (const auto &entry : state->validationHistory) {
+        artifacts.insert(artifacts.end(), entry.artifacts.begin(), entry.artifacts.end());
+      }
+      return artifacts;
+    }
+
+    std::vector<InterfaceScenarioDescriptor> list_interface_scenarios(
+        InterfaceSessionHandle session) const override;
+    bool describe_interface_scenario(InterfaceSessionHandle session, const SmallString &scenarioId,
+                                     InterfaceScenarioDescriptor *descriptor) const override;
+
     std::vector<InterfaceResourceInfo> list_resources(InterfaceSessionHandle session) const override {
       if (!_resourceManager || !session.valid()) return {};
       std::lock_guard<Mutex> lock(_mutex);
@@ -346,6 +372,7 @@ namespace zs {
       InterfaceValidationSnapshot snapshot{};
       ValidationSuiteReport report{};
       ValidationComparisonReport comparison{};
+      std::vector<InterfaceArtifactInfo> artifacts{};
     };
 
     struct SessionState {
@@ -377,6 +404,74 @@ namespace zs {
 
     static SmallString submission_executor_name_(const AsyncSubmissionHandle &, const SmallString &fallback) {
       return fallback.size() ? fallback : SmallString{"inline"};
+    }
+
+    static SmallString make_artifact_id_(const char *category, u64 reportId) {
+      return SmallString{std::string{category} + "-" + std::to_string(reportId)};
+    }
+
+    static SmallString make_artifact_path_(const SmallString &suite, const char *category,
+                                           u64 reportId, const char *extension) {
+      std::string path{"artifacts/validation/"};
+      path += suite.size() ? suite.asChars() : "suite";
+      path += '/';
+      path += category;
+      path += '-';
+      path += std::to_string(reportId);
+      path += '.';
+      path += extension;
+      return SmallString{path};
+    }
+
+    static std::vector<InterfaceArtifactInfo> make_validation_artifacts_(
+        const InterfaceValidationSnapshot &snapshot, const SmallString &suite, bool hasComparison) {
+      std::vector<InterfaceArtifactInfo> artifacts;
+      artifacts.reserve(hasComparison ? 4 : 2);
+
+      InterfaceArtifactInfo summary{};
+      summary.artifactId = make_artifact_id_("summary", snapshot.reportId);
+      summary.category = "validation-summary";
+      summary.format = "text";
+      summary.path = make_artifact_path_(suite, "summary", snapshot.reportId, "txt");
+      summary.suite = suite;
+      summary.reportId = snapshot.reportId;
+      summary.available = true;
+      artifacts.push_back(zs::move(summary));
+
+      InterfaceArtifactInfo report{};
+      report.artifactId = make_artifact_id_("report", snapshot.reportId);
+      report.category = "validation-report";
+      report.format = "json";
+      report.path = make_artifact_path_(suite, "report", snapshot.reportId, "json");
+      report.suite = suite;
+      report.reportId = snapshot.reportId;
+      report.available = true;
+      artifacts.push_back(zs::move(report));
+
+      if (hasComparison) {
+        InterfaceArtifactInfo comparisonSummary{};
+        comparisonSummary.artifactId = make_artifact_id_("comparison-summary", snapshot.reportId);
+        comparisonSummary.category = "validation-comparison-summary";
+        comparisonSummary.format = "text";
+        comparisonSummary.path = make_artifact_path_(suite, "comparison-summary", snapshot.reportId,
+                                                     "txt");
+        comparisonSummary.suite = suite;
+        comparisonSummary.reportId = snapshot.reportId;
+        comparisonSummary.available = true;
+        artifacts.push_back(zs::move(comparisonSummary));
+
+        InterfaceArtifactInfo comparison{};
+        comparison.artifactId = make_artifact_id_("comparison", snapshot.reportId);
+        comparison.category = "validation-comparison";
+        comparison.format = "json";
+        comparison.path = make_artifact_path_(suite, "comparison", snapshot.reportId, "json");
+        comparison.suite = suite;
+        comparison.reportId = snapshot.reportId;
+        comparison.available = true;
+        artifacts.push_back(zs::move(comparison));
+      }
+
+      return artifacts;
     }
 
     static AsyncBackend infer_backend_(const SmallString &executor, const AsyncEndpoint &endpoint) {
@@ -444,6 +539,7 @@ namespace zs {
 
     AsyncRuntime &_runtime;
     AsyncResourceManager *_resourceManager{nullptr};
+    const InterfaceScenarioService *_scenarioService{nullptr};
     mutable Mutex _mutex{};
     Atomic<u64> _nextSessionId{0};
     Atomic<u64> _nextReportId{0};
@@ -451,5 +547,34 @@ namespace zs {
     std::vector<SmallString> _knownExecutors{};
     std::vector<AsyncResourceHandle> _resourceHandles{};
   };
+
+}  // namespace zs
+
+namespace zs {
+
+  inline std::vector<InterfaceScenarioDescriptor> LocalInterfaceServices::list_interface_scenarios(
+      InterfaceSessionHandle session) const {
+    const InterfaceScenarioService *scenarioService = nullptr;
+    {
+      std::lock_guard<Mutex> lock(_mutex);
+      if (!find_session_(session)) return {};
+      scenarioService = _scenarioService;
+    }
+    if (!scenarioService) return {};
+    return scenarioService->list_interface_scenarios(session);
+  }
+
+  inline bool LocalInterfaceServices::describe_interface_scenario(
+      InterfaceSessionHandle session, const SmallString &scenarioId,
+      InterfaceScenarioDescriptor *descriptor) const {
+    const InterfaceScenarioService *scenarioService = nullptr;
+    {
+      std::lock_guard<Mutex> lock(_mutex);
+      if (!find_session_(session)) return false;
+      scenarioService = _scenarioService;
+    }
+    return scenarioService
+        && scenarioService->describe_interface_scenario(session, scenarioId, descriptor);
+  }
 
 }  // namespace zs

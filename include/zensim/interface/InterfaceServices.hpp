@@ -30,6 +30,7 @@ namespace zs {
   enum class InterfaceTransportKind : u8 { in_process, local_ipc, http, websocket, custom };
   enum class InterfaceConsumerKind : u8 { cli, gui, web, mcp, custom };
   enum class InterfaceReportFormat : u8 { summary, text, json };
+  enum class InterfaceScenarioKind : u8 { generic, canary, audio, custom };
 
   struct InterfaceSessionDescriptor {
     SmallString label{};
@@ -84,6 +85,27 @@ namespace zs {
     bool stale{false};
   };
 
+  struct InterfaceScenarioDescriptor {
+    SmallString scenarioId{};
+    SmallString label{};
+    SmallString description{};
+    SmallString version{};
+    InterfaceScenarioKind kind{InterfaceScenarioKind::generic};
+    std::vector<SmallString> systems{};
+    std::vector<SmallString> metrics{};
+    std::vector<ValidationMetadataEntry> metadata{};
+  };
+
+  struct InterfaceArtifactInfo {
+    SmallString artifactId{};
+    SmallString category{};
+    SmallString format{};
+    SmallString path{};
+    SmallString suite{};
+    u64 reportId{0};
+    bool available{false};
+  };
+
   class InterfaceSessionService {
   public:
     virtual ~InterfaceSessionService() = default;
@@ -136,6 +158,19 @@ namespace zs {
     virtual bool format_comparison(InterfaceSessionHandle session, u64 reportId,
                                    InterfaceReportFormat format,
                                    std::string *output) const = 0;
+    virtual std::vector<InterfaceArtifactInfo> list_artifacts(
+        InterfaceSessionHandle session) const = 0;
+  };
+
+  class InterfaceScenarioService {
+  public:
+    virtual ~InterfaceScenarioService() = default;
+
+    virtual std::vector<InterfaceScenarioDescriptor> list_interface_scenarios(
+        InterfaceSessionHandle session) const = 0;
+    virtual bool describe_interface_scenario(InterfaceSessionHandle session,
+                                             const SmallString &scenarioId,
+                                             InterfaceScenarioDescriptor *descriptor) const = 0;
   };
 
   class InterfaceResourceService {
@@ -155,11 +190,12 @@ namespace zs {
     InterfaceSessionService *sessions{nullptr};
     InterfaceRuntimeControlService *runtime{nullptr};
     InterfaceValidationService *validation{nullptr};
+    InterfaceScenarioService *scenarios{nullptr};
     InterfaceResourceService *resources{nullptr};
     CanaryScenarioService *canary{nullptr};
 
     bool complete() const noexcept {
-      return sessions && runtime && validation && resources && canary;
+      return sessions && runtime && validation && scenarios && resources && canary;
     }
   };
 

@@ -11,9 +11,12 @@
 
 namespace zs {
 
-  class LocalCanaryScenarioService final : public CanaryScenarioService {
+  class LocalCanaryScenarioService final : public CanaryScenarioService,
+                                          public InterfaceScenarioService {
   public:
-    explicit LocalCanaryScenarioService(LocalInterfaceServices &services) : _services{services} {}
+    explicit LocalCanaryScenarioService(LocalInterfaceServices &services) : _services{services} {
+      _services.attach_scenario_service(this);
+    }
 
     void register_scenario(CanaryScenarioDescriptor descriptor) {
       if (descriptor.scenarioId.size() == 0) return;
@@ -56,6 +59,30 @@ namespace zs {
       if (it == _lastReports.end()) return false;
       _baselines.insert_or_assign(baselineId.asChars(), it->second);
       return true;
+    }
+
+    std::vector<InterfaceScenarioDescriptor> list_interface_scenarios(
+        InterfaceSessionHandle session) const {
+      if (!_services.session_exists(session)) return {};
+      std::lock_guard<Mutex> lock(_mutex);
+      std::vector<InterfaceScenarioDescriptor> descriptors;
+      descriptors.reserve(_scenarios.size());
+      for (const auto &scenario : _scenarios) descriptors.push_back(to_interface_descriptor_(scenario));
+      return descriptors;
+    }
+
+    bool describe_interface_scenario(InterfaceSessionHandle session, const SmallString &scenarioId,
+                                     InterfaceScenarioDescriptor *descriptor) const {
+      if (!_services.session_exists(session) || descriptor == nullptr || scenarioId.size() == 0)
+        return false;
+      std::lock_guard<Mutex> lock(_mutex);
+      for (const auto &scenario : _scenarios) {
+        if (scenario.scenarioId == scenarioId) {
+          *descriptor = to_interface_descriptor_(scenario);
+          return true;
+        }
+      }
+      return false;
     }
 
     std::vector<CanaryScenarioDescriptor> list_scenarios(
@@ -181,6 +208,20 @@ namespace zs {
     }
 
   private:
+    static InterfaceScenarioDescriptor to_interface_descriptor_(
+        const CanaryScenarioDescriptor &scenario) {
+      InterfaceScenarioDescriptor descriptor{};
+      descriptor.scenarioId = scenario.scenarioId;
+      descriptor.label = scenario.label;
+      descriptor.description = scenario.description;
+      descriptor.version = scenario.version;
+      descriptor.kind = InterfaceScenarioKind::canary;
+      descriptor.systems = scenario.systems;
+      descriptor.metrics = scenario.metrics;
+      descriptor.metadata = scenario.metadata;
+      return descriptor;
+    }
+
     static const SmallString *find_override_(const std::vector<CanaryParameterOverride> &overrides,
                                              const SmallString &name) {
       for (const auto &overrideValue : overrides)

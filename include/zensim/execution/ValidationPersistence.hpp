@@ -166,6 +166,35 @@ namespace zs {
       return parse_validation_threshold(threshold->value, &measurement->threshold, errorMessage);
     }
 
+    inline bool parse_validation_metadata_entries(const rapidjson::Value &array,
+                                                  std::vector<ValidationMetadataEntry> *metadata,
+                                                  std::string *errorMessage) {
+      if (!metadata) {
+        set_validation_persistence_error(errorMessage, "metadata output must not be null");
+        return false;
+      }
+      if (!array.IsArray()) {
+        set_validation_persistence_error(errorMessage, "metadata must be an array");
+        return false;
+      }
+
+      metadata->clear();
+      metadata->reserve(array.Size());
+      for (const auto &entryValue : array.GetArray()) {
+        if (!entryValue.IsObject()) {
+          set_validation_persistence_error(errorMessage, "metadata entry must be an object");
+          return false;
+        }
+        ValidationMetadataEntry entry{};
+        if (!parse_json_string_field(entryValue, "key", &entry.key, true, errorMessage))
+          return false;
+        if (!parse_json_string_field(entryValue, "value", &entry.value, false, errorMessage))
+          return false;
+        metadata->push_back(entry);
+      }
+      return true;
+    }
+
     inline bool parse_validation_record(const rapidjson::Value &object, ValidationRecord *record,
                                         std::string *errorMessage) {
       if (!object.IsObject()) {
@@ -188,6 +217,12 @@ namespace zs {
         return false;
       if (!parse_json_string_field(object, "note", &record->note, false, errorMessage))
         return false;
+
+      const auto metadata = object.FindMember("metadata");
+      if (metadata != object.MemberEnd()) {
+        if (!parse_validation_metadata_entries(metadata->value, &record->metadata, errorMessage))
+          return false;
+      }
 
       SmallString kindName{};
       if (!parse_json_string_field(object, "kind", &kindName, true, errorMessage)) return false;
@@ -262,6 +297,13 @@ namespace zs {
       return false;
     if (!detail::parse_json_string_field(document, "suite", &parsed.suite, true, errorMessage))
       return false;
+
+    const auto metadata = document.FindMember("metadata");
+    if (metadata != document.MemberEnd()) {
+      if (!detail::parse_validation_metadata_entries(metadata->value, &parsed.metadata,
+                                                     errorMessage))
+        return false;
+    }
 
     const auto records = document.FindMember("records");
     if (records == document.MemberEnd() || !records->value.IsArray()) {

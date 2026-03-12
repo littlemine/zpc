@@ -9,7 +9,8 @@ int main() {
   zs::LocalInterfaceServices services{runtime, &resourceManager};
   zs::LocalCanaryScenarioService canaryService{services};
 
-  zs::InterfaceServiceBundle bundle{&services, &services, &services, &services, &canaryService};
+  zs::InterfaceServiceBundle bundle{&services, &services, &services, &canaryService, &services,
+                                    &canaryService};
   if (!bundle.complete()) {
     std::fprintf(stderr, "service bundle incomplete\n");
     return 1;
@@ -100,6 +101,8 @@ int main() {
   zs::CanaryScenarioDescriptor scenario{};
   scenario.scenarioId = "demo";
   scenario.label = "Demo";
+  scenario.metadata.push_back(zs::ValidationMetadataEntry{"domain", "audio"});
+  scenario.metrics.push_back("audio.latency.event_ms");
   zs::CanaryParameterDescriptor speed{};
   speed.name = "speed";
   speed.label = "Speed";
@@ -127,6 +130,22 @@ int main() {
   const auto scenarios = canaryService.list_scenarios(session);
   if (scenarios.empty() || scenarios.front().scenarioId != "demo") {
     std::fprintf(stderr, "missing canary scenario\n");
+    return 1;
+  }
+
+  const auto interfaceScenarios = canaryService.list_interface_scenarios(session);
+  if (interfaceScenarios.size() != 1 || interfaceScenarios.front().kind != zs::InterfaceScenarioKind::canary
+      || interfaceScenarios.front().metadata.empty()
+      || interfaceScenarios.front().metadata.front().key != "domain") {
+    std::fprintf(stderr, "missing interface scenario\n");
+    return 1;
+  }
+
+  zs::InterfaceScenarioDescriptor describedScenario{};
+  if (!canaryService.describe_interface_scenario(session, "demo", &describedScenario)
+      || describedScenario.metrics.empty()
+      || describedScenario.metrics.front() != "audio.latency.event_ms") {
+    std::fprintf(stderr, "failed to describe interface scenario\n");
     return 1;
   }
 
@@ -208,8 +227,21 @@ int main() {
     return 1;
   }
 
-    if (!services.latest_snapshot(session, &validation) || validation.summary.total != 2) {
+  if (!services.latest_snapshot(session, &validation) || validation.summary.total != 2) {
     std::fprintf(stderr, "missing validation snapshot\n");
+    return 1;
+  }
+
+  snapshots = services.list_snapshots(session);
+  if (snapshots.empty() || snapshots.back().reportId == 0) {
+    std::fprintf(stderr, "missing validation history\n");
+    return 1;
+  }
+
+  zs::InterfaceValidationSnapshot historicalSnapshot{};
+  if (!services.snapshot(session, snapshots.back().reportId, &historicalSnapshot)
+      || historicalSnapshot.reportId != snapshots.back().reportId) {
+    std::fprintf(stderr, "missing historical snapshot\n");
     return 1;
   }
 
@@ -219,9 +251,44 @@ int main() {
     return 1;
   }
 
+  zs::ValidationSuiteReport historicalReport{};
+  if (!services.report(session, snapshots.back().reportId, &historicalReport)
+      || historicalReport.suite != "demo") {
+    std::fprintf(stderr, "missing historical report\n");
+    return 1;
+  }
+
   zs::ValidationComparisonReport latestComparison{};
   if (!services.latest_comparison(session, &latestComparison) || latestComparison.suite != "demo") {
     std::fprintf(stderr, "missing validation comparison\n");
+    return 1;
+  }
+
+  zs::ValidationComparisonReport historicalComparison{};
+  if (!services.comparison(session, snapshots.back().reportId, &historicalComparison)
+      || historicalComparison.suite != "demo") {
+    std::fprintf(stderr, "missing historical comparison\n");
+    return 1;
+  }
+
+  std::string formattedSummary;
+  if (!services.format_latest_report(session, zs::InterfaceReportFormat::summary, &formattedSummary)
+      || formattedSummary.find("suite=demo") == std::string::npos) {
+    std::fprintf(stderr, "missing formatted latest report\n");
+    return 1;
+  }
+
+  std::string formattedComparison;
+  if (!services.format_comparison(session, snapshots.back().reportId, zs::InterfaceReportFormat::json,
+                                  &formattedComparison)
+      || formattedComparison.find("\"suite\":\"demo\"") == std::string::npos) {
+    std::fprintf(stderr, "missing formatted historical comparison\n");
+    return 1;
+  }
+
+  const auto artifacts = services.list_artifacts(session);
+  if (artifacts.size() < 4 || artifacts.front().reportId == 0 || !artifacts.front().available) {
+    std::fprintf(stderr, "missing validation artifacts\n");
     return 1;
   }
 

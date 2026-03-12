@@ -47,6 +47,31 @@ namespace zs {
     bool accepted() const noexcept { return threshold.satisfied_by(value); }
   };
 
+  struct ValidationMetadataEntry {
+    SmallString key{};
+    SmallString value{};
+  };
+
+  inline const ValidationMetadataEntry *find_validation_metadata(
+      const std::vector<ValidationMetadataEntry> &metadata, const SmallString &key) noexcept {
+    for (const auto &entry : metadata)
+      if (entry.key == key) return &entry;
+    return nullptr;
+  }
+
+  inline void set_validation_metadata(std::vector<ValidationMetadataEntry> &metadata,
+                                      const SmallString &key,
+                                      const SmallString &value) {
+    if (key.size() == 0) return;
+    for (auto &entry : metadata) {
+      if (entry.key == key) {
+        entry.value = value;
+        return;
+      }
+    }
+    metadata.push_back(ValidationMetadataEntry{key, value});
+  }
+
   struct ValidationRecord {
     SmallString recordId{};
     SmallString suite{};
@@ -58,6 +83,7 @@ namespace zs {
     ValidationRecordKind kind{ValidationRecordKind::validation};
     ValidationOutcome outcome{ValidationOutcome::pass};
     u64 durationNs{0};
+    std::vector<ValidationMetadataEntry> metadata{};
     std::vector<ValidationMeasurement> measurements{};
 
     bool accepted() const noexcept {
@@ -68,6 +94,17 @@ namespace zs {
     }
 
     bool has_stable_id() const noexcept { return recordId.size() != 0; }
+    const ValidationMetadataEntry *find_metadata(const SmallString &key) const noexcept {
+      return find_validation_metadata(metadata, key);
+    }
+    bool has_metadata(const SmallString &key) const noexcept { return find_metadata(key) != nullptr; }
+    SmallString metadata_value(const SmallString &key) const noexcept {
+      const auto *entry = find_metadata(key);
+      return entry ? entry->value : SmallString{};
+    }
+    void set_metadata(const SmallString &key, const SmallString &value) {
+      set_validation_metadata(metadata, key, value);
+    }
   };
 
   struct ValidationSummary {
@@ -104,12 +141,25 @@ namespace zs {
   struct ValidationSuiteReport {
     SmallString schemaVersion{"zpc.validation.v1"};
     SmallString suite{};
+    std::vector<ValidationMetadataEntry> metadata{};
     std::vector<ValidationRecord> records{};
     ValidationSummary summary{};
 
     void refresh_summary() noexcept {
       summary.clear();
       for (const auto &record : records) summary.observe(record);
+    }
+
+    const ValidationMetadataEntry *find_metadata(const SmallString &key) const noexcept {
+      return find_validation_metadata(metadata, key);
+    }
+    bool has_metadata(const SmallString &key) const noexcept { return find_metadata(key) != nullptr; }
+    SmallString metadata_value(const SmallString &key) const noexcept {
+      const auto *entry = find_metadata(key);
+      return entry ? entry->value : SmallString{};
+    }
+    void set_metadata(const SmallString &key, const SmallString &value) {
+      set_validation_metadata(metadata, key, value);
     }
   };
 

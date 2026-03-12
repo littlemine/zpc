@@ -23,6 +23,7 @@ int main() {
   baselineRecord.backend = "cuda";
   baselineRecord.executor = "cuda_record";
   baselineRecord.target = "gpu0";
+  baselineRecord.set_metadata("audio.sampleRate", "48000");
   baselineRecord.kind = ValidationRecordKind::benchmark;
   baselineRecord.outcome = ValidationOutcome::pass;
   baselineRecord.durationNs = 55;
@@ -32,6 +33,7 @@ int main() {
 
   ValidationSuiteReport baseline{};
   baseline.suite = "async";
+  baseline.set_metadata("profile", "runtime");
   baseline.records.push_back(baselineRecord);
 
   std::string errorMessage;
@@ -54,6 +56,13 @@ int main() {
     return 1;
   if (!require(parsed.records[0].measurements[0].value == 1.5,
                "parsed measurement value mismatch"))
+    return 1;
+  if (!require(std::string(parsed.metadata_value("profile").asChars()) == "runtime",
+               "parsed report metadata mismatch"))
+    return 1;
+  if (!require(std::string(parsed.records[0].metadata_value("audio.sampleRate").asChars())
+                   == "48000",
+               "parsed record metadata mismatch"))
     return 1;
 
   ValidationSuiteReport invalidTarget{};
