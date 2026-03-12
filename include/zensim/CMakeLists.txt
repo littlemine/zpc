@@ -414,6 +414,32 @@ set(ZENSIM_LIBRARY_PY_INTEROP_INCLUDE_FILES
   py_interop/SmallVec.hpp
 )
 
+# ── network module file lists ──────────────────────────────────────────
+set(ZENSIM_LIBRARY_NETWORK_PROTOCOL_INCLUDE_FILES
+  network/protocol/MessageTypes.hpp
+  network/protocol/MessageHeader.hpp
+  network/protocol/Serialization.hpp
+  network/protocol/SequenceBuffer.hpp
+)
+set(ZENSIM_LIBRARY_NETWORK_TRANSPORT_INCLUDE_FILES
+  network/transport/Address.hpp
+  network/transport/Socket.hpp
+  network/transport/Connection.hpp
+  network/transport/TcpTransport.hpp
+  network/transport/UdpTransport.hpp
+)
+set(ZENSIM_LIBRARY_NETWORK_SESSION_INCLUDE_FILES
+  network/session/Session.hpp
+  network/session/SessionManager.hpp
+)
+set(ZENSIM_LIBRARY_NETWORK_REPLICATION_INCLUDE_FILES
+  network/replication/StateSnapshot.hpp
+)
+set(ZENSIM_LIBRARY_NETWORK_SERVER_INCLUDE_FILES
+  network/server/DedicatedServer.hpp
+  network/server/ClientSlot.hpp
+)
+
 if(ZS_ENABLE_CUDA)
   set(ZENSIM_LIBRARY_ZPC_INCLUDE_FILES ${ZENSIM_LIBRARY_ZPC_INCLUDE_FILES}
     cuda/math/matrix/Matrix.hpp
@@ -555,6 +581,51 @@ target_link_libraries(zpc_process INTERFACE zpcbase)
 if(NOT WIN32)
   target_link_libraries(zpc_process INTERFACE rt)
 endif()
+
+# ── network infrastructure (opt-in, header-only + compiled) ────────────
+
+# protocol layer (INTERFACE — header-only types, enums, serialization)
+add_library(zpc_network_protocol INTERFACE)
+target_sources(zpc_network_protocol
+  INTERFACE
+  ${ZENSIM_LIBRARY_NETWORK_PROTOCOL_INCLUDE_FILES}
+)
+target_link_libraries(zpc_network_protocol INTERFACE zpcbase)
+
+# transport layer (INTERFACE — socket/connection abstractions, platform APIs)
+add_library(zpc_network_transport INTERFACE)
+target_sources(zpc_network_transport
+  INTERFACE
+  ${ZENSIM_LIBRARY_NETWORK_TRANSPORT_INCLUDE_FILES}
+)
+target_link_libraries(zpc_network_transport INTERFACE zpc_network_protocol zpc_process)
+if(WIN32)
+  target_link_libraries(zpc_network_transport INTERFACE ws2_32)
+endif()
+
+# session layer (INTERFACE — session/auth management)
+add_library(zpc_network_session INTERFACE)
+target_sources(zpc_network_session
+  INTERFACE
+  ${ZENSIM_LIBRARY_NETWORK_SESSION_INCLUDE_FILES}
+)
+target_link_libraries(zpc_network_session INTERFACE zpc_network_transport)
+
+# replication layer (INTERFACE — state snapshots, delta encoding)
+add_library(zpc_network_replication INTERFACE)
+target_sources(zpc_network_replication
+  INTERFACE
+  ${ZENSIM_LIBRARY_NETWORK_REPLICATION_INCLUDE_FILES}
+)
+target_link_libraries(zpc_network_replication INTERFACE zpc_network_protocol)
+
+# server layer (INTERFACE — dedicated server, client slots)
+add_library(zpc_network_server INTERFACE)
+target_sources(zpc_network_server
+  INTERFACE
+  ${ZENSIM_LIBRARY_NETWORK_SERVER_INCLUDE_FILES}
+)
+target_link_libraries(zpc_network_server INTERFACE zpc_network_session zpc_network_replication)
 
 # ############
 # zpc: core #

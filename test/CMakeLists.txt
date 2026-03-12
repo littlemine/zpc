@@ -192,3 +192,27 @@ if(ZS_ENABLE_MUSA)
     add_test(ZsMusaBasic mutests)
     add_dependencies(zensim mutests)
 endif(ZS_ENABLE_MUSA)
+
+# network protocol
+add_executable(networkprotocolsmoke network/network_protocol_smoke.cpp)
+target_link_libraries(networkprotocolsmoke PRIVATE zpc_network_protocol)
+target_compile_features(networkprotocolsmoke PRIVATE cxx_std_17)
+
+add_test(ZsNetworkProtocol networkprotocolsmoke)
+add_dependencies(zensim networkprotocolsmoke)
+
+# network transport
+add_executable(networktransportsmoke network/network_transport_smoke.cpp)
+target_link_libraries(networktransportsmoke PRIVATE zpc_network_transport)
+target_compile_features(networktransportsmoke PRIVATE cxx_std_17)
+
+add_test(ZsNetworkTransport networktransportsmoke)
+add_dependencies(zensim networktransportsmoke)
+
+# network server
+add_executable(networkserversmoke network/network_server_smoke.cpp)
+target_link_libraries(networkserversmoke PRIVATE zpc_network_server)
+target_compile_features(networkserversmoke PRIVATE cxx_std_17)
+
+add_test(ZsNetworkServer networkserversmoke)
+add_dependencies(zensim networkserversmoke)
