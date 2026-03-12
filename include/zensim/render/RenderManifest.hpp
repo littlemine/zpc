@@ -4,6 +4,7 @@
 ///        run and can serialise them to a JSON summary file.
 
 #include "zensim/render/RenderArtifact.hpp"
+#include "zensim/render/RenderFrameRequest.hpp"
 
 #include <cstdint>
 #include <string>

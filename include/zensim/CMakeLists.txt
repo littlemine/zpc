@@ -599,7 +599,7 @@ target_sources(zpc_render_core
   PUBLIC
   ${ZENSIM_LIBRARY_RENDER_CORE_INCLUDE_FILES}
 )
-target_link_libraries(zpc_render_core PUBLIC zpcbase PRIVATE zpccore)
+target_link_libraries(zpc_render_core PUBLIC zpcbase zpccore zpc_geometry)
 
 add_library(zpc_render_capture STATIC)
 target_sources(zpc_render_capture
