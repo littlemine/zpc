@@ -6,6 +6,7 @@
 #include "zensim/ZpcImplPattern.hpp"
 #include "zensim/vulkan/VkContext.hpp"
 #include "zensim/vulkan/VkImage.hpp"
+#include "zensim/vulkan/VkBuffer.hpp"
 
 namespace zs {
 

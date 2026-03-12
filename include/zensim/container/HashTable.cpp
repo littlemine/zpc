@@ -14,6 +14,12 @@ namespace zs {
 
   INSTANTIATE_HASHTABLE(i32, i32)
   INSTANTIATE_HASHTABLE(i32, i64)
+
+  // Explicit definitions for constexpr static members (MSVC dllexport workaround)
+  template <> constexpr i32 HashTable<i32, 1, i32, ZSPmrAllocator<>>::key_scalar_sentinel_v;
+  template <> constexpr i32 HashTable<i32, 2, i32, ZSPmrAllocator<>>::key_scalar_sentinel_v;
+  template <> constexpr i32 HashTable<i32, 3, i32, ZSPmrAllocator<>>::key_scalar_sentinel_v;
+  template <> constexpr i32 HashTable<i32, 4, i32, ZSPmrAllocator<>>::key_scalar_sentinel_v;
   // INSTANTIATE_HASHTABLE(i64, i64)
 
 }  // namespace zs

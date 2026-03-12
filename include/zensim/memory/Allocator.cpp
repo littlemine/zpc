@@ -26,8 +26,9 @@ namespace zs {
 #if defined(ZS_PLATFORM_WINDOWS)
 
   arena_virtual_memory_resource<host_mem_tag>::arena_virtual_memory_resource(ProcID did,
-                                                                             size_t space)
-      : _did{did}, _reservedSpace{round_up(space, s_chunk_granularity)} {
+                                                                             size_t space,
+                                                                             VmrAllocHint hint)
+      : _did{did}, _reservedSpace{round_up(space, s_chunk_granularity)}, _allocHint{hint} {
     if (did >= 0)
       throw std::runtime_error(
           std::string("hostvm target device index [") + std::to_string((int)did) + "] is not negative");
@@ -86,6 +87,21 @@ namespace zs {
     return true;
   }
 
+
+  bool arena_virtual_memory_resource<host_mem_tag>::do_protect(size_t offset, size_t bytes,
+                                                                PageAccess access) {
+    DWORD prot = PAGE_NOACCESS;
+    switch (access) {
+      case PageAccess::none:            prot = PAGE_NOACCESS; break;
+      case PageAccess::read:            prot = PAGE_READONLY; break;
+      case PageAccess::read_write:      prot = PAGE_READWRITE; break;
+      case PageAccess::read_exec:       prot = PAGE_EXECUTE_READ; break;
+      case PageAccess::read_write_exec: prot = PAGE_EXECUTE_READWRITE; break;
+    }
+    DWORD oldProt = 0;
+    void *addr = static_cast<char*>(_addr) + offset;
+    return VirtualProtect(addr, bytes, prot, &oldProt) != 0;
+  }
 #elif defined(ZS_PLATFORM_UNIX)
 
 #  if 0
@@ -168,8 +184,9 @@ namespace zs {
 #  endif  // disable this stack vmr impl
 
   arena_virtual_memory_resource<host_mem_tag>::arena_virtual_memory_resource(ProcID did,
-                                                                             size_t space)
-      : _did{did}, _reservedSpace{round_up(space, s_chunk_granularity)} {
+                                                                             size_t space,
+                                                                             VmrAllocHint hint)
+      : _did{did}, _reservedSpace{round_up(space, s_chunk_granularity)}, _allocHint{hint} {
     if (did >= 0)
       throw std::runtime_error(
           std::string("hostvm target device index [") + std::to_string((int)did) + "] is not negative");

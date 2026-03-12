@@ -1162,6 +1162,7 @@ target_sources(zpc_simulation
 )
 set_target_properties(zpc_simulation
   PROPERTIES
+  WINDOWS_EXPORT_ALL_SYMBOLS ON
   POSITION_INDEPENDENT_CODE ON
   RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}
   LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}
@@ -1577,7 +1578,7 @@ if(ZS_ENABLE_PCH)
   target_precompile_headers(zpctool INTERFACE ${ZENSIM_LIBRARY_IO_INCLUDE_FILES})
 endif(ZS_ENABLE_PCH)
 
-target_link_libraries(zpctool PUBLIC zpc)
+target_link_libraries(zpctool PUBLIC zpc zpc_geometry)
 
 set_target_properties(zpctool
   PROPERTIES POSITION_INDEPENDENT_CODE ON
