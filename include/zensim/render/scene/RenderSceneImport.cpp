@@ -63,13 +63,20 @@ RenderScene importOBJ(const std::string& path,
     }
   }
 
-  // Create a MeshRef.
-  MeshRef mesh;
-  mesh.id = static_cast<MeshId>(1);
-  mesh.name = scene_name;
-  mesh.vertex_count = static_cast<uint32_t>(positions.size());
-  mesh.index_count = static_cast<uint32_t>(triangles.size() * 3);
-  builder.addMesh(mesh);
+  // Create a MeshRef + TriMesh with actual geometry data.
+  MeshRef meshRef;
+  meshRef.id = static_cast<MeshId>(1);
+  meshRef.name = scene_name;
+  meshRef.vertex_count = static_cast<uint32_t>(positions.size());
+  meshRef.index_count = static_cast<uint32_t>(triangles.size() * 3);
+
+  TriMesh meshData;
+  meshData.nodes = std::move(positions);
+  meshData.norms = std::move(normals);
+  meshData.uvs = std::move(uvs);
+  meshData.elems = std::move(triangles);
+
+  builder.addMesh(meshRef, std::move(meshData));
 
   // Create default material if requested.
   if (opts.auto_default_material) {

@@ -431,6 +431,7 @@ set(ZENSIM_LIBRARY_RENDER_CORE_SOURCE_FILES
   render/RenderManifest.cpp
   render/RenderBackendSelection.cpp
   render/scene/RenderSceneImport.cpp
+  render/realtime/VulkanRasterRenderer.cpp
 )
 set(ZENSIM_LIBRARY_RENDER_CAPTURE_INCLUDE_FILES
   render/capture/RenderCapture.hpp

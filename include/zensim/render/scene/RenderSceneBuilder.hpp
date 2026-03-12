@@ -30,10 +30,22 @@ namespace render {
 
     // -- mesh -------------------------------------------------------
 
+    /// Add a mesh reference (metadata only, no geometry).
     RenderSceneBuilder& addMesh(MeshRef mesh) {
       auto id = static_cast<uint32_t>(mesh.id);
       scene_.mesh_index_[id] = scene_.meshes_.size();
       scene_.meshes_.push_back(std::move(mesh));
+      // Keep mesh_data_ in sync — push an empty TriMesh placeholder.
+      scene_.mesh_data_.emplace_back();
+      return *this;
+    }
+
+    /// Add a mesh reference together with its actual triangle data.
+    RenderSceneBuilder& addMesh(MeshRef mesh, TriMesh data) {
+      auto id = static_cast<uint32_t>(mesh.id);
+      scene_.mesh_index_[id] = scene_.meshes_.size();
+      scene_.meshes_.push_back(std::move(mesh));
+      scene_.mesh_data_.push_back(std::move(data));
       return *this;
     }
 
