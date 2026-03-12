@@ -426,6 +426,7 @@ set(ZENSIM_LIBRARY_RENDER_CORE_INCLUDE_FILES
   render/RenderMaterial.hpp
   render/scene/RenderSceneBuilder.hpp
   render/scene/RenderSceneImport.hpp
+  render/scene/ScenePrepare.hpp
   render/realtime/RasterRenderer.hpp
   render/offline/PathTracerTypes.hpp
   render/offline/BVHBuilder.hpp
@@ -435,6 +436,7 @@ set(ZENSIM_LIBRARY_RENDER_CORE_SOURCE_FILES
   render/RenderManifest.cpp
   render/RenderBackendSelection.cpp
   render/scene/RenderSceneImport.cpp
+  render/scene/ScenePrepare.cpp
   render/realtime/VulkanRasterRenderer.cpp
   render/offline/BVHBuilder.cpp
   render/offline/VulkanPathTracer.cpp

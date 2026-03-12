@@ -45,6 +45,9 @@ static const char* k_vert_glsl = R"(
 
 layout(push_constant) uniform PushConstants {
   mat4 mvp;
+  vec4 material_color;   // rgb = base_color, a = alpha
+  vec4 light_dir_ambient; // xyz = light direction (normalised), w = ambient
+  vec4 light_color;      // rgb = light color * intensity, w = unused
 } pc;
 
 layout(location = 0) in vec3 inPosition;
@@ -58,12 +61,23 @@ layout(location = 1) out vec3 fragColor;
 void main() {
   gl_Position = pc.mvp * vec4(inPosition, 1.0);
   fragNormal  = inNormal;
-  fragColor   = inColor;
+  // Blend vertex color with material base_color.
+  // If the material color is the default grey (0.8), vertex colors
+  // dominate.  For Cornell box scenes the material color is the
+  // actual surface colour and vertex colors match.
+  fragColor   = pc.material_color.rgb;
 }
 )";
 
 static const char* k_frag_glsl = R"(
 #version 450
+
+layout(push_constant) uniform PushConstants {
+  mat4 mvp;
+  vec4 material_color;
+  vec4 light_dir_ambient;
+  vec4 light_color;
+} pc;
 
 layout(location = 0) in vec3 fragNormal;
 layout(location = 1) in vec3 fragColor;
@@ -71,11 +85,12 @@ layout(location = 1) in vec3 fragColor;
 layout(location = 0) out vec4 outColor;
 
 void main() {
-  // Simple directional light (sun from upper-left-front).
-  vec3 lightDir = normalize(vec3(-0.5774, -0.5774, -0.5774));
+  vec3 lightDir = normalize(pc.light_dir_ambient.xyz);
+  float ambient = pc.light_dir_ambient.w;
+  vec3 lightCol = pc.light_color.rgb;
+
   float NdotL   = max(dot(normalize(fragNormal), -lightDir), 0.0);
-  float ambient = 0.15;
-  vec3  lit     = fragColor * (ambient + (1.0 - ambient) * NdotL);
+  vec3  lit     = fragColor * (lightCol * NdotL + vec3(ambient));
   outColor      = vec4(lit, 1.0);
 }
 )";
@@ -87,6 +102,17 @@ void main() {
 using mat4 = zs::vec<f32, 4, 4>;
 using vec3 = zs::vec<f32, 3>;
 using vec4 = zs::vec<f32, 4>;
+
+/// Push constant layout matching the GLSL PushConstants struct.
+/// Total: 64 (mat4) + 16 + 16 + 16 = 112 bytes.
+struct RasterPushConstants {
+  float mvp[16];
+  float material_color[4];      // rgb = base_color, a = alpha
+  float light_dir_ambient[4];   // xyz = light direction, w = ambient
+  float light_color[4];         // rgb = light color * intensity, w = 0
+};
+static_assert(sizeof(RasterPushConstants) == 112,
+              "RasterPushConstants must be 112 bytes");
 
 /// Right-handed look-at view matrix (row-major storage, accessed via (row, col)).
 static mat4 buildViewMatrix(const Camera& cam) {
@@ -220,9 +246,10 @@ bool VulkanRasterRenderer::init() {
     auto attributes = VkModel::get_attribute_descriptions(VkModel::draw_category_e::tri);
 
     vk::PushConstantRange pcRange{};
-    pcRange.stageFlags = vk::ShaderStageFlagBits::eVertex;
+    pcRange.stageFlags = vk::ShaderStageFlagBits::eVertex
+                       | vk::ShaderStageFlagBits::eFragment;
     pcRange.offset     = 0;
-    pcRange.size       = static_cast<uint32_t>(sizeof(float) * 16);  // mat4
+    pcRange.size       = static_cast<uint32_t>(sizeof(RasterPushConstants));
 
     pipeline_ = std::make_unique<Pipeline>(
         ctx_->pipeline()
@@ -307,6 +334,7 @@ RasterResult VulkanRasterRenderer::render(const RenderFrameRequest& request,
   struct DrawItem {
     VkModel model;
     mat4    mvp;
+    MaterialId material_id;
   };
   std::vector<DrawItem> draws;
 
@@ -319,6 +347,7 @@ RasterResult VulkanRasterRenderer::render(const RenderFrameRequest& request,
     DrawItem item;
     // Compute per-instance MVP.
     item.mvp = MVP * inst.transform.matrix;
+    item.material_id = inst.material;
     // Upload mesh to GPU via VkModel.
     item.model = VkModel(*ctx_, *meshData);
     draws.push_back(std::move(item));
@@ -360,19 +389,60 @@ RasterResult VulkanRasterRenderer::render(const RenderFrameRequest& request,
     cb.setScissor(0, 1, &scissor, ctx_->dispatcher);
 
     for (auto& item : draws) {
-      // Push MVP (16 floats = 64 bytes).
-      // zs::vec<f32,4,4> stores in row-major internally, but GLSL expects
-      // column-major.  We transpose before pushing.
-      float mvpData[16];
+      // Build push constants.
+      RasterPushConstants pc{};
+
+      // MVP (transpose to column-major for GLSL).
       for (int i = 0; i < 4; ++i)
         for (int j = 0; j < 4; ++j)
-          mvpData[j * 4 + i] = item.mvp(i, j);  // transpose: col-major layout
+          pc.mvp[j * 4 + i] = item.mvp(i, j);
+
+      // Material base_color from the scene palette.
+      const Material* mat = scene.findMaterial(item.material_id);
+      if (mat) {
+        pc.material_color[0] = mat->base_color(0);
+        pc.material_color[1] = mat->base_color(1);
+        pc.material_color[2] = mat->base_color(2);
+        pc.material_color[3] = mat->base_color(3);
+      } else {
+        // Fallback: neutral grey.
+        pc.material_color[0] = 0.8f;
+        pc.material_color[1] = 0.8f;
+        pc.material_color[2] = 0.8f;
+        pc.material_color[3] = 1.0f;
+      }
+
+      // Light: use the first light from the scene, or a default.
+      if (!scene.lights().empty()) {
+        const auto& light = scene.lights()[0];
+        pc.light_dir_ambient[0] = light.direction(0);
+        pc.light_dir_ambient[1] = light.direction(1);
+        pc.light_dir_ambient[2] = light.direction(2);
+        pc.light_dir_ambient[3] = 0.15f;  // ambient factor
+        float li = light.intensity;
+        // Clamp intensity for rasteriser to avoid blowout.
+        if (li > 3.0f) li = 3.0f;
+        pc.light_color[0] = light.color(0) * li;
+        pc.light_color[1] = light.color(1) * li;
+        pc.light_color[2] = light.color(2) * li;
+        pc.light_color[3] = 0.0f;
+      } else {
+        // Default: directional sun from upper-left-front.
+        pc.light_dir_ambient[0] = -0.5774f;
+        pc.light_dir_ambient[1] = -0.5774f;
+        pc.light_dir_ambient[2] = -0.5774f;
+        pc.light_dir_ambient[3] = 0.15f;
+        pc.light_color[0] = 1.0f;
+        pc.light_color[1] = 1.0f;
+        pc.light_color[2] = 1.0f;
+        pc.light_color[3] = 0.0f;
+      }
 
       cb.pushConstants(
           static_cast<vk::PipelineLayout>(*pipeline_),
-          vk::ShaderStageFlagBits::eVertex,
-          0, static_cast<uint32_t>(sizeof(mvpData)),
-          mvpData, ctx_->dispatcher);
+          vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment,
+          0, static_cast<uint32_t>(sizeof(RasterPushConstants)),
+          &pc, ctx_->dispatcher);
 
       item.model.bind(cb);
       item.model.draw(cb);

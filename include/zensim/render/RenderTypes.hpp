@@ -89,7 +89,7 @@ namespace render {
   // Material  (render-facing, NOT physics material)
   // ---------------------------------------------------------------
 
-  /// Shading model selector.
+  /// Shading model selector (controls rasteriser lighting).
   enum class ShadingModel : uint8_t {
     Unlit = 0,
     Lambert = 1,
@@ -97,16 +97,45 @@ namespace render {
     PBR_MetallicRoughness = 3,
   };
 
-  /// A minimal material description.  Texture slots use TextureId
-  /// handles — the actual GPU resources are resolved at bind time.
+  /// Surface type (controls path-tracer BSDF selection).
+  enum class SurfaceType : uint8_t {
+    Opaque = 0,       ///< Standard opaque (Lambertian/GGX depending on roughness).
+    Mirror = 1,       ///< Perfect specular reflection.
+    Glass = 2,        ///< Dielectric (Fresnel + refraction via IOR).
+    Emissive = 3,     ///< Pure emitter (no reflection).
+  };
+
+  /// GPU-packed material (48 bytes, std430-friendly).
+  ///
+  /// Layout matches the GLSL struct GPUMaterial:
+  ///   vec4 albedo;    // rgb + alpha
+  ///   vec4 emission;  // rgb + intensity
+  ///   vec4 params;    // x=roughness, y=ior, z=surface_type(uint as float), w=metallic
+  struct MaterialGPU {
+    float albedo[4];
+    float emission[4];
+    float params[4];
+  };
+  static_assert(sizeof(MaterialGPU) == 48, "GPU material must be 48 bytes");
+
+  /// A unified material description serving both real-time and offline
+  /// renderers.  Texture slots use TextureId handles — the actual GPU
+  /// resources are resolved at bind time.
   struct Material {
     MaterialId id{MaterialId::Null};
     ShadingModel shading{ShadingModel::Lambert};
+    SurfaceType surface_type{SurfaceType::Opaque};
 
     vec<f32, 4> base_color{0.8f, 0.8f, 0.8f, 1.f};
     f32 metallic{0.f};
     f32 roughness{0.5f};
+
+    /// Emission colour (linear RGB).
+    vec<f32, 3> emission_color{0.f, 0.f, 0.f};
     f32 emissive_strength{0.f};
+
+    /// Index of refraction (only meaningful for SurfaceType::Glass).
+    f32 ior{1.5f};
 
     TextureId base_color_map{TextureId::Null};
     TextureId normal_map{TextureId::Null};
@@ -114,6 +143,63 @@ namespace render {
     TextureId emissive_map{TextureId::Null};
 
     std::string name;
+
+    /// Convert to the flat GPU representation (48 bytes).
+    MaterialGPU toGPU() const {
+      MaterialGPU g{};
+      g.albedo[0] = base_color(0);
+      g.albedo[1] = base_color(1);
+      g.albedo[2] = base_color(2);
+      g.albedo[3] = base_color(3);
+      g.emission[0] = emission_color(0) * emissive_strength;
+      g.emission[1] = emission_color(1) * emissive_strength;
+      g.emission[2] = emission_color(2) * emissive_strength;
+      g.emission[3] = emissive_strength;
+      g.params[0] = roughness;
+      g.params[1] = ior;
+      g.params[2] = static_cast<float>(static_cast<uint32_t>(surface_type));
+      g.params[3] = metallic;
+      return g;
+    }
+
+    // --- Convenience factories ---
+
+    /// Create a Lambertian diffuse material.
+    static Material diffuse(MaterialId mid, float r, float g, float b) {
+      Material m;
+      m.id = mid;
+      m.base_color = {r, g, b, 1.f};
+      m.shading = ShadingModel::Lambert;
+      m.surface_type = SurfaceType::Opaque;
+      m.roughness = 1.0f;
+      m.metallic = 0.0f;
+      return m;
+    }
+
+    /// Create a pure emissive material.
+    static Material emissive(MaterialId mid, float r, float g, float b,
+                             float intensity = 1.f) {
+      Material m;
+      m.id = mid;
+      m.base_color = {0.f, 0.f, 0.f, 1.f};
+      m.shading = ShadingModel::Unlit;
+      m.surface_type = SurfaceType::Emissive;
+      m.emission_color = {r, g, b};
+      m.emissive_strength = intensity;
+      return m;
+    }
+
+    /// Create a perfect mirror material.
+    static Material mirror(MaterialId mid, float r, float g, float b) {
+      Material m;
+      m.id = mid;
+      m.base_color = {r, g, b, 1.f};
+      m.shading = ShadingModel::PBR_MetallicRoughness;
+      m.surface_type = SurfaceType::Mirror;
+      m.roughness = 0.0f;
+      m.metallic = 1.0f;
+      return m;
+    }
   };
 
   // ---------------------------------------------------------------

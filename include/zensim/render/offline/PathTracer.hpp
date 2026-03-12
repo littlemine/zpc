@@ -8,6 +8,7 @@
 #pragma once
 
 #include "zensim/render/RenderMaterial.hpp"
+#include "zensim/render/RenderScene.hpp"
 #include "zensim/render/RenderTypes.hpp"
 #include "zensim/render/offline/PathTracerTypes.hpp"
 
@@ -74,6 +75,13 @@ public:
 
   /// Upload scene data (geometry + materials + BVH) to the GPU.
   virtual void uploadScene(const PathTracerScene& scene) = 0;
+
+  /// Upload a RenderScene by flattening it to a PathTracerScene.
+  ///
+  /// The default implementation calls flattenForPathTracer() and
+  /// delegates to uploadScene(const PathTracerScene&).  Subclasses
+  /// may override for a more efficient conversion.
+  virtual void uploadScene(const RenderScene& scene);
 
   /// Render the scene from the given camera.
   virtual PathTraceResult render(const Camera& camera, const PathTracerConfig& config) = 0;

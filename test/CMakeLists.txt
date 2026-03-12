@@ -232,3 +232,11 @@ target_compile_features(renderpathtrace PRIVATE cxx_std_17)
 
 add_test(ZsRenderPathTrace renderpathtrace)
 add_dependencies(zensim renderpathtrace)
+
+# render shared scene (requires Vulkan GPU at runtime)
+add_executable(rendersharedscene render/render_shared_scene.cpp)
+target_link_libraries(rendersharedscene PRIVATE zpc_render_capture)
+target_compile_features(rendersharedscene PRIVATE cxx_std_17)
+
+add_test(ZsRenderSharedScene rendersharedscene)
+add_dependencies(zensim rendersharedscene)
