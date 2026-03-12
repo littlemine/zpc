@@ -1,7 +1,9 @@
 #pragma once
 
+#include <string>
 #include <vector>
 
+#include "zensim/execution/AsyncBackendProfile.hpp"
 #include "zensim/execution/AsyncResourceManager.hpp"
 #include "zensim/execution/AsyncRuntime.hpp"
 #include "zensim/execution/ValidationCompare.hpp"
@@ -39,11 +41,25 @@ namespace zs {
     bool remote{false};
   };
 
+  struct InterfaceBackendProfileSummary {
+    SmallString name{};
+    u8 backendCode{async_backend_code(AsyncBackend::inline_host)};
+    u32 utilityMask{0};
+    u32 queueCapacity{0};
+    u32 crossPlatformScore{0};
+    u32 performanceScore{0};
+    u32 interactiveScore{0};
+    bool presentationReady{false};
+    bool collectiveReady{false};
+    bool mobileReady{false};
+  };
+
   struct InterfaceCapabilitySnapshot {
     SmallString profile{};
     std::vector<AsyncBackend> backends{};
     std::vector<AsyncQueueClass> queues{};
     std::vector<SmallString> executors{};
+    std::vector<InterfaceBackendProfileSummary> backendProfiles{};
     bool supportsValidationReports{false};
     bool supportsBenchmarkReports{false};
     bool supportsResourceInspection{false};
@@ -60,6 +76,7 @@ namespace zs {
   };
 
   struct InterfaceValidationSnapshot {
+    u64 reportId{0};
     SmallString suite{};
     SmallString schemaVersion{"zpc.validation.v1"};
     ValidationSummary summary{};
@@ -115,6 +132,25 @@ namespace zs {
                                ValidationSuiteReport *report) const = 0;
     virtual bool latest_comparison(InterfaceSessionHandle session,
                                    ValidationComparisonReport *report) const = 0;
+    virtual std::vector<InterfaceValidationSnapshot> list_snapshots(
+        InterfaceSessionHandle session) const = 0;
+    virtual bool snapshot(InterfaceSessionHandle session, u64 reportId,
+                          InterfaceValidationSnapshot *snapshot) const = 0;
+    virtual bool report(InterfaceSessionHandle session, u64 reportId,
+                        ValidationSuiteReport *report) const = 0;
+    virtual bool comparison(InterfaceSessionHandle session, u64 reportId,
+                            ValidationComparisonReport *report) const = 0;
+    virtual bool format_latest_report(InterfaceSessionHandle session, InterfaceReportFormat format,
+                                      std::string *output) const = 0;
+    virtual bool format_latest_comparison(InterfaceSessionHandle session,
+                                          InterfaceReportFormat format,
+                                          std::string *output) const = 0;
+    virtual bool format_report(InterfaceSessionHandle session, u64 reportId,
+                               InterfaceReportFormat format,
+                               std::string *output) const = 0;
+    virtual bool format_comparison(InterfaceSessionHandle session, u64 reportId,
+                                   InterfaceReportFormat format,
+                                   std::string *output) const = 0;
   };
 
   class InterfaceResourceService {

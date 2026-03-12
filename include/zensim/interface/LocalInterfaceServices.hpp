@@ -5,6 +5,8 @@
 #include <vector>
 
 #include "zensim/ZpcAsync.hpp"
+#include "zensim/execution/AsyncBackendProfile.hpp"
+#include "zensim/execution/ValidationFormat.hpp"
 #include "zensim/interface/InterfaceServices.hpp"
 
 namespace zs {
@@ -29,6 +31,27 @@ namespace zs {
       _knownExecutors.push_back(executor);
     }
 
+    void register_backend_profile(const SmallString &name, const AsyncBackendProfile &profile) {
+      if (name.size() == 0) return;
+      std::lock_guard<Mutex> lock(_mutex);
+      for (auto &existing : _registeredProfiles) {
+        if (existing.first == name) {
+          existing.second = profile;
+          return;
+        }
+      }
+      _registeredProfiles.push_back({name, profile});
+    }
+
+    std::vector<InterfaceBackendProfileSummary> list_backend_profiles() const {
+      std::lock_guard<Mutex> lock(_mutex);
+      std::vector<InterfaceBackendProfileSummary> summaries;
+      summaries.reserve(_registeredProfiles.size());
+      for (const auto &entry : _registeredProfiles)
+        summaries.push_back(make_profile_summary_(entry.first, entry.second));
+      return summaries;
+    }
+
     bool session_exists(InterfaceSessionHandle session) const {
       std::lock_guard<Mutex> lock(_mutex);
       return find_session_(session) != nullptr;
@@ -39,19 +62,28 @@ namespace zs {
       std::lock_guard<Mutex> lock(_mutex);
       auto *state = find_session_(session);
       if (!state) return false;
-      state->latestReport = zs::move(report);
-      state->latestReport.refresh_summary();
-      state->latestSnapshot.suite = state->latestReport.suite;
-      state->latestSnapshot.schemaVersion = state->latestReport.schemaVersion;
-      state->latestSnapshot.summary = state->latestReport.summary;
-      state->latestSnapshot.hasComparison = comparison != nullptr;
+      report.refresh_summary();
+      const auto reportId = _nextReportId.fetch_add(1) + 1;
+      ValidationHistoryEntry entry{};
+      entry.snapshot.reportId = reportId;
+      entry.snapshot.suite = report.suite;
+      entry.snapshot.schemaVersion = report.schemaVersion;
+      entry.snapshot.summary = report.summary;
+      entry.snapshot.hasComparison = comparison != nullptr;
+      entry.report = zs::move(report);
       if (comparison) {
-        state->latestComparison = *comparison;
-        state->latestSnapshot.comparison = comparison->summary;
+        entry.comparison = *comparison;
+        entry.snapshot.comparison = comparison->summary;
       } else {
-        state->latestComparison = {};
-        state->latestSnapshot.comparison = {};
+        entry.comparison = {};
+        entry.snapshot.comparison = {};
       }
+      state->latestReport = entry.report;
+      state->latestSnapshot = entry.snapshot;
+      state->latestComparison = entry.comparison;
+      state->validationHistory.push_back(zs::move(entry));
+      if (state->validationHistory.size() > validation_history_limit)
+        state->validationHistory.erase(state->validationHistory.begin());
       return true;
     }
 
@@ -91,14 +123,28 @@ namespace zs {
       capabilities->backends.clear();
       capabilities->queues.clear();
       capabilities->executors.clear();
+      capabilities->backendProfiles.clear();
       for (const auto &executor : _knownExecutors) {
         if (_runtime.contains_executor(executor.asChars())) {
           capabilities->executors.push_back(executor);
         }
       }
-      if (!capabilities->executors.empty()) {
-        capabilities->backends.push_back(AsyncBackend::inline_host);
-        capabilities->queues.push_back(AsyncQueueClass::control);
+      if (_registeredProfiles.empty()) {
+        if (!capabilities->executors.empty()) {
+          capabilities->backends.push_back(AsyncBackend::inline_host);
+          capabilities->queues.push_back(AsyncQueueClass::control);
+        }
+      } else {
+        for (const auto &entry : _registeredProfiles) {
+          const auto backend = async_backend_from_code(entry.second.backendCode);
+          bool found = false;
+          for (const auto &b : capabilities->backends)
+            if (b == backend) { found = true; break; }
+          if (!found) capabilities->backends.push_back(backend);
+          collect_profile_queues_(entry.second, capabilities->queues);
+          capabilities->backendProfiles.push_back(
+              make_profile_summary_(entry.first, entry.second));
+        }
       }
       capabilities->supportsValidationReports = true;
       capabilities->supportsBenchmarkReports = true;
@@ -193,6 +239,96 @@ namespace zs {
       return true;
     }
 
+    std::vector<InterfaceValidationSnapshot> list_snapshots(
+        InterfaceSessionHandle session) const override {
+      if (!session.valid()) return {};
+      std::lock_guard<Mutex> lock(_mutex);
+      auto *state = find_session_(session);
+      if (!state) return {};
+      std::vector<InterfaceValidationSnapshot> snapshots;
+      snapshots.reserve(state->validationHistory.size());
+      for (const auto &entry : state->validationHistory) snapshots.push_back(entry.snapshot);
+      return snapshots;
+    }
+
+    bool snapshot(InterfaceSessionHandle session, u64 reportId,
+                  InterfaceValidationSnapshot *snapshot) const override {
+      if (snapshot == nullptr) return false;
+      std::lock_guard<Mutex> lock(_mutex);
+      auto *state = find_session_(session);
+      if (!state) return false;
+      const auto *entry = find_validation_history_(state->validationHistory, reportId);
+      if (!entry) return false;
+      *snapshot = entry->snapshot;
+      return true;
+    }
+
+    bool report(InterfaceSessionHandle session, u64 reportId,
+                ValidationSuiteReport *report) const override {
+      if (report == nullptr) return false;
+      std::lock_guard<Mutex> lock(_mutex);
+      auto *state = find_session_(session);
+      if (!state) return false;
+      const auto *entry = find_validation_history_(state->validationHistory, reportId);
+      if (!entry) return false;
+      *report = entry->report;
+      return true;
+    }
+
+    bool comparison(InterfaceSessionHandle session, u64 reportId,
+                    ValidationComparisonReport *report) const override {
+      if (report == nullptr) return false;
+      std::lock_guard<Mutex> lock(_mutex);
+      auto *state = find_session_(session);
+      if (!state) return false;
+      const auto *entry = find_validation_history_(state->validationHistory, reportId);
+      if (!entry || !entry->snapshot.hasComparison) return false;
+      *report = entry->comparison;
+      return true;
+    }
+
+    bool format_latest_report(InterfaceSessionHandle session, InterfaceReportFormat format,
+                              std::string *output) const override {
+      if (output == nullptr) return false;
+      std::lock_guard<Mutex> lock(_mutex);
+      auto *state = find_session_(session);
+      if (!state || state->validationHistory.empty()) return false;
+      return format_validation_report_(state->validationHistory.back().report, format, output);
+    }
+
+    bool format_latest_comparison(InterfaceSessionHandle session, InterfaceReportFormat format,
+                                  std::string *output) const override {
+      if (output == nullptr) return false;
+      std::lock_guard<Mutex> lock(_mutex);
+      auto *state = find_session_(session);
+      if (!state || state->validationHistory.empty()) return false;
+      const auto &entry = state->validationHistory.back();
+      if (!entry.snapshot.hasComparison) return false;
+      return format_validation_comparison_(entry.comparison, format, output);
+    }
+
+    bool format_report(InterfaceSessionHandle session, u64 reportId, InterfaceReportFormat format,
+                       std::string *output) const override {
+      if (output == nullptr) return false;
+      std::lock_guard<Mutex> lock(_mutex);
+      auto *state = find_session_(session);
+      if (!state) return false;
+      const auto *entry = find_validation_history_(state->validationHistory, reportId);
+      if (!entry) return false;
+      return format_validation_report_(entry->report, format, output);
+    }
+
+    bool format_comparison(InterfaceSessionHandle session, u64 reportId,
+                           InterfaceReportFormat format, std::string *output) const override {
+      if (output == nullptr) return false;
+      std::lock_guard<Mutex> lock(_mutex);
+      auto *state = find_session_(session);
+      if (!state) return false;
+      const auto *entry = find_validation_history_(state->validationHistory, reportId);
+      if (!entry || !entry->snapshot.hasComparison) return false;
+      return format_validation_comparison_(entry->comparison, format, output);
+    }
+
     std::vector<InterfaceResourceInfo> list_resources(InterfaceSessionHandle session) const override {
       if (!_resourceManager || !session.valid()) return {};
       std::lock_guard<Mutex> lock(_mutex);
@@ -231,6 +367,8 @@ namespace zs {
     }
 
   private:
+    static constexpr size_t validation_history_limit = 16;
+
     struct SubmissionRecord {
       AsyncSubmissionHandle handle{};
       AsyncStopSource cancellation{};
@@ -240,6 +378,12 @@ namespace zs {
       AsyncQueueClass queue{AsyncQueueClass::control};
     };
 
+    struct ValidationHistoryEntry {
+      InterfaceValidationSnapshot snapshot{};
+      ValidationSuiteReport report{};
+      ValidationComparisonReport comparison{};
+    };
+
     struct SessionState {
       InterfaceSessionHandle handle{};
       InterfaceSessionDescriptor descriptor{};
@@ -247,7 +391,51 @@ namespace zs {
       InterfaceValidationSnapshot latestSnapshot{};
       ValidationSuiteReport latestReport{};
       ValidationComparisonReport latestComparison{};
+      std::vector<ValidationHistoryEntry> validationHistory{};
     };
+
+    static InterfaceBackendProfileSummary make_profile_summary_(
+        const SmallString &name, const AsyncBackendProfile &profile) {
+      InterfaceBackendProfileSummary summary{};
+      summary.name = name;
+      summary.backendCode = profile.backendCode;
+      summary.utilityMask = profile.utilityMask;
+      summary.queueCapacity = profile.queueCapacity;
+      summary.crossPlatformScore = profile.crossPlatformScore;
+      summary.performanceScore = profile.performanceScore;
+      summary.interactiveScore = profile.interactiveScore;
+      summary.presentationReady = profile.presentationReady;
+      summary.collectiveReady = profile.collectiveReady;
+      summary.mobileReady = profile.mobileReady;
+      return summary;
+    }
+
+    static void collect_profile_queues_(const AsyncBackendProfile &profile,
+                                        std::vector<AsyncQueueClass> &queues) {
+      auto push_unique = [&](AsyncQueueClass q) {
+        for (const auto &existing : queues)
+          if (existing == q) return;
+        queues.push_back(q);
+      };
+      push_unique(AsyncQueueClass::compute);
+      if (profile.supports_queue(async_queue_code(AsyncQueueClass::transfer)))
+        push_unique(AsyncQueueClass::transfer);
+      if (profile.supports_queue(async_queue_code(AsyncQueueClass::copy)))
+        push_unique(AsyncQueueClass::copy);
+      if (profile.supports_queue(async_queue_code(AsyncQueueClass::graphics)))
+        push_unique(AsyncQueueClass::graphics);
+      if (profile.supports_queue(async_queue_code(AsyncQueueClass::present)))
+        push_unique(AsyncQueueClass::present);
+      if (profile.supports_queue(async_queue_code(AsyncQueueClass::collective)))
+        push_unique(AsyncQueueClass::collective);
+    }
+
+    static const ValidationHistoryEntry *find_validation_history_(
+        const std::vector<ValidationHistoryEntry> &history, u64 reportId) {
+      for (const auto &entry : history)
+        if (entry.snapshot.reportId == reportId) return &entry;
+      return nullptr;
+    }
 
     SessionState *find_session_(InterfaceSessionHandle session) {
       auto it = _sessions.find(session.id);
@@ -270,6 +458,41 @@ namespace zs {
       if (executor == "thread_pool") return AsyncBackend::thread_pool;
       if (executor == "inline") return AsyncBackend::inline_host;
       return endpoint.backend;
+    }
+
+    static bool format_validation_report_(const ValidationSuiteReport &report,
+                                          InterfaceReportFormat format, std::string *output) {
+      switch (format) {
+        case InterfaceReportFormat::summary:
+          *output = format_validation_summary_text(report);
+          return true;
+        case InterfaceReportFormat::text:
+          *output = format_validation_report_text(report);
+          return true;
+        case InterfaceReportFormat::json:
+          *output = format_validation_report_json(report);
+          return true;
+        default:
+          return false;
+      }
+    }
+
+    static bool format_validation_comparison_(const ValidationComparisonReport &comparison,
+                                              InterfaceReportFormat format,
+                                              std::string *output) {
+      switch (format) {
+        case InterfaceReportFormat::summary:
+          *output = format_validation_comparison_summary_text(comparison);
+          return true;
+        case InterfaceReportFormat::text:
+          *output = format_validation_comparison_report_text(comparison);
+          return true;
+        case InterfaceReportFormat::json:
+          *output = format_validation_comparison_report_json(comparison);
+          return true;
+        default:
+          return false;
+      }
     }
 
     bool query_resource_locked_(AsyncResourceHandle resource, InterfaceResourceInfo *info) const {
@@ -295,9 +518,11 @@ namespace zs {
     AsyncResourceManager *_resourceManager{nullptr};
     mutable Mutex _mutex{};
     Atomic<u64> _nextSessionId{0};
+    Atomic<u64> _nextReportId{0};
     std::unordered_map<u64, SessionState> _sessions{};
     std::vector<SmallString> _knownExecutors{};
     std::vector<AsyncResourceHandle> _resourceHandles{};
+    std::vector<std::pair<SmallString, AsyncBackendProfile>> _registeredProfiles{};
   };
 
 }  // namespace zs

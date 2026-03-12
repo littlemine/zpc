@@ -1,6 +1,7 @@
 #include <cassert>
 #include <string>
 
+#include "zensim/execution/ValidationCompare.hpp"
 #include "zensim/execution/ValidationFormat.hpp"
 
 int main() {
@@ -58,6 +59,21 @@ int main() {
   assert(summaryText.find("- [pass] queue\"sync recordId=async.cuda.queue-sync backend=cuda executor=cuda_record target=gpu0 kind=benchmark accepted=true durationNs=4200")
          != std::string::npos);
   assert(summaryText.find("- [fail] queue-fail recordId=async.cuda.queue-sync backend=cuda executor=cuda_record target=gpu0 kind=benchmark accepted=false durationNs=4200")
+         != std::string::npos);
+
+  const std::string reportText = format_validation_report_text(report);
+  assert(reportText.find("note=line1\nline2") != std::string::npos);
+  assert(reportText.find("* latency=1.25 ms accepted=true threshold.mode=less_equal threshold.reference=2 threshold.tolerance=0")
+         != std::string::npos);
+
+  const auto comparison = compare_validation_reports(report, report);
+  const std::string comparisonSummary = format_validation_comparison_summary_text(comparison);
+  assert(comparisonSummary.find("accepted=true") != std::string::npos);
+  assert(comparisonSummary.find("unchanged=2") != std::string::npos);
+
+  const std::string comparisonText = format_validation_comparison_report_text(comparison);
+  assert(comparisonText.find("suite=async accepted=true total=2 unchanged=2") != std::string::npos);
+  assert(comparisonText.find("* [unchanged] latency unit=ms baselineValue=1.25 currentValue=1.25 delta=0 baselineAccepted=true currentAccepted=true")
          != std::string::npos);
 
   return 0;

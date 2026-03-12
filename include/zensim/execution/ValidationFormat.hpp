@@ -174,6 +174,38 @@ namespace zs {
     return oss.str();
   }
 
+  inline std::string format_validation_report_text(ValidationSuiteReport report) {
+    report.refresh_summary();
+
+    std::ostringstream oss;
+    oss << format_validation_summary_text(report);
+
+    for (const auto &record : report.records) {
+      if (record.note.size()) oss << "\n  note=" << record.note.asChars();
+      for (const auto &measurement : record.measurements) {
+        oss << "\n  * " << measurement.name.asChars() << '=' << measurement.value;
+        if (measurement.unit.size()) oss << ' ' << measurement.unit.asChars();
+        oss << " accepted=" << (measurement.accepted() ? "true" : "false");
+        oss << " threshold.mode="
+            << validation_threshold_mode_name(measurement.threshold.mode);
+        switch (measurement.threshold.mode) {
+          case ValidationThresholdMode::less_equal:
+          case ValidationThresholdMode::greater_equal:
+            oss << " threshold.reference=" << measurement.threshold.reference;
+            oss << " threshold.tolerance=" << measurement.threshold.tolerance;
+            break;
+          case ValidationThresholdMode::inclusive_range:
+            oss << " threshold.lowerBound=" << measurement.threshold.lowerBound;
+            oss << " threshold.upperBound=" << measurement.threshold.upperBound;
+            break;
+          default:
+            break;
+        }
+      }
+    }
+    return oss.str();
+  }
+
   inline std::string format_validation_measurement_diff_json(
       const ValidationMeasurementDiff &measurement) {
     std::ostringstream oss;
@@ -267,6 +299,42 @@ namespace zs {
       oss << " baselineOutcome=" << validation_outcome_name(record.baselineOutcome);
       oss << " currentOutcome=" << validation_outcome_name(record.currentOutcome);
 
+      for (const auto &measurement : record.measurements) {
+        oss << "\n  * [" << validation_diff_status_name(measurement.status) << "] ";
+        oss << measurement.name.asChars();
+        if (measurement.unit.size()) oss << " unit=" << measurement.unit.asChars();
+        if (measurement.hasBaseline) oss << " baselineValue=" << measurement.baselineValue;
+        if (measurement.hasCurrent) oss << " currentValue=" << measurement.currentValue;
+        oss << " delta=" << measurement.delta;
+        oss << " baselineAccepted=" << (measurement.baselineAccepted ? "true" : "false");
+        oss << " currentAccepted=" << (measurement.currentAccepted ? "true" : "false");
+      }
+    }
+    return oss.str();
+  }
+
+  inline std::string format_validation_comparison_report_text(
+      const ValidationComparisonReport &report) {
+    std::ostringstream oss;
+    oss << "suite=" << report.suite.asChars();
+    oss << " accepted=" << (report.accepted ? "true" : "false");
+    oss << " total=" << report.summary.total;
+    oss << " unchanged=" << report.summary.unchanged;
+    oss << " improved=" << report.summary.improved;
+    oss << " regressed=" << report.summary.regressed;
+    oss << " added=" << report.summary.added;
+    oss << " removed=" << report.summary.removed;
+
+    for (const auto &record : report.records) {
+      oss << "\n- [" << validation_diff_status_name(record.status) << "] ";
+      oss << record.name.asChars();
+      if (record.recordId.size()) oss << " recordId=" << record.recordId.asChars();
+      if (record.backend.size()) oss << " backend=" << record.backend.asChars();
+      if (record.executor.size()) oss << " executor=" << record.executor.asChars();
+      if (record.target.size()) oss << " target=" << record.target.asChars();
+      oss << " kind=" << validation_record_kind_name(record.kind);
+      oss << " baselineOutcome=" << validation_outcome_name(record.baselineOutcome);
+      oss << " currentOutcome=" << validation_outcome_name(record.currentOutcome);
       for (const auto &measurement : record.measurements) {
         oss << "\n  * [" << validation_diff_status_name(measurement.status) << "] ";
         oss << measurement.name.asChars();
