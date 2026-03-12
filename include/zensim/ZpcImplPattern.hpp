@@ -516,11 +516,28 @@ namespace zs {
   struct DefaultStorage
       : conditional_t<sizeof(T) <= Cap, InplaceStorage<sizeof(T), alignof(T)>, DynamicStorage> {};
 
+
   // DefaultStorage<Type>
   // InplaceStorage<sizeof(Type), alignof(Type)>
+
+  /// @brief nullowner_t tag type for constructing empty Owner
+  struct nullowner_t {
+    explicit constexpr nullowner_t() noexcept = default;
+  };
+  inline constexpr nullowner_t nullowner{};
+
+  /// @brief in_place_t tag type for Owner::emplace-style construction
+  struct owner_in_place_t {
+    explicit constexpr owner_in_place_t() noexcept = default;
+  };
+  inline constexpr owner_in_place_t owner_in_place{};
+
+  /// @brief RAII ownership wrapper â€?optional-compatible, zero-overhead over std::optional
+  /// Primary template: for non-default-constructible types (tracks active state)
   template <typename Type, typename StoragePolicy = InplaceStorage<sizeof(Type), alignof(Type)>,
             typename = void>
   struct Owner {
+    using value_type = Type;
     using storage_type = StoragePolicy;
 
     static_assert((is_copy_assignable_v<Type> && is_copy_constructible_v<Type>)
@@ -529,47 +546,66 @@ namespace zs {
     static_assert((is_move_assignable_v<Type> && is_move_constructible_v<Type>)
                       || !is_move_assignable_v<Type>,
                   "when Type is move assignable, it must be move constructible too");
-#if 0
-    template <bool V = is_default_constructible_v<Type>, enable_if_t<V> = 0>
-    Owner() noexcept(is_nothrow_default_constructible_v<Type>) {
-      _storage.template create<Type>();
-      _active = true;
-    }
 
-    template <bool V = is_default_constructible_v<Type>, enable_if_t<!V> = 0>
-#endif
+    // --- Construction ---
     Owner() noexcept : _storage{}, _active{false} {}
+    Owner(nullowner_t) noexcept : _storage{}, _active{false} {}
 
     template <bool V = is_copy_constructible_v<Type>, enable_if_t<V> = 0>
-    Owner(const Type& obj) noexcept(is_nothrow_copy_constructible_v<Type>) {
+    Owner(const Type& obj) noexcept(is_nothrow_copy_constructible_v<Type>)
+        : _active{true} {
       _storage.template create<Type>(obj);
-      _active = true;
     }
     template <bool V = is_move_constructible_v<Type>, enable_if_t<V> = 0>
-    Owner(Type&& obj) noexcept(is_nothrow_move_constructible_v<Type>) {
+    Owner(Type&& obj) noexcept(is_nothrow_move_constructible_v<Type>)
+        : _active{true} {
       _storage.template create<Type>(zs::move(obj));
-      _active = true;
     }
 
+    /// In-place construction
+    template <typename... Args>
+    explicit Owner(owner_in_place_t, Args&&... args)
+        : _active{true} {
+      _storage.template create<Type>(FWD(args)...);
+    }
+
+    // --- Move/Copy construction (direct, no routing through operator=) ---
     template <bool V = is_move_constructible_v<Type>, enable_if_t<V> = 0>
-    Owner(Owner&& o) noexcept(is_nothrow_move_constructible_v<Type>) {
-      _active = false;
-      if (o._active) operator=(zs::move(o.get()));
+    Owner(Owner&& o) noexcept(is_nothrow_move_constructible_v<Type>)
+        : _active{o._active} {
+      if (_active) {
+        _storage.template create<Type>(zs::move(o.get()));
+        o._storage.template destroy<Type>();
+        o._active = false;
+      }
     }
     template <bool V = is_copy_constructible_v<Type>, enable_if_t<V> = 0>
-    Owner(const Owner& o) noexcept(is_nothrow_copy_constructible_v<Type>) {
-      _active = false;
-      if (o._active) operator=(o.get());
+    Owner(const Owner& o) noexcept(is_nothrow_copy_constructible_v<Type>)
+        : _active{o._active} {
+      if (_active) {
+        _storage.template create<Type>(o.get());
+      }
     }
 
+    // --- Destruction ---
     void reset() noexcept(is_nothrow_destructible_v<Type>) {
       if (_active) {
         _storage.template destroy<Type>();
         _active = false;
       }
     }
-    ~Owner() noexcept(is_nothrow_destructible_v<Type>) { reset(); };
+    ~Owner() noexcept(is_nothrow_destructible_v<Type>) { reset(); }
 
+    // --- Emplace (destroy old, construct new in-place) ---
+    template <typename... Args>
+    Type& emplace(Args&&... args) {
+      reset();
+      auto* p = _storage.template create<Type>(FWD(args)...);
+      _active = true;
+      return *p;
+    }
+
+    // --- Assignment from Type ---
     template <bool V = (!is_copy_assignable_v<Type> && is_copy_constructible_v<Type>)
                        || is_copy_assignable_v<Type>>
     enable_if_type<V, Owner&> operator=(const Type& obj) noexcept(
@@ -578,7 +614,7 @@ namespace zs {
         || ((is_copy_assignable_v<Type>)
             && is_nothrow_copy_assignable_v<Type> && is_nothrow_copy_constructible_v<Type>)) {
       if constexpr (!is_copy_assignable_v<Type> && is_copy_constructible_v<Type>) {
-        if (_active) _storage.template destroy<Type>();
+        reset();
         _storage.template create<Type>(obj);
         _active = true;
       } else if constexpr (is_copy_assignable_v<Type>) {
@@ -601,7 +637,7 @@ namespace zs {
         || ((is_move_assignable_v<Type>)
             && is_nothrow_move_assignable_v<Type> && is_nothrow_move_constructible_v<Type>)) {
       if constexpr (!is_move_assignable_v<Type> && is_move_constructible_v<Type>) {
-        if (_active) _storage.template destroy<Type>();
+        reset();
         _storage.template create<Type>(zs::move(obj));
         _active = true;
       } else if constexpr (is_move_assignable_v<Type>) {
@@ -617,6 +653,7 @@ namespace zs {
       return *this;
     }
 
+    // --- Assignment from Owner ---
     template <bool V = (!is_copy_assignable_v<Type> && is_copy_constructible_v<Type>)
                        || is_copy_assignable_v<Type>>
     enable_if_type<V, Owner&> operator=(const Owner& obj) noexcept(
@@ -627,10 +664,8 @@ namespace zs {
       if (this == zs::addressof(obj)) return *this;
       if (obj._active)
         operator=(obj.get());
-      else {
-        if (_active) _storage.template destroy<Type>();
-        _active = false;
-      }
+      else
+        reset();
       return *this;
     }
     template <bool V = (!is_move_assignable_v<Type> && is_move_constructible_v<Type>)
@@ -643,82 +678,269 @@ namespace zs {
       if (this == &obj) return *this;
       if (obj._active) {
         operator=(zs::move(obj.get()));
+        obj._storage.template destroy<Type>();
+        obj._active = false;
       } else {
-        if (_active) _storage.template destroy<Type>();
-        _active = false;
+        reset();
       }
-      // obj._active = false; // obj being moved does not become inactive
       return *this;
     }
 
-    Type& get() { return *_storage.template data<Type>(); }
-    add_const_t<Type>& get() const { return *_storage.template data<add_const_t<Type>>(); }
-    operator Type&() { return *_storage.template data<Type>(); }
-    operator add_const_t<Type>&() const { return *_storage.template data<add_const_t<Type>>(); }
+    /// Reset via nullowner assignment
+    Owner& operator=(nullowner_t) noexcept(is_nothrow_destructible_v<Type>) {
+      reset();
+      return *this;
+    }
 
+    // --- Access (std::optional-compatible) ---
+    Type* operator->() noexcept { return _storage.template data<Type>(); }
+    const Type* operator->() const noexcept { return _storage.template data<add_const_t<Type>>(); }
+    Type& operator*() & noexcept { return *_storage.template data<Type>(); }
+    const Type& operator*() const& noexcept { return *_storage.template data<add_const_t<Type>>(); }
+    Type&& operator*() && noexcept { return zs::move(*_storage.template data<Type>()); }
+
+    Type& get() noexcept { return *_storage.template data<Type>(); }
+    add_const_t<Type>& get() const noexcept { return *_storage.template data<add_const_t<Type>>(); }
+
+    // Implicit conversion (backward compat)
+    operator Type&() noexcept { return get(); }
+    operator add_const_t<Type>&() const noexcept { return get(); }
+
+    // --- State query ---
+    bool has_value() const noexcept { return _active; }
     bool isActive() const noexcept { return _active; }
     explicit operator bool() const noexcept { return _active; }
+
+    // --- value_or ---
+    template <typename U>
+    Type value_or(U&& default_value) const& {
+      if (_active) return get();
+      return static_cast<Type>(FWD(default_value));
+    }
+    template <typename U>
+    Type value_or(U&& default_value) && {
+      if (_active) return zs::move(get());
+      return static_cast<Type>(FWD(default_value));
+    }
+
+    // --- Swap ---
+    void swap(Owner& other) noexcept(
+        is_nothrow_move_constructible_v<Type> && is_nothrow_destructible_v<Type>) {
+      if (_active && other._active) {
+        // Both active: swap underlying values via move
+        if constexpr (is_move_constructible_v<Type>) {
+          // Use storage as temp
+          InplaceStorage<sizeof(Type), alignof(Type)> tmp;
+          tmp.template create<Type>(zs::move(get()));
+          _storage.template destroy<Type>();
+          _storage.template create<Type>(zs::move(other.get()));
+          other._storage.template destroy<Type>();
+          other._storage.template create<Type>(zs::move(*tmp.template data<Type>()));
+          tmp.template destroy<Type>();
+        }
+      } else if (_active) {
+        // Only this is active: move to other
+        other._storage.template create<Type>(zs::move(get()));
+        _storage.template destroy<Type>();
+        _active = false;
+        other._active = true;
+      } else if (other._active) {
+        // Only other is active: move to this
+        _storage.template create<Type>(zs::move(other.get()));
+        other._storage.template destroy<Type>();
+        _active = true;
+        other._active = false;
+      }
+      // Both inactive: no-op
+    }
 
   private:
     storage_type _storage;
     bool _active;
   };
 
+  /// Specialization: default-constructible types
+  /// Always has a value (default-constructs on creation), but supports reset() for optional semantics.
   template <typename Type, typename StoragePolicy>
   struct Owner<Type, StoragePolicy, enable_if_type<is_default_constructible_v<Type>, void>> {
+    using value_type = Type;
     using storage_type = StoragePolicy;
 
-    Owner() noexcept(is_nothrow_default_constructible_v<Type>) { _storage.template create<Type>(); }
+    Owner() noexcept(is_nothrow_default_constructible_v<Type>) : _active{true} {
+      _storage.template create<Type>();
+    }
+    Owner(nullowner_t) noexcept : _active{false} {}
 
     template <bool V = is_copy_constructible_v<Type>, enable_if_t<V> = 0>
-    Owner(const Type& obj) noexcept(is_nothrow_copy_constructible_v<Type>) {
+    Owner(const Type& obj) noexcept(is_nothrow_copy_constructible_v<Type>)
+        : _active{true} {
       _storage.template create<Type>(obj);
     }
     template <bool V = is_move_constructible_v<Type>, enable_if_t<V> = 0>
-    Owner(Type&& obj) noexcept(is_nothrow_move_constructible_v<Type>) {
+    Owner(Type&& obj) noexcept(is_nothrow_move_constructible_v<Type>)
+        : _active{true} {
       _storage.template create<Type>(zs::move(obj));
     }
 
-    template <bool V = is_move_constructible_v<Type>, enable_if_t<V> = 0>
-    Owner(Owner&& o) noexcept(is_nothrow_move_constructible_v<Type>) : Owner(zs::move(o.get())) {}
-    template <bool V = is_copy_constructible_v<Type>, enable_if_t<V> = 0>
-    Owner(const Owner& o) noexcept(is_nothrow_copy_constructible_v<Type>) : Owner(o.get()) {}
+    /// In-place construction
+    template <typename... Args>
+    explicit Owner(owner_in_place_t, Args&&... args) : _active{true} {
+      _storage.template create<Type>(FWD(args)...);
+    }
 
-    ~Owner() noexcept(is_nothrow_destructible_v<Type>) { _storage.template destroy<Type>(); };
+    template <bool V = is_move_constructible_v<Type>, enable_if_t<V> = 0>
+    Owner(Owner&& o) noexcept(is_nothrow_move_constructible_v<Type>)
+        : _active{o._active} {
+      if (_active) {
+        _storage.template create<Type>(zs::move(o.get()));
+        o._storage.template destroy<Type>();
+        o._active = false;
+      }
+    }
+    template <bool V = is_copy_constructible_v<Type>, enable_if_t<V> = 0>
+    Owner(const Owner& o) noexcept(is_nothrow_copy_constructible_v<Type>)
+        : _active{o._active} {
+      if (_active) {
+        _storage.template create<Type>(o.get());
+      }
+    }
+
+    void reset() noexcept(is_nothrow_destructible_v<Type>) {
+      if (_active) {
+        _storage.template destroy<Type>();
+        _active = false;
+      }
+    }
+    ~Owner() noexcept(is_nothrow_destructible_v<Type>) { reset(); }
+
+    template <typename... Args>
+    Type& emplace(Args&&... args) {
+      reset();
+      auto* p = _storage.template create<Type>(FWD(args)...);
+      _active = true;
+      return *p;
+    }
 
     template <bool V = is_copy_assignable_v<Type>, enable_if_t<V> = 0>
     Owner& operator=(const Type& obj) noexcept(is_nothrow_copy_assignable_v<Type>) {
-      get() = obj;
+      if (_active)
+        get() = obj;
+      else {
+        _storage.template create<Type>(obj);
+        _active = true;
+      }
       return *this;
     }
     template <bool V = is_move_assignable_v<Type>, enable_if_t<V> = 0>
     Owner& operator=(Type&& obj) noexcept(is_nothrow_move_assignable_v<Type>) {
-      get() = zs::move(obj);
+      if (_active)
+        get() = zs::move(obj);
+      else {
+        _storage.template create<Type>(zs::move(obj));
+        _active = true;
+      }
       return *this;
     }
 
     template <bool V = is_copy_assignable_v<Type>, enable_if_t<V> = 0>
     Owner& operator=(const Owner& obj) noexcept(is_nothrow_copy_assignable_v<Type>) {
       if (this == zs::addressof(obj)) return *this;
-      operator=(obj.get());
+      if (obj._active) {
+        if (_active)
+          get() = obj.get();
+        else {
+          _storage.template create<Type>(obj.get());
+          _active = true;
+        }
+      } else {
+        reset();
+      }
       return *this;
     }
     template <bool V = is_move_assignable_v<Type>, enable_if_t<V> = 0>
     Owner& operator=(Owner&& obj) noexcept(is_nothrow_move_assignable_v<Type>) {
       if (this == zs::addressof(obj)) return *this;
-      operator=(zs::move(obj.get()));
+      if (obj._active) {
+        if (_active)
+          get() = zs::move(obj.get());
+        else {
+          _storage.template create<Type>(zs::move(obj.get()));
+          _active = true;
+        }
+        obj._storage.template destroy<Type>();
+        obj._active = false;
+      } else {
+        reset();
+      }
       return *this;
     }
 
-    Type& get() { return *_storage.template data<Type>(); }
-    add_const_t<Type>& get() const { return *_storage.template data<add_const_t<Type>>(); }
-    operator Type&() { return *_storage.template data<Type>(); }
-    operator add_const_t<Type>&() const { return *_storage.template data<add_const_t<Type>>(); }
+    Owner& operator=(nullowner_t) noexcept(is_nothrow_destructible_v<Type>) {
+      reset();
+      return *this;
+    }
 
-    explicit operator bool() const noexcept { return true; }
+    // --- Access ---
+    Type* operator->() noexcept { return _storage.template data<Type>(); }
+    const Type* operator->() const noexcept { return _storage.template data<add_const_t<Type>>(); }
+    Type& operator*() & noexcept { return *_storage.template data<Type>(); }
+    const Type& operator*() const& noexcept { return *_storage.template data<add_const_t<Type>>(); }
+    Type&& operator*() && noexcept { return zs::move(*_storage.template data<Type>()); }
+
+    Type& get() noexcept { return *_storage.template data<Type>(); }
+    add_const_t<Type>& get() const noexcept { return *_storage.template data<add_const_t<Type>>(); }
+    operator Type&() noexcept { return get(); }
+    operator add_const_t<Type>&() const noexcept { return get(); }
+
+    bool has_value() const noexcept { return _active; }
+    bool isActive() const noexcept { return _active; }
+    explicit operator bool() const noexcept { return _active; }
+
+    template <typename U>
+    Type value_or(U&& default_value) const& {
+      if (_active) return get();
+      return static_cast<Type>(FWD(default_value));
+    }
+    template <typename U>
+    Type value_or(U&& default_value) && {
+      if (_active) return zs::move(get());
+      return static_cast<Type>(FWD(default_value));
+    }
+
+    void swap(Owner& other) noexcept(
+        is_nothrow_move_constructible_v<Type> && is_nothrow_destructible_v<Type>) {
+      if (_active && other._active) {
+        if constexpr (is_move_constructible_v<Type>) {
+          InplaceStorage<sizeof(Type), alignof(Type)> tmp;
+          tmp.template create<Type>(zs::move(get()));
+          _storage.template destroy<Type>();
+          _storage.template create<Type>(zs::move(other.get()));
+          other._storage.template destroy<Type>();
+          other._storage.template create<Type>(zs::move(*tmp.template data<Type>()));
+          tmp.template destroy<Type>();
+        }
+      } else if (_active) {
+        other._storage.template create<Type>(zs::move(get()));
+        _storage.template destroy<Type>();
+        _active = false;
+        other._active = true;
+      } else if (other._active) {
+        _storage.template create<Type>(zs::move(other.get()));
+        other._storage.template destroy<Type>();
+        _active = true;
+        other._active = false;
+      }
+    }
 
   private:
     storage_type _storage;
+    bool _active;
   };
+
+  /// ADL swap for Owner
+  template <typename T, typename S, typename E>
+  void swap(Owner<T, S, E>& a, Owner<T, S, E>& b) noexcept(noexcept(a.swap(b))) {
+    a.swap(b);
+  }
 
 }  // namespace zs
