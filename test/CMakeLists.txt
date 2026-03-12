@@ -196,6 +196,7 @@ endif(ZS_ENABLE_MUSA)
 # render smoke
 add_executable(rendersmoke render/render_smoke.cpp)
 target_link_libraries(rendersmoke PRIVATE zpc_render_core)
+target_compile_features(rendersmoke PRIVATE cxx_std_17)
 
 add_test(ZsRenderSmoke rendersmoke)
 add_dependencies(zensim rendersmoke)
@@ -203,6 +204,7 @@ add_dependencies(zensim rendersmoke)
 # render capture
 add_executable(rendercapture render/render_capture.cpp)
 target_link_libraries(rendercapture PRIVATE zpc_render_capture)
+target_compile_features(rendercapture PRIVATE cxx_std_17)
 
 add_test(ZsRenderCapture rendercapture)
 add_dependencies(zensim rendercapture)
@@ -210,6 +212,7 @@ add_dependencies(zensim rendercapture)
 # render benchmark smoke
 add_executable(renderbenchmarksmoke render/render_benchmark_smoke.cpp)
 target_link_libraries(renderbenchmarksmoke PRIVATE zpc_render_benchmark)
+target_compile_features(renderbenchmarksmoke PRIVATE cxx_std_17)
 
 add_test(ZsRenderBenchmarkSmoke renderbenchmarksmoke)
 add_dependencies(zensim renderbenchmarksmoke)

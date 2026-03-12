@@ -414,7 +414,7 @@ set(ZENSIM_LIBRARY_PY_INTEROP_INCLUDE_FILES
   py_interop/SmallVec.hpp
 )
 
-# render module header lists (header-only / INTERFACE targets)
+# render module header lists
 set(ZENSIM_LIBRARY_RENDER_CORE_INCLUDE_FILES
   render/RenderTypes.hpp
   render/RenderScene.hpp
@@ -427,10 +427,20 @@ set(ZENSIM_LIBRARY_RENDER_CORE_INCLUDE_FILES
   render/scene/RenderSceneImport.hpp
   render/realtime/RasterRenderer.hpp
 )
+set(ZENSIM_LIBRARY_RENDER_CORE_SOURCE_FILES
+  render/RenderManifest.cpp
+  render/RenderBackendSelection.cpp
+  render/scene/RenderSceneImport.cpp
+)
 set(ZENSIM_LIBRARY_RENDER_CAPTURE_INCLUDE_FILES
   render/capture/RenderCapture.hpp
   render/capture/RenderReadback.hpp
   render/capture/RenderImageWriter.hpp
+)
+set(ZENSIM_LIBRARY_RENDER_CAPTURE_SOURCE_FILES
+  render/capture/RenderReadback.cpp
+  render/capture/RenderImageWriter.cpp
+  render/capture/RenderCapture.cpp
 )
 set(ZENSIM_LIBRARY_RENDER_BENCHMARK_INCLUDE_FILES
   render/benchmark/RenderBenchmark.hpp
@@ -580,20 +590,24 @@ if(NOT WIN32)
   target_link_libraries(zpc_process INTERFACE rt)
 endif()
 
-# render infrastructure (header-only, opt-in)
-add_library(zpc_render_core INTERFACE)
+# render infrastructure (opt-in, compiled)
+add_library(zpc_render_core STATIC)
 target_sources(zpc_render_core
-  INTERFACE
+  PRIVATE
+  ${ZENSIM_LIBRARY_RENDER_CORE_SOURCE_FILES}
+  PUBLIC
   ${ZENSIM_LIBRARY_RENDER_CORE_INCLUDE_FILES}
 )
-target_link_libraries(zpc_render_core INTERFACE zpcbase)
+target_link_libraries(zpc_render_core PUBLIC zpcbase PRIVATE zpccore)
 
-add_library(zpc_render_capture INTERFACE)
+add_library(zpc_render_capture STATIC)
 target_sources(zpc_render_capture
-  INTERFACE
+  PRIVATE
+  ${ZENSIM_LIBRARY_RENDER_CAPTURE_SOURCE_FILES}
+  PUBLIC
   ${ZENSIM_LIBRARY_RENDER_CAPTURE_INCLUDE_FILES}
 )
-target_link_libraries(zpc_render_capture INTERFACE zpc_render_core)
+target_link_libraries(zpc_render_capture PUBLIC zpc_render_core)
 
 add_library(zpc_render_benchmark INTERFACE)
 target_sources(zpc_render_benchmark
