@@ -59,6 +59,15 @@ hosting UIs, and without the old generated-doc flow.
 - [cli_and_gui_interface_exposure.md](cli_and_gui_interface_exposure.md)
 - [canary_gameplay_and_tuning.md](canary_gameplay_and_tuning.md)
 
+### Gameplay Mechanics System
+
+- [gameplay_mechanics_agent_prompt.md](gameplay_mechanics_agent_prompt.md)
+- [gameplay_mechanics_research_roadmap.md](gameplay_mechanics_research_roadmap.md)
+- [gameplay_mechanics_implementation_roadmap.md](gameplay_mechanics_implementation_roadmap.md)
+- [gameplay_mechanics_benchmark_plan.md](gameplay_mechanics_benchmark_plan.md)
+- [gameplay_mechanics_milestones.md](gameplay_mechanics_milestones.md)
+- [gameplay_mechanics_risks_and_operating_loop.md](gameplay_mechanics_risks_and_operating_loop.md)
+
 ### Runtime And Validation References
 
 - [async_runtime_abi.rst](async_runtime_abi.rst)
