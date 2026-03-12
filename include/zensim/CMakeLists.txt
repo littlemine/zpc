@@ -423,15 +423,21 @@ set(ZENSIM_LIBRARY_RENDER_CORE_INCLUDE_FILES
   render/RenderArtifact.hpp
   render/RenderManifest.hpp
   render/RenderBackendSelection.hpp
+  render/RenderMaterial.hpp
   render/scene/RenderSceneBuilder.hpp
   render/scene/RenderSceneImport.hpp
   render/realtime/RasterRenderer.hpp
+  render/offline/PathTracerTypes.hpp
+  render/offline/BVHBuilder.hpp
+  render/offline/PathTracer.hpp
 )
 set(ZENSIM_LIBRARY_RENDER_CORE_SOURCE_FILES
   render/RenderManifest.cpp
   render/RenderBackendSelection.cpp
   render/scene/RenderSceneImport.cpp
   render/realtime/VulkanRasterRenderer.cpp
+  render/offline/BVHBuilder.cpp
+  render/offline/VulkanPathTracer.cpp
 )
 set(ZENSIM_LIBRARY_RENDER_CAPTURE_INCLUDE_FILES
   render/capture/RenderCapture.hpp

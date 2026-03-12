@@ -224,3 +224,11 @@ target_compile_features(rendere2e PRIVATE cxx_std_17)
 
 add_test(ZsRenderE2E rendere2e)
 add_dependencies(zensim rendere2e)
+
+# render path trace (requires Vulkan GPU at runtime)
+add_executable(renderpathtrace render/render_pathtrace.cpp)
+target_link_libraries(renderpathtrace PRIVATE zpc_render_capture)
+target_compile_features(renderpathtrace PRIVATE cxx_std_17)
+
+add_test(ZsRenderPathTrace renderpathtrace)
+add_dependencies(zensim renderpathtrace)
