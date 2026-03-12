@@ -684,7 +684,6 @@ if(ZS_ENABLE_OPENMP)
 
   set_target_properties(zpcomp
     PROPERTIES POSITION_INDEPENDENT_CODE ON
-    WINDOWS_EXPORT_ALL_SYMBOLS ON # otherwise fail at runtime(?)
   )
 
   target_link_libraries(zpcomp PUBLIC zpc_omp_deps zpccore)
@@ -1162,7 +1161,6 @@ target_sources(zpc_simulation
 )
 set_target_properties(zpc_simulation
   PROPERTIES
-  WINDOWS_EXPORT_ALL_SYMBOLS ON
   POSITION_INDEPENDENT_CODE ON
   RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}
   LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}
