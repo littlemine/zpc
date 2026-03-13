@@ -196,6 +196,14 @@ target_compile_features(gameplayprogression PRIVATE cxx_std_17)
 add_test(ZsGameplayProgression gameplayprogression)
 add_dependencies(zensim gameplayprogression)
 
+# gameplay ai interface
+add_executable(gameplayaiinterface gameplay_ai_interface.cpp)
+target_link_libraries(gameplayaiinterface PRIVATE zpc_gameplay_core)
+target_compile_features(gameplayaiinterface PRIVATE cxx_std_17)
+
+add_test(ZsGameplayAIInterface gameplayaiinterface)
+add_dependencies(zensim gameplayaiinterface)
+
 # binary search
 add_executable(binarysearchtest binary_search.cpp)
 target_link_libraries(binarysearchtest PRIVATE zpc)

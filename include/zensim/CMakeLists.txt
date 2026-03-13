@@ -331,6 +331,7 @@ set(ZENSIM_LIBRARY_GAMEPLAY_CORE_INCLUDE_FILES
   gameplay/GameplayCombat.hpp
   gameplay/GameplayInventory.hpp
   gameplay/GameplayProgression.hpp
+  gameplay/GameplayAIInterface.hpp
 )
 set(ZENSIM_LIBRARY_IO_INCLUDE_FILES
   io/IO.h
