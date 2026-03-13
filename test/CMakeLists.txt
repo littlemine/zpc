@@ -156,6 +156,14 @@ target_compile_features(gameplaymechanics PRIVATE cxx_std_17)
 add_test(ZsGameplayMechanics gameplaymechanics)
 add_dependencies(zensim gameplaymechanics)
 
+# gameplay ability system
+add_executable(gameplayability gameplay_ability.cpp)
+target_link_libraries(gameplayability PRIVATE zpc_gameplay_core)
+target_compile_features(gameplayability PRIVATE cxx_std_17)
+
+add_test(ZsGameplayAbility gameplayability)
+add_dependencies(zensim gameplayability)
+
 # binary search
 add_executable(binarysearchtest binary_search.cpp)
 target_link_libraries(binarysearchtest PRIVATE zpc)

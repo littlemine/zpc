@@ -326,6 +326,7 @@ set(ZENSIM_LIBRARY_GAMEPLAY_CORE_INCLUDE_FILES
   gameplay/GameplayMechanicsSchema.hpp
   gameplay/GameplayMechanicsRegistry.hpp
   gameplay/GameplayMechanicsLoader.hpp
+  gameplay/GameplayAbility.hpp
 )
 set(ZENSIM_LIBRARY_IO_INCLUDE_FILES
   io/IO.h
