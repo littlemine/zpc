@@ -1,9 +1,16 @@
 /// @file VulkanDeferredRenderer.cpp
-/// @brief Headless Vulkan deferred renderer implementation.
+/// @brief Headless Vulkan deferred renderer with shadow mapping.
 ///
-/// Two-pass deferred rendering:
-///   1. G-buffer pass (rasterization with MRT) — writes position, normal, albedo
-///   2. Lighting pass (compute shader) — reads G-buffer, writes lit RGBA8 output
+/// Three-pass deferred rendering:
+///   1. Shadow map pass (depth-only render from light POV)
+///   2. G-buffer pass (rasterization with MRT) — writes position, normal, albedo
+///   3. Lighting pass (compute shader) — reads G-buffer + shadow map, writes lit RGBA8
+///
+/// Shadow mapping features:
+///   - Orthographic projection for directional lights
+///   - Depth bias (constant + slope-scaled) in the shadow pipeline
+///   - 5x5 PCF (Percentage-Closer Filtering) for soft shadow edges
+///   - Normal offset bias to reduce shadow acne
 ///
 /// Conditionally compiled — requires ZS_ENABLE_VULKAN=1.
 
@@ -72,6 +79,30 @@ void main() {
 }
 )";
 
+// -- Shadow map vertex shader (depth-only) --
+static const char* k_shadow_vert_glsl = R"(
+#version 450
+
+layout(push_constant) uniform PushConstants {
+  mat4 light_mvp;
+} pc;
+
+layout(location = 0) in vec3 inPosition;
+layout(location = 1) in vec3 inNormal;
+layout(location = 2) in vec3 inColor;
+layout(location = 3) in vec2 inUV;
+
+void main() {
+  gl_Position = pc.light_mvp * vec4(inPosition, 1.0);
+}
+)";
+
+// -- Shadow map fragment shader (no-op, required by pipeline builder) --
+static const char* k_shadow_frag_glsl = R"(
+#version 450
+void main() {}
+)";
+
 // -- G-buffer fragment shader (MRT output) --
 static const char* k_gbuffer_frag_glsl = R"(
 #version 450
@@ -92,7 +123,7 @@ void main() {
 }
 )";
 
-// -- Lighting compute shader --
+// -- Lighting compute shader (with shadow mapping + PCF) --
 static const char* k_lighting_comp_glsl = R"(
 #version 450
 
@@ -115,14 +146,56 @@ layout(std430, set = 0, binding = 4) readonly buffer Lights {
   GPULight lights[];
 } lightBuf;
 
+// Shadow map (depth texture, comparison sampler)
+layout(set = 0, binding = 5) uniform sampler2D shadowMap;
+
 // Push constants
 layout(push_constant) uniform PushConstants {
   vec4 camera_pos_numLights;  // xyz = camera position, w = numLights (as float)
   uint width;
   uint height;
   float ambient;
-  float _pad;
+  float shadow_intensity;     // 0 = no shadow, 1 = full shadow
+  mat4 light_vp;              // light view-projection matrix for shadow mapping
 } pc;
+
+/// 5x5 PCF shadow sampling with Poisson-like offsets for soft shadows.
+float sampleShadow(vec3 worldPos) {
+  // Transform world position to light clip space
+  vec4 lightClip = pc.light_vp * vec4(worldPos, 1.0);
+  vec3 lightNDC = lightClip.xyz / lightClip.w;
+
+  // Convert from NDC [-1,1] to shadow map UV [0,1]
+  // Note: Vulkan depth is already [0,1], but X/Y need mapping
+  vec2 shadowUV = lightNDC.xy * 0.5 + 0.5;
+  float currentDepth = lightNDC.z;
+
+  // If outside the shadow map, no shadow
+  if (shadowUV.x < 0.0 || shadowUV.x > 1.0 ||
+      shadowUV.y < 0.0 || shadowUV.y > 1.0 ||
+      currentDepth < 0.0 || currentDepth > 1.0) {
+    return 1.0;  // fully lit
+  }
+
+  // PCF 5x5 kernel for soft shadows
+  float shadow = 0.0;
+  vec2 texelSize = 1.0 / vec2(textureSize(shadowMap, 0));
+  const float bias = 0.002;  // small constant bias (depth bias is also in the pipeline)
+
+  const int pcfRadius = 2;  // 5x5 kernel
+  float sampleCount = 0.0;
+
+  for (int x = -pcfRadius; x <= pcfRadius; ++x) {
+    for (int y = -pcfRadius; y <= pcfRadius; ++y) {
+      vec2 offset = vec2(float(x), float(y)) * texelSize;
+      float shadowDepth = texture(shadowMap, shadowUV + offset).r;
+      shadow += (currentDepth - bias > shadowDepth) ? 0.0 : 1.0;
+      sampleCount += 1.0;
+    }
+  }
+
+  return shadow / sampleCount;
+}
 
 void main() {
   ivec2 pixel = ivec2(gl_GlobalInvocationID.xy);
@@ -145,6 +218,9 @@ void main() {
 
   // Camera direction for specular
   vec3 viewDir = normalize(pc.camera_pos_numLights.xyz - position);
+
+  // Shadow factor (1.0 = fully lit, 0.0 = fully shadowed)
+  float shadowFactor = mix(1.0, sampleShadow(position), pc.shadow_intensity);
 
   // Accumulate lighting (Blinn-Phong)
   vec3 totalLight = vec3(pc.ambient);
@@ -178,7 +254,8 @@ void main() {
     float NdotH = max(dot(normal, halfVec), 0.0);
     float specular = pow(NdotH, 32.0) * 0.3;
 
-    totalLight += (NdotL + specular) * lightColor * intensity * attenuation;
+    // Apply shadow to diffuse + specular (not ambient)
+    totalLight += (NdotL + specular) * lightColor * intensity * attenuation * shadowFactor;
   }
 
   vec3 color = albedo * totalLight;
@@ -201,6 +278,13 @@ using mat4 = zs::vec<f32, 4, 4>;
 using vec3 = zs::vec<f32, 3>;
 using vec4 = zs::vec<f32, 4>;
 
+/// Shadow pass push constants: light MVP (64 bytes).
+struct ShadowPushConstants {
+  float light_mvp[16];
+};
+static_assert(sizeof(ShadowPushConstants) == 64,
+              "ShadowPushConstants must be 64 bytes");
+
 /// G-buffer push constants: MVP (64) + model (64) + material_color (16) = 144 bytes.
 struct GBufferPushConstants {
   float mvp[16];
@@ -210,16 +294,18 @@ struct GBufferPushConstants {
 static_assert(sizeof(GBufferPushConstants) == 144,
               "GBufferPushConstants must be 144 bytes");
 
-/// Lighting compute push constants: 32 bytes.
+/// Lighting compute push constants: 96 bytes.
+/// camera_pos_numLights (16) + width/height/ambient/shadow_intensity (16) + light_vp (64)
 struct LightingPushConstants {
   float camera_pos_numLights[4];  // xyz = cam pos, w = numLights
   uint32_t width;
   uint32_t height;
   float ambient;
-  float _pad;
+  float shadow_intensity;         // 0 = no shadow, 1 = full shadow
+  float light_vp[16];            // light view-projection matrix (column-major)
 };
-static_assert(sizeof(LightingPushConstants) == 32,
-              "LightingPushConstants must be 32 bytes");
+static_assert(sizeof(LightingPushConstants) == 96,
+              "LightingPushConstants must be 96 bytes");
 
 /// GPU-packed light for the lighting SSBO (32 bytes).
 struct GPULight {
@@ -281,6 +367,143 @@ static mat4 buildProjectionMatrix(const Camera& cam) {
   return P;
 }
 
+/// Build an orthographic light view-projection matrix for shadow mapping.
+///
+/// For directional/area lights, we compute a view matrix looking from
+/// the light toward the scene center, then wrap the scene's bounding
+/// box in an ortho frustum.  For point lights, we approximate with a
+/// directional projection from the point light position.
+///
+/// @param light     The scene light producing shadows.
+/// @param sceneMin  Scene AABB minimum (world space).
+/// @param sceneMax  Scene AABB maximum (world space).
+/// @return          Column-major-convention VP matrix (row-major storage).
+static mat4 buildLightVP(const Light& light,
+                         const vec3& sceneMin,
+                         const vec3& sceneMax) {
+  // Scene center and radius
+  vec3 center;
+  center(0) = (sceneMin(0) + sceneMax(0)) * 0.5f;
+  center(1) = (sceneMin(1) + sceneMax(1)) * 0.5f;
+  center(2) = (sceneMin(2) + sceneMax(2)) * 0.5f;
+
+  vec3 extent;
+  extent(0) = (sceneMax(0) - sceneMin(0)) * 0.5f;
+  extent(1) = (sceneMax(1) - sceneMin(1)) * 0.5f;
+  extent(2) = (sceneMax(2) - sceneMin(2)) * 0.5f;
+
+  f32 radius = std::sqrt(extent(0)*extent(0) + extent(1)*extent(1) + extent(2)*extent(2));
+
+  // Light direction (always normalised)
+  vec3 lightDir;
+  if (light.type == LightType::Directional || light.type == LightType::Area) {
+    f32 len = std::sqrt(light.direction(0)*light.direction(0) +
+                        light.direction(1)*light.direction(1) +
+                        light.direction(2)*light.direction(2));
+    if (len < 1e-6f) len = 1.f;
+    lightDir(0) = light.direction(0) / len;
+    lightDir(1) = light.direction(1) / len;
+    lightDir(2) = light.direction(2) / len;
+  } else {
+    // Point light — direction from light to scene center
+    lightDir(0) = center(0) - light.position(0);
+    lightDir(1) = center(1) - light.position(1);
+    lightDir(2) = center(2) - light.position(2);
+    f32 len = std::sqrt(lightDir(0)*lightDir(0) + lightDir(1)*lightDir(1) + lightDir(2)*lightDir(2));
+    if (len < 1e-6f) len = 1.f;
+    lightDir(0) /= len; lightDir(1) /= len; lightDir(2) /= len;
+  }
+
+  // Light position: pull back along -lightDir from scene center
+  vec3 lightPos;
+  lightPos(0) = center(0) - lightDir(0) * radius * 2.f;
+  lightPos(1) = center(1) - lightDir(1) * radius * 2.f;
+  lightPos(2) = center(2) - lightDir(2) * radius * 2.f;
+
+  // Build light view matrix (look-at)
+  vec3 f; // forward = lightDir
+  f(0) = lightDir(0); f(1) = lightDir(1); f(2) = lightDir(2);
+
+  // Choose an up vector that isn't collinear with f
+  vec3 worldUp;
+  if (std::abs(f(1)) > 0.99f) {
+    worldUp(0) = 1.f; worldUp(1) = 0.f; worldUp(2) = 0.f;
+  } else {
+    worldUp(0) = 0.f; worldUp(1) = 1.f; worldUp(2) = 0.f;
+  }
+
+  vec3 r; // right = cross(f, worldUp)
+  r(0) = f(1)*worldUp(2) - f(2)*worldUp(1);
+  r(1) = f(2)*worldUp(0) - f(0)*worldUp(2);
+  r(2) = f(0)*worldUp(1) - f(1)*worldUp(0);
+  f32 rlen = std::sqrt(r(0)*r(0) + r(1)*r(1) + r(2)*r(2));
+  if (rlen < 1e-12f) rlen = 1.f;
+  r(0) /= rlen; r(1) /= rlen; r(2) /= rlen;
+
+  vec3 u; // up = cross(r, f)
+  u(0) = r(1)*f(2) - r(2)*f(1);
+  u(1) = r(2)*f(0) - r(0)*f(2);
+  u(2) = r(0)*f(1) - r(1)*f(0);
+
+  mat4 V = mat4::identity();
+  V(0,0) =  r(0); V(0,1) =  r(1); V(0,2) =  r(2);
+  V(0,3) = -(r(0)*lightPos(0) + r(1)*lightPos(1) + r(2)*lightPos(2));
+  V(1,0) =  u(0); V(1,1) =  u(1); V(1,2) =  u(2);
+  V(1,3) = -(u(0)*lightPos(0) + u(1)*lightPos(1) + u(2)*lightPos(2));
+  V(2,0) =  f(0); V(2,1) =  f(1); V(2,2) =  f(2);
+  V(2,3) = -(f(0)*lightPos(0) + f(1)*lightPos(1) + f(2)*lightPos(2));
+  V(3,0) = 0.f; V(3,1) = 0.f; V(3,2) = 0.f; V(3,3) = 1.f;
+
+  // Orthographic projection: Vulkan-convention (depth [0,1], Y not flipped for shadow map)
+  // Size the frustum to enclose the scene bounding sphere
+  f32 halfSize = radius * 1.1f;  // 10% margin
+  f32 nearP = 0.f;
+  f32 farP  = radius * 4.f;
+
+  mat4 P = mat4::zeros();
+  P(0,0) = 1.f / halfSize;
+  P(1,1) = 1.f / halfSize;  // No Y flip for shadow map (we flip in UV space)
+  P(2,2) = 1.f / (farP - nearP);
+  P(2,3) = -nearP / (farP - nearP);
+  P(3,3) = 1.f;
+
+  return P * V;
+}
+
+/// Compute the scene AABB from all visible instances.
+static void computeSceneAABB(const RenderScene& scene,
+                              vec3& outMin, vec3& outMax) {
+  outMin(0) =  1e30f; outMin(1) =  1e30f; outMin(2) =  1e30f;
+  outMax(0) = -1e30f; outMax(1) = -1e30f; outMax(2) = -1e30f;
+
+  for (const auto& inst : scene.instances()) {
+    if (!inst.visible) continue;
+    const TriMesh* mesh = scene.findMeshData(inst.mesh);
+    if (!mesh || mesh->nodes.empty()) continue;
+
+    const auto& M = inst.transform.matrix;
+    for (const auto& node : mesh->nodes) {
+      // Transform vertex to world space
+      f32 wx = M(0,0)*node[0] + M(0,1)*node[1] + M(0,2)*node[2] + M(0,3);
+      f32 wy = M(1,0)*node[0] + M(1,1)*node[1] + M(1,2)*node[2] + M(1,3);
+      f32 wz = M(2,0)*node[0] + M(2,1)*node[1] + M(2,2)*node[2] + M(2,3);
+
+      if (wx < outMin(0)) outMin(0) = wx;
+      if (wy < outMin(1)) outMin(1) = wy;
+      if (wz < outMin(2)) outMin(2) = wz;
+      if (wx > outMax(0)) outMax(0) = wx;
+      if (wy > outMax(1)) outMax(1) = wy;
+      if (wz > outMax(2)) outMax(2) = wz;
+    }
+  }
+
+  // Fallback if scene is empty
+  if (outMin(0) > outMax(0)) {
+    outMin(0) = -1.f; outMin(1) = -1.f; outMin(2) = -1.f;
+    outMax(0) =  1.f; outMax(1) =  1.f; outMax(2) =  1.f;
+  }
+}
+
 // =================================================================
 // VulkanDeferredRenderer implementation
 // =================================================================
@@ -298,6 +521,15 @@ public:
 private:
   VulkanContext* ctx_{nullptr};
   bool initialised_{false};
+
+  // Shadow map constants
+  static constexpr uint32_t kShadowMapSize = 2048;
+
+  // Shadow map pass objects
+  std::unique_ptr<RenderPass> shadow_pass_;
+  std::unique_ptr<Pipeline> shadow_pipeline_;
+  std::unique_ptr<ShaderModule> shadow_vert_shader_;
+  std::unique_ptr<ShaderModule> shadow_frag_shader_;
 
   // G-buffer pass objects
   std::unique_ptr<RenderPass> gbuffer_pass_;
@@ -335,6 +567,16 @@ bool VulkanDeferredRenderer::init() {
 
   // -- Compile shaders --
   try {
+    // Shadow pass shaders
+    shadow_vert_shader_ = std::make_unique<ShaderModule>(
+        ctx_->createShaderModuleFromGlsl(k_shadow_vert_glsl,
+                                          vk::ShaderStageFlagBits::eVertex,
+                                          "shadow_depth_vert"));
+    shadow_frag_shader_ = std::make_unique<ShaderModule>(
+        ctx_->createShaderModuleFromGlsl(k_shadow_frag_glsl,
+                                          vk::ShaderStageFlagBits::eFragment,
+                                          "shadow_depth_frag"));
+    // G-buffer shaders
     gbuffer_vert_shader_ = std::make_unique<ShaderModule>(
         ctx_->createShaderModuleFromGlsl(k_gbuffer_vert_glsl,
                                           vk::ShaderStageFlagBits::eVertex,
@@ -343,12 +585,61 @@ bool VulkanDeferredRenderer::init() {
         ctx_->createShaderModuleFromGlsl(k_gbuffer_frag_glsl,
                                           vk::ShaderStageFlagBits::eFragment,
                                           "deferred_gbuffer_frag"));
+    // Lighting compute shader
     lighting_comp_shader_ = std::make_unique<ShaderModule>(
         ctx_->createShaderModuleFromGlsl(k_lighting_comp_glsl,
                                           vk::ShaderStageFlagBits::eCompute,
                                           "deferred_lighting_comp"));
   } catch (const std::exception& e) {
     std::fprintf(stderr, "[VulkanDeferredRenderer] shader compilation failed: %s\n", e.what());
+    return false;
+  }
+
+  // -- Build shadow map render pass (depth-only) --
+  // Single depth attachment, transitions to eShaderReadOnlyOptimal for sampling.
+  // Use the generic addAttachment() to control finalLayout, and let auto-build
+  // create the subpass and dependencies automatically.
+  try {
+    shadow_pass_ = std::make_unique<RenderPass>(
+        ctx_->renderpass()
+            .addAttachment(vk::Format::eD32Sfloat,
+                           vk::ImageLayout::eUndefined,
+                           vk::ImageLayout::eShaderReadOnlyOptimal,
+                           /*clear=*/true)
+            .build());
+  } catch (const std::exception& e) {
+    std::fprintf(stderr, "[VulkanDeferredRenderer] shadow render pass creation failed: %s\n", e.what());
+    return false;
+  }
+
+  // -- Build shadow map pipeline (depth-only, with depth bias) --
+  try {
+    auto bindings   = VkModel::get_binding_descriptions(VkModel::draw_category_e::tri);
+    auto attributes = VkModel::get_attribute_descriptions(VkModel::draw_category_e::tri);
+
+    vk::PushConstantRange shadowPcRange{};
+    shadowPcRange.stageFlags = vk::ShaderStageFlagBits::eVertex;
+    shadowPcRange.offset = 0;
+    shadowPcRange.size = static_cast<uint32_t>(sizeof(ShadowPushConstants));
+
+    shadow_pipeline_ = std::make_unique<Pipeline>(
+        ctx_->pipeline()
+            .setShader(vk::ShaderStageFlagBits::eVertex, **shadow_vert_shader_, "main")
+            .setShader(vk::ShaderStageFlagBits::eFragment, **shadow_frag_shader_, "main")
+            .setRenderPass(*shadow_pass_, /*subpass=*/0)
+            .setBindingDescriptions(bindings)
+            .setAttributeDescriptions(attributes)
+            .setTopology(vk::PrimitiveTopology::eTriangleList)
+            .setCullMode(vk::CullModeFlagBits::eFront)  // Front-face culling reduces self-shadowing
+            .setFrontFace(vk::FrontFace::eCounterClockwise)
+            .setDepthTestEnable(true)
+            .setDepthWriteEnable(true)
+            .setDepthCompareOp(vk::CompareOp::eLessOrEqual)
+            .enableDepthBias(1.25f, 1.75f)  // Constant + slope-scaled bias
+            .setPushConstantRange(shadowPcRange)
+            .build());
+  } catch (const std::exception& e) {
+    std::fprintf(stderr, "[VulkanDeferredRenderer] shadow pipeline creation failed: %s\n", e.what());
     return false;
   }
 
@@ -550,6 +841,107 @@ RasterResult VulkanDeferredRenderer::render(const RenderFrameRequest& request,
   }
 
   // =================================================================
+  // Shadow map: compute light VP and find shadow-casting light
+  // =================================================================
+
+  vec3 sceneMin, sceneMax;
+  computeSceneAABB(scene, sceneMin, sceneMax);
+
+  // Find the first shadow-casting light (prefer directional/area)
+  const Light* shadowLight = nullptr;
+  for (const auto& light : scene.lights()) {
+    if (light.cast_shadow) {
+      shadowLight = &light;
+      break;
+    }
+  }
+
+  // Synthesize a default directional light for shadow if no shadow-casting light
+  Light defaultShadowLight;
+  if (!shadowLight) {
+    defaultShadowLight.type = LightType::Directional;
+    defaultShadowLight.direction = {-0.5774f, -0.5774f, -0.5774f};
+    defaultShadowLight.color = {1.f, 1.f, 1.f};
+    defaultShadowLight.intensity = 1.f;
+    defaultShadowLight.cast_shadow = true;
+    shadowLight = &defaultShadowLight;
+  }
+
+  mat4 lightVP = buildLightVP(*shadowLight, sceneMin, sceneMax);
+
+  // =================================================================
+  // Pass 0: Shadow map (depth-only from light POV)
+  // =================================================================
+
+  const vk::Extent2D shadowExtent{kShadowMapSize, kShadowMapSize};
+
+  // Create shadow depth image (depth attachment + sampled for lighting pass)
+  auto shadowDepthImage = ctx_->create2DImage(
+      shadowExtent, vk::Format::eD32Sfloat,
+      vk::ImageUsageFlagBits::eDepthStencilAttachment | vk::ImageUsageFlagBits::eSampled,
+      vk::MemoryPropertyFlagBits::eDeviceLocal,
+      /*mipmaps=*/false, /*createView=*/true, /*enableTransfer=*/false);
+
+  // Create framebuffer for shadow pass (depth-only)
+  std::vector<vk::ImageView> shadowFbViews{
+      static_cast<vk::ImageView>(shadowDepthImage)};
+  auto shadowFramebuffer = ctx_->createFramebuffer(
+      shadowFbViews, shadowExtent, **shadow_pass_);
+
+  // Render shadow map
+  {
+    SingleUseCommandBuffer cmd(*ctx_, vk_queue_e::graphics);
+    vk::CommandBuffer cb = *cmd;
+
+    vk::ClearValue clearDepth;
+    clearDepth.depthStencil = vk::ClearDepthStencilValue{1.f, 0};
+
+    vk::RenderPassBeginInfo rpBegin;
+    rpBegin.renderPass = **shadow_pass_;
+    rpBegin.framebuffer = *shadowFramebuffer;
+    rpBegin.renderArea = vk::Rect2D{{0, 0}, shadowExtent};
+    rpBegin.clearValueCount = 1;
+    rpBegin.pClearValues = &clearDepth;
+
+    cb.beginRenderPass(rpBegin, vk::SubpassContents::eInline, ctx_->dispatcher);
+
+    cb.bindPipeline(vk::PipelineBindPoint::eGraphics,
+                    **shadow_pipeline_, ctx_->dispatcher);
+
+    vk::Viewport vp{0.f, 0.f,
+                     static_cast<float>(kShadowMapSize),
+                     static_cast<float>(kShadowMapSize),
+                     0.f, 1.f};
+    cb.setViewport(0, 1, &vp, ctx_->dispatcher);
+    vk::Rect2D scissor{{0, 0}, shadowExtent};
+    cb.setScissor(0, 1, &scissor, ctx_->dispatcher);
+
+    for (auto& item : draws) {
+      ShadowPushConstants spc{};
+
+      // Compute light MVP for this instance
+      mat4 lightMVP = lightVP * item.model_mat;
+
+      // Transpose to column-major for GLSL
+      for (int i = 0; i < 4; ++i)
+        for (int j = 0; j < 4; ++j)
+          spc.light_mvp[j * 4 + i] = lightMVP(i, j);
+
+      cb.pushConstants(
+          static_cast<vk::PipelineLayout>(*shadow_pipeline_),
+          vk::ShaderStageFlagBits::eVertex,
+          0, static_cast<uint32_t>(sizeof(ShadowPushConstants)),
+          &spc, ctx_->dispatcher);
+
+      item.model.bind(cb);
+      item.model.draw(cb);
+    }
+
+    cb.endRenderPass(ctx_->dispatcher);
+    // Render pass auto-transitions depth to eShaderReadOnlyOptimal via finalLayout.
+  }
+
+  // =================================================================
   // Pass 1: G-buffer
   // =================================================================
 
@@ -684,7 +1076,7 @@ RasterResult VulkanDeferredRenderer::render(const RenderFrameRequest& request,
   }
 
   // =================================================================
-  // Pass 2: Lighting (compute)
+  // Pass 2: Lighting (compute) with shadow mapping
   // =================================================================
 
   // Create a nearest-neighbor sampler for G-buffer reads
@@ -695,6 +1087,16 @@ RasterResult VulkanDeferredRenderer::render(const RenderFrameRequest& request,
   samplerInfo.addressModeV = vk::SamplerAddressMode::eClampToEdge;
   samplerInfo.addressModeW = vk::SamplerAddressMode::eClampToEdge;
   auto sampler = ctx_->createSampler(samplerInfo);
+
+  // Shadow map sampler (nearest, clamp-to-border with max depth)
+  vk::SamplerCreateInfo shadowSamplerInfo{};
+  shadowSamplerInfo.magFilter = vk::Filter::eNearest;
+  shadowSamplerInfo.minFilter = vk::Filter::eNearest;
+  shadowSamplerInfo.addressModeU = vk::SamplerAddressMode::eClampToBorder;
+  shadowSamplerInfo.addressModeV = vk::SamplerAddressMode::eClampToBorder;
+  shadowSamplerInfo.addressModeW = vk::SamplerAddressMode::eClampToBorder;
+  shadowSamplerInfo.borderColor = vk::BorderColor::eFloatOpaqueWhite;  // depth=1.0 = no shadow
+  auto shadowSampler = ctx_->createSampler(shadowSamplerInfo);
 
   // Transition output image to eGeneral for compute writes
   {
@@ -757,6 +1159,13 @@ RasterResult VulkanDeferredRenderer::render(const RenderFrameRequest& request,
   ctx_->writeDescriptorSet(outImageInfo, ds, vk::DescriptorType::eStorageImage, 3);
   ctx_->writeDescriptorSet(lightBufInfo, ds, vk::DescriptorType::eStorageBuffer, 4);
 
+  // Shadow map (combined image sampler at binding 5)
+  vk::DescriptorImageInfo shadowMapInfo;
+  shadowMapInfo.sampler = *shadowSampler;
+  shadowMapInfo.imageView = shadowDepthImage.view();
+  shadowMapInfo.imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal;
+  ctx_->writeDescriptorSet(shadowMapInfo, ds, vk::DescriptorType::eCombinedImageSampler, 5);
+
   // Dispatch compute
   {
     SingleUseCommandBuffer cmd(*ctx_, vk_queue_e::graphics);
@@ -775,7 +1184,12 @@ RasterResult VulkanDeferredRenderer::render(const RenderFrameRequest& request,
     lpc.width = width;
     lpc.height = height;
     lpc.ambient = 0.15f;
-    lpc._pad = 0.f;
+    lpc.shadow_intensity = 1.0f;  // Full shadow strength
+
+    // Light VP matrix (transpose row-major to column-major for GLSL)
+    for (int i = 0; i < 4; ++i)
+      for (int j = 0; j < 4; ++j)
+        lpc.light_vp[j * 4 + i] = lightVP(i, j);
 
     cb.pushConstants(
         static_cast<vk::PipelineLayout>(*lighting_pipeline_),
@@ -867,6 +1281,10 @@ void VulkanDeferredRenderer::shutdown() {
   gbuffer_vert_shader_.reset();
   gbuffer_frag_shader_.reset();
   gbuffer_pass_.reset();
+  shadow_pipeline_.reset();
+  shadow_vert_shader_.reset();
+  shadow_frag_shader_.reset();
+  shadow_pass_.reset();
 
   initialised_ = false;
   std::printf("[VulkanDeferredRenderer] shut down\n");

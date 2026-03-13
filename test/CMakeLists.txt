@@ -248,3 +248,11 @@ target_compile_features(renderdeferred PRIVATE cxx_std_17)
 
 add_test(ZsRenderDeferred renderdeferred)
 add_dependencies(zensim renderdeferred)
+
+# render shadow (requires Vulkan GPU at runtime)
+add_executable(rendershadow render/render_shadow.cpp)
+target_link_libraries(rendershadow PRIVATE zpc_render_capture)
+target_compile_features(rendershadow PRIVATE cxx_std_17)
+
+add_test(ZsRenderShadow rendershadow)
+add_dependencies(zensim rendershadow)
