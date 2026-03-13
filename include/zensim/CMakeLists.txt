@@ -335,9 +335,14 @@ set(ZENSIM_LIBRARY_3C_CAMERA_INCLUDE_FILES
   3c/camera/MatrixBuilders.hpp
   3c/camera/Frustum.hpp
   3c/camera/CameraMode.hpp
+  3c/camera/CameraShake.hpp
+  3c/camera/CameraRig.hpp
 )
 set(ZENSIM_LIBRARY_3C_CHARACTER_INCLUDE_FILES
   3c/character/CharacterState.hpp
+)
+set(ZENSIM_LIBRARY_3C_INTEGRATION_INCLUDE_FILES
+  3c/ThreeCPipeline.hpp
 )
 set(ZENSIM_LIBRARY_IO_INCLUDE_FILES
   io/IO.h
@@ -593,6 +598,13 @@ target_sources(zpc_3c_character
   ${ZENSIM_LIBRARY_3C_CHARACTER_INCLUDE_FILES}
 )
 target_link_libraries(zpc_3c_character INTERFACE zpc_3c_core zpc_3c_input)
+
+add_library(zpc_3c_integration INTERFACE)
+target_sources(zpc_3c_integration
+  INTERFACE
+  ${ZENSIM_LIBRARY_3C_INTEGRATION_INCLUDE_FILES}
+)
+target_link_libraries(zpc_3c_integration INTERFACE zpc_3c_camera zpc_3c_character zpc_3c_input)
 
 add_library(zpc_process INTERFACE)
 target_sources(zpc_process

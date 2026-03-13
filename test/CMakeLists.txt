@@ -192,6 +192,13 @@ target_link_libraries(3ccharacter PRIVATE zpc_3c_character)
 add_test(Zs3CCharacter 3ccharacter)
 add_dependencies(zensim 3ccharacter)
 
+# 3C integration (FpsMode, CameraShake, CameraRig, ThreeCPipeline)
+add_executable(3cintegration 3c_integration.cpp)
+target_link_libraries(3cintegration PRIVATE zpc_3c_integration)
+
+add_test(Zs3CIntegration 3cintegration)
+add_dependencies(zensim 3cintegration)
+
 # sycl backend
 if(ZS_ENABLE_SYCL_ONEAPI OR ZS_ENABLE_SYCL_ACPP)
     #

@@ -251,4 +251,93 @@ namespace zs::threeC {
     }
   };
 
+  // ════════════════════════════════════════════════════════════════════════
+  //  FpsMode — first-person mouse-look camera
+  // ════════════════════════════════════════════════════════════════════════
+
+  /// Configuration for first-person camera mode.
+  struct FpsConfig {
+    Vec3f  eyeOffset       {0.0f, 1.7f, 0.0f};  ///< Offset from character root to eye level
+    f32    minPitch        {-85.0f * k_deg2rad};  ///< Pitch floor (radians)
+    f32    maxPitch        { 85.0f * k_deg2rad};  ///< Pitch ceiling (radians)
+    f32    yawSpeed        {1.0f};                ///< Yaw input sensitivity
+    f32    pitchSpeed      {1.0f};                ///< Pitch input sensitivity
+    f32    smoothing       {15.0f};               ///< Orientation smoothing (higher = snappier)
+  };
+
+  /// First-person camera state.  Call `update()` each frame.
+  ///
+  /// The FPS camera is attached to the character's position with an eye offset.
+  /// Yaw and pitch are controlled by look input (mouse/stick), with pitch clamped.
+  /// The character's yaw rotation is kept in sync with the camera yaw.
+  struct FpsMode {
+    FpsConfig config{};
+
+    // ── Inputs (set before update) ────────────────────────────────────────
+    Vec3f  characterPosition {0.0f, 0.0f, 0.0f};  ///< Character root world position
+    f32    yawInput   {0.0f};  ///< Yaw delta this frame (radians, + = right)
+    f32    pitchInput {0.0f};  ///< Pitch delta this frame (radians, + = up)
+
+    // ── Internal state ────────────────────────────────────────────────────
+    f32    yaw   {0.0f};  ///< Accumulated yaw (radians)
+    f32    pitch {0.0f};  ///< Accumulated pitch (radians, clamped)
+    Quat4f smoothedOri {0.0f, 0.0f, 0.0f, 1.0f};  ///< Smoothed orientation
+
+    /// Reset to look along -Z with the character at given position.
+    constexpr void reset(Vec3f charPos) noexcept {
+      characterPosition = charPos;
+      yaw = 0.0f;
+      pitch = 0.0f;
+      smoothedOri = identity_quat();
+    }
+
+    /// Update the FPS camera for this frame.
+    ///
+    /// @param ctx  Frame timing context
+    /// @return     Updated Camera state
+    constexpr Camera update(FrameContext const& ctx) noexcept {
+      // Apply input deltas
+      yaw   += yawInput   * config.yawSpeed;
+      pitch += pitchInput * config.pitchSpeed;
+
+      // Clamp pitch
+      pitch = zs::math::clamp(pitch, config.minPitch, config.maxPitch);
+
+      // Wrap yaw to [-pi, pi]
+      if (yaw > k_pi)   yaw -= k_two_pi;
+      if (yaw < -k_pi)  yaw += k_two_pi;
+
+      // Build target orientation from yaw and pitch
+      // Yaw around Y, then pitch around local X
+      const Quat4f yawQ   = quat_from_axis_angle(Vec3f{0.0f, 1.0f, 0.0f}, yaw);
+      const Quat4f pitchQ = quat_from_axis_angle(Vec3f{1.0f, 0.0f, 0.0f}, pitch);
+      const Quat4f targetOri = quat_multiply(yawQ, pitchQ);
+
+      // Smooth orientation
+      const f32 t = 1.0f - zs::exp(-config.smoothing * ctx.dt);
+      smoothedOri = slerp(smoothedOri, targetOri, t);
+
+      // Eye position = character position + eye offset (world-space, not rotated)
+      Camera cam;
+      cam.position = Vec3f{
+        characterPosition(0) + config.eyeOffset(0),
+        characterPosition(1) + config.eyeOffset(1),
+        characterPosition(2) + config.eyeOffset(2)
+      };
+      cam.orientation = smoothedOri;
+      return cam;
+    }
+
+    /// Clear per-frame inputs.
+    constexpr void clear_input() noexcept {
+      yawInput   = 0.0f;
+      pitchInput = 0.0f;
+    }
+
+    /// Get the current yaw as a quaternion (for syncing character rotation).
+    constexpr Quat4f yaw_quaternion() const noexcept {
+      return quat_from_axis_angle(Vec3f{0.0f, 1.0f, 0.0f}, yaw);
+    }
+  };
+
 }  // namespace zs::threeC
