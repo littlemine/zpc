@@ -1,12 +1,16 @@
 /// @file VulkanDeferredRenderer.cpp
-/// @brief Headless Vulkan deferred renderer with shadow mapping and SSAO.
+/// @brief Headless Vulkan deferred renderer with shadow mapping, SSAO, bloom,
+///        tone mapping, and FXAA.
 ///
-/// Five-pass deferred rendering:
+/// Eight-pass deferred rendering:
 ///   1. Shadow map pass (depth-only render from light POV)
 ///   2. G-buffer pass (rasterization with MRT) — writes position, normal, albedo
 ///   3. SSAO pass (compute) — generates raw ambient occlusion from G-buffer
 ///   4. SSAO blur pass (compute) — bilateral blur for edge-preserving AO smoothing
-///   5. Lighting pass (compute) — reads G-buffer + shadow map + AO, writes lit RGBA8
+///   5. Lighting pass (compute) — reads G-buffer + shadow map + AO, writes HDR
+///   6. Bloom pass (compute) — threshold + separable Gaussian blur on half-res
+///   7. Tone mapping pass (compute) — ACES filmic + exposure + bloom composite + gamma
+///   8. FXAA pass (compute) — luminance-based edge-detecting anti-aliasing
 ///
 /// Shadow mapping features:
 ///   - Orthographic projection for directional lights
@@ -20,6 +24,13 @@
 ///   - View-space depth comparison with range check
 ///   - Edge-aware bilateral blur (5x5) that respects depth discontinuities
 ///   - AO factor modulates ambient lighting in the final pass
+///
+/// Post-processing features:
+///   - HDR lighting output (R16G16B16A16Sfloat) for proper bloom extraction
+///   - Bloom: bright-pass threshold → separable Gaussian blur (half-res)
+///   - Tone mapping: ACES filmic curve with configurable exposure
+///   - Bloom composite: additive blend of bloom into tonemapped image
+///   - FXAA: luminance-based edge detection with sub-pixel anti-aliasing
 ///
 /// Conditionally compiled — requires ZS_ENABLE_VULKAN=1.
 
@@ -380,8 +391,8 @@ layout(set = 0, binding = 0) uniform sampler2D gPosition;
 layout(set = 0, binding = 1) uniform sampler2D gNormal;
 layout(set = 0, binding = 2) uniform sampler2D gAlbedo;
 
-// Output image
-layout(set = 0, binding = 3, rgba8) uniform writeonly image2D outImage;
+// Output HDR image (R16G16B16A16Sfloat — no tone mapping here)
+layout(set = 0, binding = 3, rgba16f) uniform writeonly image2D outImage;
 
 // Light SSBO
 struct GPULight {
@@ -534,13 +545,307 @@ void main() {
 
   vec3 color = albedo * totalLight;
 
-  // Reinhard tone mapping
-  color = color / (vec3(1.0) + color);
+  // Output HDR linear color — tone mapping and gamma are applied in
+  // the dedicated post-processing passes (bloom → tonemap → FXAA).
+  imageStore(outImage, pixel, vec4(color, 1.0));
+}
+)";
 
-  // Gamma correction
+// -- Bloom threshold + downsample compute shader --
+// Extracts bright pixels above a luminance threshold and writes them to
+// a half-resolution image for subsequent Gaussian blur.
+static const char* k_bloom_threshold_comp_glsl = R"(
+#version 450
+
+layout(local_size_x = 16, local_size_y = 16, local_size_z = 1) in;
+
+layout(set = 0, binding = 0) uniform sampler2D hdrInput;
+layout(set = 0, binding = 1, rgba16f) uniform writeonly image2D bloomOutput;
+
+layout(push_constant) uniform PushConstants {
+  uint srcWidth;
+  uint srcHeight;
+  uint dstWidth;
+  uint dstHeight;
+  float threshold;    // luminance threshold for bloom (default 1.0)
+  float softKnee;     // soft threshold knee width (default 0.5)
+  float _pad0;
+  float _pad1;
+} pc;
+
+void main() {
+  ivec2 pixel = ivec2(gl_GlobalInvocationID.xy);
+  if (pixel.x >= int(pc.dstWidth) || pixel.y >= int(pc.dstHeight)) return;
+
+  // Sample the HDR image at the center of the corresponding 2x2 block
+  vec2 uv = (vec2(pixel) * 2.0 + 1.0) / vec2(pc.srcWidth, pc.srcHeight);
+  vec3 color = texture(hdrInput, uv).rgb;
+
+  // Luminance-based soft threshold
+  float lum = dot(color, vec3(0.2126, 0.7152, 0.0722));
+  float knee = pc.threshold * pc.softKnee;
+  float soft = lum - pc.threshold + knee;
+  soft = clamp(soft, 0.0, 2.0 * knee);
+  soft = soft * soft / (4.0 * knee + 0.00001);
+  float contribution = max(soft, lum - pc.threshold) / max(lum, 0.00001);
+  contribution = max(contribution, 0.0);
+
+  imageStore(bloomOutput, pixel, vec4(color * contribution, 1.0));
+}
+)";
+
+// -- Bloom Gaussian blur compute shader (separable, one direction) --
+// Applies a 13-tap Gaussian blur in either horizontal or vertical direction.
+// Direction is controlled via push constants.
+static const char* k_bloom_blur_comp_glsl = R"(
+#version 450
+
+layout(local_size_x = 16, local_size_y = 16, local_size_z = 1) in;
+
+layout(set = 0, binding = 0) uniform sampler2D blurInput;
+layout(set = 0, binding = 1, rgba16f) uniform writeonly image2D blurOutput;
+
+layout(push_constant) uniform PushConstants {
+  uint width;
+  uint height;
+  float dirX;   // 1.0 for horizontal, 0.0 for vertical
+  float dirY;   // 0.0 for horizontal, 1.0 for vertical
+} pc;
+
+// 13-tap Gaussian weights (sigma ~= 4.0)
+const int KERNEL_SIZE = 13;
+const float weights[KERNEL_SIZE] = float[](
+  0.0162, 0.0338, 0.0613, 0.0966, 0.1323,
+  0.1573, 0.1627,
+  0.1573, 0.1323, 0.0966, 0.0613, 0.0338, 0.0162
+);
+
+void main() {
+  ivec2 pixel = ivec2(gl_GlobalInvocationID.xy);
+  if (pixel.x >= int(pc.width) || pixel.y >= int(pc.height)) return;
+
+  vec2 texelSize = 1.0 / vec2(pc.width, pc.height);
+  vec2 uv = (vec2(pixel) + 0.5) * texelSize;
+  vec2 dir = vec2(pc.dirX, pc.dirY) * texelSize;
+
+  vec3 result = vec3(0.0);
+  int halfSize = KERNEL_SIZE / 2;
+
+  for (int i = 0; i < KERNEL_SIZE; i++) {
+    vec2 offset = dir * float(i - halfSize);
+    result += texture(blurInput, uv + offset).rgb * weights[i];
+  }
+
+  imageStore(blurOutput, pixel, vec4(result, 1.0));
+}
+)";
+
+// -- Tone mapping compute shader (ACES filmic + exposure + bloom composite + gamma) --
+// Reads the HDR lit image and bloom texture, composites them, applies ACES
+// tone mapping with configurable exposure, then gamma correction to sRGB.
+// Outputs R8G8B8A8Unorm for readback or FXAA input.
+static const char* k_tonemap_comp_glsl = R"(
+#version 450
+
+layout(local_size_x = 16, local_size_y = 16, local_size_z = 1) in;
+
+layout(set = 0, binding = 0) uniform sampler2D hdrInput;    // HDR lit image
+layout(set = 0, binding = 1) uniform sampler2D bloomInput;  // bloom blur result (half-res)
+layout(set = 0, binding = 2, rgba8) uniform writeonly image2D ldrOutput;
+
+layout(push_constant) uniform PushConstants {
+  uint width;
+  uint height;
+  float exposure;        // exposure multiplier (default 1.0)
+  float bloomStrength;   // bloom blend factor (default 0.04)
+} pc;
+
+// ACES filmic tone mapping (Narkowicz 2015 approximation)
+vec3 acesTonemap(vec3 x) {
+  const float a = 2.51;
+  const float b = 0.03;
+  const float c = 2.43;
+  const float d = 0.59;
+  const float e = 0.14;
+  return clamp((x * (a * x + b)) / (x * (c * x + d) + e), 0.0, 1.0);
+}
+
+void main() {
+  ivec2 pixel = ivec2(gl_GlobalInvocationID.xy);
+  if (pixel.x >= int(pc.width) || pixel.y >= int(pc.height)) return;
+
+  vec2 uv = (vec2(pixel) + 0.5) / vec2(pc.width, pc.height);
+
+  // Read HDR scene color
+  vec3 hdr = texture(hdrInput, uv).rgb;
+
+  // Read bloom (sampled from half-res with bilinear filtering)
+  vec3 bloom = texture(bloomInput, uv).rgb;
+
+  // Composite bloom
+  vec3 color = hdr + bloom * pc.bloomStrength;
+
+  // Apply exposure
+  color *= pc.exposure;
+
+  // ACES filmic tone mapping
+  color = acesTonemap(color);
+
+  // Gamma correction (linear -> sRGB)
   color = pow(color, vec3(1.0 / 2.2));
 
-  imageStore(outImage, pixel, vec4(color, 1.0));
+  imageStore(ldrOutput, pixel, vec4(color, 1.0));
+}
+)";
+
+// -- FXAA compute shader --
+// Fast approximate anti-aliasing (FXAA 3.11 quality 12 approximation).
+// Operates on LDR image, uses luminance-based edge detection and
+// sub-pixel blending to smooth jagged edges.
+static const char* k_fxaa_comp_glsl = R"(
+#version 450
+
+layout(local_size_x = 16, local_size_y = 16, local_size_z = 1) in;
+
+layout(set = 0, binding = 0) uniform sampler2D ldrInput;
+layout(set = 0, binding = 1, rgba8) uniform writeonly image2D fxaaOutput;
+
+layout(push_constant) uniform PushConstants {
+  uint width;
+  uint height;
+  float edgeThresholdMin;   // minimum edge threshold (default 0.0312)
+  float edgeThreshold;      // relative edge threshold (default 0.125)
+} pc;
+
+float luminance(vec3 c) {
+  return dot(c, vec3(0.299, 0.587, 0.114));
+}
+
+void main() {
+  ivec2 pixel = ivec2(gl_GlobalInvocationID.xy);
+  if (pixel.x >= int(pc.width) || pixel.y >= int(pc.height)) return;
+
+  vec2 texelSize = 1.0 / vec2(pc.width, pc.height);
+  vec2 uv = (vec2(pixel) + 0.5) * texelSize;
+
+  // Sample center and 4-neighbours
+  vec3 rgbM  = texture(ldrInput, uv).rgb;
+  vec3 rgbN  = texture(ldrInput, uv + vec2( 0.0, -1.0) * texelSize).rgb;
+  vec3 rgbS  = texture(ldrInput, uv + vec2( 0.0,  1.0) * texelSize).rgb;
+  vec3 rgbW  = texture(ldrInput, uv + vec2(-1.0,  0.0) * texelSize).rgb;
+  vec3 rgbE  = texture(ldrInput, uv + vec2( 1.0,  0.0) * texelSize).rgb;
+
+  float lumM = luminance(rgbM);
+  float lumN = luminance(rgbN);
+  float lumS = luminance(rgbS);
+  float lumW = luminance(rgbW);
+  float lumE = luminance(rgbE);
+
+  float lumMin = min(lumM, min(min(lumN, lumS), min(lumW, lumE)));
+  float lumMax = max(lumM, max(max(lumN, lumS), max(lumW, lumE)));
+  float lumRange = lumMax - lumMin;
+
+  // Early exit: skip FXAA for areas with low contrast
+  if (lumRange < max(pc.edgeThresholdMin, lumMax * pc.edgeThreshold)) {
+    imageStore(fxaaOutput, pixel, vec4(rgbM, 1.0));
+    return;
+  }
+
+  // Sample 4 diagonal neighbours
+  vec3 rgbNW = texture(ldrInput, uv + vec2(-1.0, -1.0) * texelSize).rgb;
+  vec3 rgbNE = texture(ldrInput, uv + vec2( 1.0, -1.0) * texelSize).rgb;
+  vec3 rgbSW = texture(ldrInput, uv + vec2(-1.0,  1.0) * texelSize).rgb;
+  vec3 rgbSE = texture(ldrInput, uv + vec2( 1.0,  1.0) * texelSize).rgb;
+
+  float lumNW = luminance(rgbNW);
+  float lumNE = luminance(rgbNE);
+  float lumSW = luminance(rgbSW);
+  float lumSE = luminance(rgbSE);
+
+  // Compute edge direction
+  float edgeH = abs(-2.0 * lumW + lumNW + lumSW) +
+                abs(-2.0 * lumM + lumN  + lumS ) * 2.0 +
+                abs(-2.0 * lumE + lumNE + lumSE);
+  float edgeV = abs(-2.0 * lumN + lumNW + lumNE) +
+                abs(-2.0 * lumM + lumW  + lumE ) * 2.0 +
+                abs(-2.0 * lumS + lumSW + lumSE);
+  bool isHorizontal = (edgeH >= edgeV);
+
+  // Choose edge endpoints
+  float lum1 = isHorizontal ? lumN : lumW;
+  float lum2 = isHorizontal ? lumS : lumE;
+  float grad1 = abs(lum1 - lumM);
+  float grad2 = abs(lum2 - lumM);
+
+  float stepLength = isHorizontal ? texelSize.y : texelSize.x;
+  float localAvg;
+
+  if (grad1 >= grad2) {
+    stepLength = -stepLength;
+    localAvg = 0.5 * (lum1 + lumM);
+  } else {
+    localAvg = 0.5 * (lum2 + lumM);
+  }
+
+  // Shift UV to edge
+  vec2 currentUV = uv;
+  if (isHorizontal) {
+    currentUV.y += stepLength * 0.5;
+  } else {
+    currentUV.x += stepLength * 0.5;
+  }
+
+  // Walk along the edge in both directions
+  vec2 edgeStep = isHorizontal ? vec2(texelSize.x, 0.0) : vec2(0.0, texelSize.y);
+
+  vec2 uv1 = currentUV - edgeStep;
+  vec2 uv2 = currentUV + edgeStep;
+
+  float lumEnd1 = luminance(texture(ldrInput, uv1).rgb) - localAvg;
+  float lumEnd2 = luminance(texture(ldrInput, uv2).rgb) - localAvg;
+  bool reached1 = abs(lumEnd1) >= grad1 * 0.5;
+  bool reached2 = abs(lumEnd2) >= grad2 * 0.5;
+
+  // Walk up to 8 steps in each direction
+  for (int i = 0; i < 8 && !(reached1 && reached2); i++) {
+    if (!reached1) {
+      uv1 -= edgeStep;
+      lumEnd1 = luminance(texture(ldrInput, uv1).rgb) - localAvg;
+      reached1 = abs(lumEnd1) >= grad1 * 0.5;
+    }
+    if (!reached2) {
+      uv2 += edgeStep;
+      lumEnd2 = luminance(texture(ldrInput, uv2).rgb) - localAvg;
+      reached2 = abs(lumEnd2) >= grad2 * 0.5;
+    }
+  }
+
+  // Compute blend factor based on distance to edge endpoints
+  float dist1 = isHorizontal ? (uv.x - uv1.x) : (uv.y - uv1.y);
+  float dist2 = isHorizontal ? (uv2.x - uv.x) : (uv2.y - uv.y);
+  float minDist = min(dist1, dist2);
+  float edgeLength = dist1 + dist2;
+  float pixelOffset = -minDist / edgeLength + 0.5;
+
+  // Sub-pixel aliasing factor
+  float subPixelLum = (lumN + lumS + lumW + lumE) * 0.25;
+  float subPixelDiff = abs(subPixelLum - lumM);
+  float subPixelFactor = clamp(subPixelDiff / lumRange, 0.0, 1.0);
+  subPixelFactor = smoothstep(0.0, 1.0, subPixelFactor);
+  subPixelFactor = subPixelFactor * subPixelFactor * 0.75;
+
+  float blendFactor = max(pixelOffset, subPixelFactor);
+
+  // Final blend: sample offset along the edge normal
+  vec2 finalUV = uv;
+  if (isHorizontal) {
+    finalUV.y += stepLength * blendFactor;
+  } else {
+    finalUV.x += stepLength * blendFactor;
+  }
+
+  vec3 result = texture(ldrInput, finalUV).rgb;
+  imageStore(fxaaOutput, pixel, vec4(result, 1.0));
 }
 )";
 
@@ -604,6 +909,50 @@ struct LightingPushConstants {
 };
 static_assert(sizeof(LightingPushConstants) == 96,
               "LightingPushConstants must be 96 bytes");
+
+/// Bloom threshold push constants: 32 bytes.
+struct BloomThresholdPushConstants {
+  uint32_t srcWidth;
+  uint32_t srcHeight;
+  uint32_t dstWidth;
+  uint32_t dstHeight;
+  float threshold;      // luminance threshold (default 1.0)
+  float softKnee;       // knee width (default 0.5)
+  float _pad0;
+  float _pad1;
+};
+static_assert(sizeof(BloomThresholdPushConstants) == 32,
+              "BloomThresholdPushConstants must be 32 bytes");
+
+/// Bloom blur push constants: 16 bytes.
+struct BloomBlurPushConstants {
+  uint32_t width;
+  uint32_t height;
+  float dirX;   // 1.0 horizontal, 0.0 vertical
+  float dirY;   // 0.0 horizontal, 1.0 vertical
+};
+static_assert(sizeof(BloomBlurPushConstants) == 16,
+              "BloomBlurPushConstants must be 16 bytes");
+
+/// Tone mapping push constants: 16 bytes.
+struct TonemapPushConstants {
+  uint32_t width;
+  uint32_t height;
+  float exposure;        // exposure multiplier (default 1.0)
+  float bloomStrength;   // bloom blend factor (default 0.04)
+};
+static_assert(sizeof(TonemapPushConstants) == 16,
+              "TonemapPushConstants must be 16 bytes");
+
+/// FXAA push constants: 16 bytes.
+struct FXAAPushConstants {
+  uint32_t width;
+  uint32_t height;
+  float edgeThresholdMin;  // minimum edge threshold (default 0.0312)
+  float edgeThreshold;     // relative edge threshold (default 0.125)
+};
+static_assert(sizeof(FXAAPushConstants) == 16,
+              "FXAAPushConstants must be 16 bytes");
 
 /// GPU-packed light for the lighting SSBO (32 bytes).
 struct GPULight {
@@ -853,6 +1202,20 @@ private:
   std::unique_ptr<Pipeline> ssao_pipeline_;
   std::unique_ptr<ShaderModule> ssao_blur_comp_shader_;
   std::unique_ptr<Pipeline> ssao_blur_pipeline_;
+
+  // Bloom pass objects
+  std::unique_ptr<ShaderModule> bloom_threshold_comp_shader_;
+  std::unique_ptr<Pipeline> bloom_threshold_pipeline_;
+  std::unique_ptr<ShaderModule> bloom_blur_comp_shader_;
+  std::unique_ptr<Pipeline> bloom_blur_pipeline_;
+
+  // Tone mapping pass objects
+  std::unique_ptr<ShaderModule> tonemap_comp_shader_;
+  std::unique_ptr<Pipeline> tonemap_pipeline_;
+
+  // FXAA pass objects
+  std::unique_ptr<ShaderModule> fxaa_comp_shader_;
+  std::unique_ptr<Pipeline> fxaa_pipeline_;
 };
 
 // ---------------------------------------------------------------
@@ -874,7 +1237,9 @@ bool VulkanDeferredRenderer::init() {
   uint32_t maxPcSize = devProps.limits.maxPushConstantsSize;
   uint32_t neededPcSize = static_cast<uint32_t>(
       std::max({sizeof(GBufferPushConstants), sizeof(SSAOPushConstants),
-                sizeof(LightingPushConstants)}));
+                sizeof(LightingPushConstants), sizeof(BloomThresholdPushConstants),
+                sizeof(BloomBlurPushConstants), sizeof(TonemapPushConstants),
+                sizeof(FXAAPushConstants)}));
   if (maxPcSize < neededPcSize) {
     std::fprintf(stderr, "[VulkanDeferredRenderer] device only supports %u bytes push constants, need %u\n",
                  maxPcSize, neededPcSize);
@@ -916,6 +1281,26 @@ bool VulkanDeferredRenderer::init() {
         ctx_->createShaderModuleFromGlsl(k_ssao_blur_comp_glsl,
                                           vk::ShaderStageFlagBits::eCompute,
                                           "ssao_blur_comp"));
+    // Bloom threshold compute shader
+    bloom_threshold_comp_shader_ = std::make_unique<ShaderModule>(
+        ctx_->createShaderModuleFromGlsl(k_bloom_threshold_comp_glsl,
+                                          vk::ShaderStageFlagBits::eCompute,
+                                          "bloom_threshold_comp"));
+    // Bloom blur compute shader (used twice: horizontal + vertical)
+    bloom_blur_comp_shader_ = std::make_unique<ShaderModule>(
+        ctx_->createShaderModuleFromGlsl(k_bloom_blur_comp_glsl,
+                                          vk::ShaderStageFlagBits::eCompute,
+                                          "bloom_blur_comp"));
+    // Tone mapping compute shader
+    tonemap_comp_shader_ = std::make_unique<ShaderModule>(
+        ctx_->createShaderModuleFromGlsl(k_tonemap_comp_glsl,
+                                          vk::ShaderStageFlagBits::eCompute,
+                                          "tonemap_comp"));
+    // FXAA compute shader
+    fxaa_comp_shader_ = std::make_unique<ShaderModule>(
+        ctx_->createShaderModuleFromGlsl(k_fxaa_comp_glsl,
+                                          vk::ShaderStageFlagBits::eCompute,
+                                          "fxaa_comp"));
   } catch (const std::exception& e) {
     std::fprintf(stderr, "[VulkanDeferredRenderer] shader compilation failed: %s\n", e.what());
     return false;
@@ -1062,6 +1447,46 @@ bool VulkanDeferredRenderer::init() {
     return false;
   }
 
+  // -- Build bloom threshold compute pipeline --
+  try {
+    bloom_threshold_pipeline_ = std::make_unique<Pipeline>(
+        *bloom_threshold_comp_shader_,
+        static_cast<u32>(sizeof(BloomThresholdPushConstants)));
+  } catch (const std::exception& e) {
+    std::fprintf(stderr, "[VulkanDeferredRenderer] bloom threshold pipeline creation failed: %s\n", e.what());
+    return false;
+  }
+
+  // -- Build bloom blur compute pipeline --
+  try {
+    bloom_blur_pipeline_ = std::make_unique<Pipeline>(
+        *bloom_blur_comp_shader_,
+        static_cast<u32>(sizeof(BloomBlurPushConstants)));
+  } catch (const std::exception& e) {
+    std::fprintf(stderr, "[VulkanDeferredRenderer] bloom blur pipeline creation failed: %s\n", e.what());
+    return false;
+  }
+
+  // -- Build tone mapping compute pipeline --
+  try {
+    tonemap_pipeline_ = std::make_unique<Pipeline>(
+        *tonemap_comp_shader_,
+        static_cast<u32>(sizeof(TonemapPushConstants)));
+  } catch (const std::exception& e) {
+    std::fprintf(stderr, "[VulkanDeferredRenderer] tonemap pipeline creation failed: %s\n", e.what());
+    return false;
+  }
+
+  // -- Build FXAA compute pipeline --
+  try {
+    fxaa_pipeline_ = std::make_unique<Pipeline>(
+        *fxaa_comp_shader_,
+        static_cast<u32>(sizeof(FXAAPushConstants)));
+  } catch (const std::exception& e) {
+    std::fprintf(stderr, "[VulkanDeferredRenderer] FXAA pipeline creation failed: %s\n", e.what());
+    return false;
+  }
+
   initialised_ = true;
   std::printf("[VulkanDeferredRenderer] initialised on %s\n",
               devProps.deviceName.data());
@@ -1128,12 +1553,12 @@ RasterResult VulkanDeferredRenderer::render(const RenderFrameRequest& request,
       vk::MemoryPropertyFlagBits::eDeviceLocal,
       /*mipmaps=*/false, /*createView=*/true, /*enableTransfer=*/false);
 
-  // Output image (R8G8B8A8Unorm, storage + transfer src)
-  auto outImage = ctx_->create2DImage(
-      extent, vk::Format::eR8G8B8A8Unorm,
-      vk::ImageUsageFlagBits::eStorage | vk::ImageUsageFlagBits::eTransferSrc,
+  // HDR lighting output (R16G16B16A16Sfloat — storage for lighting write + sampled for bloom/tonemap read)
+  auto hdrImage = ctx_->create2DImage(
+      extent, vk::Format::eR16G16B16A16Sfloat,
+      vk::ImageUsageFlagBits::eStorage | vk::ImageUsageFlagBits::eSampled,
       vk::MemoryPropertyFlagBits::eDeviceLocal,
-      /*mipmaps=*/false, /*createView=*/true, /*enableTransfer=*/true);
+      /*mipmaps=*/false, /*createView=*/true, /*enableTransfer=*/false);
 
   // SSAO raw output (R8Unorm — single channel AO factor)
   auto ssaoRawImage = ctx_->create2DImage(
@@ -1690,7 +2115,7 @@ RasterResult VulkanDeferredRenderer::render(const RenderFrameRequest& request,
   shadowSamplerInfo.borderColor = vk::BorderColor::eFloatOpaqueWhite;  // depth=1.0 = no shadow
   auto shadowSampler = ctx_->createSampler(shadowSamplerInfo);
 
-  // Transition output image to eGeneral for compute writes
+  // Transition HDR image to eGeneral for compute writes
   {
     SingleUseCommandBuffer cmd(*ctx_, vk_queue_e::graphics);
     vk::CommandBuffer cb = *cmd;
@@ -1700,7 +2125,7 @@ RasterResult VulkanDeferredRenderer::render(const RenderFrameRequest& request,
     barrier.newLayout = vk::ImageLayout::eGeneral;
     barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
     barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-    barrier.image = static_cast<vk::Image>(outImage);
+    barrier.image = static_cast<vk::Image>(hdrImage);
     barrier.subresourceRange.aspectMask = vk::ImageAspectFlagBits::eColor;
     barrier.subresourceRange.baseMipLevel = 0;
     barrier.subresourceRange.levelCount = 1;
@@ -1739,7 +2164,7 @@ RasterResult VulkanDeferredRenderer::render(const RenderFrameRequest& request,
 
   // Output image (storage)
   vk::DescriptorImageInfo outImageInfo;
-  outImageInfo.imageView = outImage.view();
+  outImageInfo.imageView = hdrImage.view();
   outImageInfo.imageLayout = vk::ImageLayout::eGeneral;
 
   // Light buffer
@@ -1800,30 +2225,529 @@ RasterResult VulkanDeferredRenderer::render(const RenderFrameRequest& request,
     uint32_t groups_y = (height + 15) / 16;
     cb.dispatch(groups_x, groups_y, 1, ctx_->dispatcher);
 
-    // Barrier: compute write -> transfer read
+    // Barrier: lighting compute write -> shader read for bloom/tonemap
     vk::ImageMemoryBarrier barrier;
     barrier.oldLayout = vk::ImageLayout::eGeneral;
-    barrier.newLayout = vk::ImageLayout::eTransferSrcOptimal;
+    barrier.newLayout = vk::ImageLayout::eShaderReadOnlyOptimal;
     barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
     barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-    barrier.image = static_cast<vk::Image>(outImage);
+    barrier.image = static_cast<vk::Image>(hdrImage);
     barrier.subresourceRange.aspectMask = vk::ImageAspectFlagBits::eColor;
     barrier.subresourceRange.baseMipLevel = 0;
     barrier.subresourceRange.levelCount = 1;
     barrier.subresourceRange.baseArrayLayer = 0;
     barrier.subresourceRange.layerCount = 1;
     barrier.srcAccessMask = vk::AccessFlagBits::eShaderWrite;
-    barrier.dstAccessMask = vk::AccessFlagBits::eTransferRead;
+    barrier.dstAccessMask = vk::AccessFlagBits::eShaderRead;
 
     cb.pipelineBarrier(
         vk::PipelineStageFlagBits::eComputeShader,
-        vk::PipelineStageFlagBits::eTransfer,
+        vk::PipelineStageFlagBits::eComputeShader,
         {}, 0, nullptr, 0, nullptr, 1, &barrier,
         ctx_->dispatcher);
   }
 
   // =================================================================
-  // Readback pixels to CPU
+  // Pass 5: Bloom (compute) — threshold + separable Gaussian blur
+  // =================================================================
+
+  // Bloom images at half resolution
+  const uint32_t bloomWidth  = std::max(width / 2, 1u);
+  const uint32_t bloomHeight = std::max(height / 2, 1u);
+  const vk::Extent2D bloomExtent{bloomWidth, bloomHeight};
+
+  // Bloom image A (threshold output / V-blur output)
+  auto bloomImageA = ctx_->create2DImage(
+      bloomExtent, vk::Format::eR16G16B16A16Sfloat,
+      vk::ImageUsageFlagBits::eStorage | vk::ImageUsageFlagBits::eSampled,
+      vk::MemoryPropertyFlagBits::eDeviceLocal,
+      /*mipmaps=*/false, /*createView=*/true, /*enableTransfer=*/false);
+
+  // Bloom image B (H-blur output — ping-pong target)
+  auto bloomImageB = ctx_->create2DImage(
+      bloomExtent, vk::Format::eR16G16B16A16Sfloat,
+      vk::ImageUsageFlagBits::eStorage | vk::ImageUsageFlagBits::eSampled,
+      vk::MemoryPropertyFlagBits::eDeviceLocal,
+      /*mipmaps=*/false, /*createView=*/true, /*enableTransfer=*/false);
+
+  // Transition bloom images to eGeneral
+  {
+    SingleUseCommandBuffer cmd(*ctx_, vk_queue_e::graphics);
+    vk::CommandBuffer cb = *cmd;
+
+    std::array<vk::ImageMemoryBarrier, 2> barriers;
+    for (int i = 0; i < 2; ++i) {
+      barriers[i].oldLayout = vk::ImageLayout::eUndefined;
+      barriers[i].newLayout = vk::ImageLayout::eGeneral;
+      barriers[i].srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+      barriers[i].dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+      barriers[i].image = (i == 0)
+          ? static_cast<vk::Image>(bloomImageA)
+          : static_cast<vk::Image>(bloomImageB);
+      barriers[i].subresourceRange.aspectMask = vk::ImageAspectFlagBits::eColor;
+      barriers[i].subresourceRange.baseMipLevel = 0;
+      barriers[i].subresourceRange.levelCount = 1;
+      barriers[i].subresourceRange.baseArrayLayer = 0;
+      barriers[i].subresourceRange.layerCount = 1;
+      barriers[i].srcAccessMask = {};
+      barriers[i].dstAccessMask = vk::AccessFlagBits::eShaderWrite;
+    }
+
+    cb.pipelineBarrier(
+        vk::PipelineStageFlagBits::eTopOfPipe,
+        vk::PipelineStageFlagBits::eComputeShader,
+        {}, 0, nullptr, 0, nullptr,
+        static_cast<uint32_t>(barriers.size()), barriers.data(),
+        ctx_->dispatcher);
+  }
+
+  // Linear sampler for bloom (bilinear upsampling from half-res)
+  vk::SamplerCreateInfo linearSamplerInfo{};
+  linearSamplerInfo.magFilter = vk::Filter::eLinear;
+  linearSamplerInfo.minFilter = vk::Filter::eLinear;
+  linearSamplerInfo.addressModeU = vk::SamplerAddressMode::eClampToEdge;
+  linearSamplerInfo.addressModeV = vk::SamplerAddressMode::eClampToEdge;
+  linearSamplerInfo.addressModeW = vk::SamplerAddressMode::eClampToEdge;
+  auto linearSampler = ctx_->createSampler(linearSamplerInfo);
+
+  // Pass 5a: Bloom threshold — extract bright pixels + downsample to half-res
+  {
+    auto& btDsLayout = bloom_threshold_comp_shader_->layout(0);
+    vk::DescriptorSet btDs;
+    ctx_->acquireSet(btDsLayout, btDs);
+
+    // Binding 0: HDR input (combined image sampler)
+    vk::DescriptorImageInfo hdrSampledInfo;
+    hdrSampledInfo.sampler = *linearSampler;
+    hdrSampledInfo.imageView = hdrImage.view();
+    hdrSampledInfo.imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal;
+    ctx_->writeDescriptorSet(hdrSampledInfo, btDs, vk::DescriptorType::eCombinedImageSampler, 0);
+
+    // Binding 1: bloom output (storage image)
+    vk::DescriptorImageInfo bloomOutInfo;
+    bloomOutInfo.imageView = bloomImageA.view();
+    bloomOutInfo.imageLayout = vk::ImageLayout::eGeneral;
+    ctx_->writeDescriptorSet(bloomOutInfo, btDs, vk::DescriptorType::eStorageImage, 1);
+
+    SingleUseCommandBuffer cmd(*ctx_, vk_queue_e::graphics);
+    vk::CommandBuffer cb = *cmd;
+
+    cb.bindPipeline(vk::PipelineBindPoint::eCompute, **bloom_threshold_pipeline_, ctx_->dispatcher);
+    cb.bindDescriptorSets(vk::PipelineBindPoint::eCompute,
+                          static_cast<vk::PipelineLayout>(*bloom_threshold_pipeline_),
+                          0, 1, &btDs, 0, nullptr, ctx_->dispatcher);
+
+    BloomThresholdPushConstants btPc{};
+    btPc.srcWidth  = width;
+    btPc.srcHeight = height;
+    btPc.dstWidth  = bloomWidth;
+    btPc.dstHeight = bloomHeight;
+    btPc.threshold = 1.0f;
+    btPc.softKnee  = 0.5f;
+    btPc._pad0 = 0.f;
+    btPc._pad1 = 0.f;
+
+    cb.pushConstants(
+        static_cast<vk::PipelineLayout>(*bloom_threshold_pipeline_),
+        vk::ShaderStageFlagBits::eCompute,
+        0, static_cast<uint32_t>(sizeof(BloomThresholdPushConstants)),
+        &btPc, ctx_->dispatcher);
+
+    uint32_t bg_x = (bloomWidth + 15) / 16;
+    uint32_t bg_y = (bloomHeight + 15) / 16;
+    cb.dispatch(bg_x, bg_y, 1, ctx_->dispatcher);
+
+    // Barrier: bloomImageA write -> read for H-blur
+    vk::ImageMemoryBarrier bBarrier;
+    bBarrier.oldLayout = vk::ImageLayout::eGeneral;
+    bBarrier.newLayout = vk::ImageLayout::eShaderReadOnlyOptimal;
+    bBarrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    bBarrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    bBarrier.image = static_cast<vk::Image>(bloomImageA);
+    bBarrier.subresourceRange.aspectMask = vk::ImageAspectFlagBits::eColor;
+    bBarrier.subresourceRange.baseMipLevel = 0;
+    bBarrier.subresourceRange.levelCount = 1;
+    bBarrier.subresourceRange.baseArrayLayer = 0;
+    bBarrier.subresourceRange.layerCount = 1;
+    bBarrier.srcAccessMask = vk::AccessFlagBits::eShaderWrite;
+    bBarrier.dstAccessMask = vk::AccessFlagBits::eShaderRead;
+
+    cb.pipelineBarrier(
+        vk::PipelineStageFlagBits::eComputeShader,
+        vk::PipelineStageFlagBits::eComputeShader,
+        {}, 0, nullptr, 0, nullptr, 1, &bBarrier,
+        ctx_->dispatcher);
+  }
+
+  // Pass 5b: Bloom horizontal blur (A -> B)
+  {
+    auto& blurDsLayout = bloom_blur_comp_shader_->layout(0);
+    vk::DescriptorSet hblurDs;
+    ctx_->acquireSet(blurDsLayout, hblurDs);
+
+    // Binding 0: bloomImageA (read)
+    vk::DescriptorImageInfo bloomAInfo;
+    bloomAInfo.sampler = *linearSampler;
+    bloomAInfo.imageView = bloomImageA.view();
+    bloomAInfo.imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal;
+    ctx_->writeDescriptorSet(bloomAInfo, hblurDs, vk::DescriptorType::eCombinedImageSampler, 0);
+
+    // Binding 1: bloomImageB (write)
+    vk::DescriptorImageInfo bloomBInfo;
+    bloomBInfo.imageView = bloomImageB.view();
+    bloomBInfo.imageLayout = vk::ImageLayout::eGeneral;
+    ctx_->writeDescriptorSet(bloomBInfo, hblurDs, vk::DescriptorType::eStorageImage, 1);
+
+    SingleUseCommandBuffer cmd(*ctx_, vk_queue_e::graphics);
+    vk::CommandBuffer cb = *cmd;
+
+    cb.bindPipeline(vk::PipelineBindPoint::eCompute, **bloom_blur_pipeline_, ctx_->dispatcher);
+    cb.bindDescriptorSets(vk::PipelineBindPoint::eCompute,
+                          static_cast<vk::PipelineLayout>(*bloom_blur_pipeline_),
+                          0, 1, &hblurDs, 0, nullptr, ctx_->dispatcher);
+
+    BloomBlurPushConstants hblurPc{};
+    hblurPc.width  = bloomWidth;
+    hblurPc.height = bloomHeight;
+    hblurPc.dirX   = 1.0f;  // horizontal
+    hblurPc.dirY   = 0.0f;
+
+    cb.pushConstants(
+        static_cast<vk::PipelineLayout>(*bloom_blur_pipeline_),
+        vk::ShaderStageFlagBits::eCompute,
+        0, static_cast<uint32_t>(sizeof(BloomBlurPushConstants)),
+        &hblurPc, ctx_->dispatcher);
+
+    uint32_t bg_x = (bloomWidth + 15) / 16;
+    uint32_t bg_y = (bloomHeight + 15) / 16;
+    cb.dispatch(bg_x, bg_y, 1, ctx_->dispatcher);
+
+    // Barrier: bloomImageB write -> read for V-blur
+    vk::ImageMemoryBarrier bBarrier;
+    bBarrier.oldLayout = vk::ImageLayout::eGeneral;
+    bBarrier.newLayout = vk::ImageLayout::eShaderReadOnlyOptimal;
+    bBarrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    bBarrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    bBarrier.image = static_cast<vk::Image>(bloomImageB);
+    bBarrier.subresourceRange.aspectMask = vk::ImageAspectFlagBits::eColor;
+    bBarrier.subresourceRange.baseMipLevel = 0;
+    bBarrier.subresourceRange.levelCount = 1;
+    bBarrier.subresourceRange.baseArrayLayer = 0;
+    bBarrier.subresourceRange.layerCount = 1;
+    bBarrier.srcAccessMask = vk::AccessFlagBits::eShaderWrite;
+    bBarrier.dstAccessMask = vk::AccessFlagBits::eShaderRead;
+
+    cb.pipelineBarrier(
+        vk::PipelineStageFlagBits::eComputeShader,
+        vk::PipelineStageFlagBits::eComputeShader,
+        {}, 0, nullptr, 0, nullptr, 1, &bBarrier,
+        ctx_->dispatcher);
+  }
+
+  // Pass 5c: Bloom vertical blur (B -> A, ping-pong back)
+  {
+    // Transition bloomImageA back to eGeneral for writing
+    {
+      SingleUseCommandBuffer cmd(*ctx_, vk_queue_e::graphics);
+      vk::CommandBuffer cb = *cmd;
+
+      vk::ImageMemoryBarrier barrier;
+      barrier.oldLayout = vk::ImageLayout::eShaderReadOnlyOptimal;
+      barrier.newLayout = vk::ImageLayout::eGeneral;
+      barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+      barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+      barrier.image = static_cast<vk::Image>(bloomImageA);
+      barrier.subresourceRange.aspectMask = vk::ImageAspectFlagBits::eColor;
+      barrier.subresourceRange.baseMipLevel = 0;
+      barrier.subresourceRange.levelCount = 1;
+      barrier.subresourceRange.baseArrayLayer = 0;
+      barrier.subresourceRange.layerCount = 1;
+      barrier.srcAccessMask = vk::AccessFlagBits::eShaderRead;
+      barrier.dstAccessMask = vk::AccessFlagBits::eShaderWrite;
+
+      cb.pipelineBarrier(
+          vk::PipelineStageFlagBits::eComputeShader,
+          vk::PipelineStageFlagBits::eComputeShader,
+          {}, 0, nullptr, 0, nullptr, 1, &barrier,
+          ctx_->dispatcher);
+    }
+
+    auto& blurDsLayout = bloom_blur_comp_shader_->layout(0);
+    vk::DescriptorSet vblurDs;
+    ctx_->acquireSet(blurDsLayout, vblurDs);
+
+    // Binding 0: bloomImageB (read)
+    vk::DescriptorImageInfo bloomBReadInfo;
+    bloomBReadInfo.sampler = *linearSampler;
+    bloomBReadInfo.imageView = bloomImageB.view();
+    bloomBReadInfo.imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal;
+    ctx_->writeDescriptorSet(bloomBReadInfo, vblurDs, vk::DescriptorType::eCombinedImageSampler, 0);
+
+    // Binding 1: bloomImageA (write)
+    vk::DescriptorImageInfo bloomAWriteInfo;
+    bloomAWriteInfo.imageView = bloomImageA.view();
+    bloomAWriteInfo.imageLayout = vk::ImageLayout::eGeneral;
+    ctx_->writeDescriptorSet(bloomAWriteInfo, vblurDs, vk::DescriptorType::eStorageImage, 1);
+
+    SingleUseCommandBuffer cmd(*ctx_, vk_queue_e::graphics);
+    vk::CommandBuffer cb = *cmd;
+
+    cb.bindPipeline(vk::PipelineBindPoint::eCompute, **bloom_blur_pipeline_, ctx_->dispatcher);
+    cb.bindDescriptorSets(vk::PipelineBindPoint::eCompute,
+                          static_cast<vk::PipelineLayout>(*bloom_blur_pipeline_),
+                          0, 1, &vblurDs, 0, nullptr, ctx_->dispatcher);
+
+    BloomBlurPushConstants vblurPc{};
+    vblurPc.width  = bloomWidth;
+    vblurPc.height = bloomHeight;
+    vblurPc.dirX   = 0.0f;
+    vblurPc.dirY   = 1.0f;  // vertical
+
+    cb.pushConstants(
+        static_cast<vk::PipelineLayout>(*bloom_blur_pipeline_),
+        vk::ShaderStageFlagBits::eCompute,
+        0, static_cast<uint32_t>(sizeof(BloomBlurPushConstants)),
+        &vblurPc, ctx_->dispatcher);
+
+    uint32_t bg_x = (bloomWidth + 15) / 16;
+    uint32_t bg_y = (bloomHeight + 15) / 16;
+    cb.dispatch(bg_x, bg_y, 1, ctx_->dispatcher);
+
+    // Barrier: bloomImageA write -> read for tonemap
+    vk::ImageMemoryBarrier bBarrier;
+    bBarrier.oldLayout = vk::ImageLayout::eGeneral;
+    bBarrier.newLayout = vk::ImageLayout::eShaderReadOnlyOptimal;
+    bBarrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    bBarrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    bBarrier.image = static_cast<vk::Image>(bloomImageA);
+    bBarrier.subresourceRange.aspectMask = vk::ImageAspectFlagBits::eColor;
+    bBarrier.subresourceRange.baseMipLevel = 0;
+    bBarrier.subresourceRange.levelCount = 1;
+    bBarrier.subresourceRange.baseArrayLayer = 0;
+    bBarrier.subresourceRange.layerCount = 1;
+    bBarrier.srcAccessMask = vk::AccessFlagBits::eShaderWrite;
+    bBarrier.dstAccessMask = vk::AccessFlagBits::eShaderRead;
+
+    cb.pipelineBarrier(
+        vk::PipelineStageFlagBits::eComputeShader,
+        vk::PipelineStageFlagBits::eComputeShader,
+        {}, 0, nullptr, 0, nullptr, 1, &bBarrier,
+        ctx_->dispatcher);
+  }
+
+  // =================================================================
+  // Pass 6: Tone mapping (compute) — ACES filmic + bloom composite
+  // =================================================================
+
+  // LDR tone-mapped image (storage + sampled for FXAA to read)
+  auto ldrImage = ctx_->create2DImage(
+      extent, vk::Format::eR8G8B8A8Unorm,
+      vk::ImageUsageFlagBits::eStorage | vk::ImageUsageFlagBits::eSampled,
+      vk::MemoryPropertyFlagBits::eDeviceLocal,
+      /*mipmaps=*/false, /*createView=*/true, /*enableTransfer=*/false);
+
+  // Transition LDR image to eGeneral
+  {
+    SingleUseCommandBuffer cmd(*ctx_, vk_queue_e::graphics);
+    vk::CommandBuffer cb = *cmd;
+
+    vk::ImageMemoryBarrier barrier;
+    barrier.oldLayout = vk::ImageLayout::eUndefined;
+    barrier.newLayout = vk::ImageLayout::eGeneral;
+    barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    barrier.image = static_cast<vk::Image>(ldrImage);
+    barrier.subresourceRange.aspectMask = vk::ImageAspectFlagBits::eColor;
+    barrier.subresourceRange.baseMipLevel = 0;
+    barrier.subresourceRange.levelCount = 1;
+    barrier.subresourceRange.baseArrayLayer = 0;
+    barrier.subresourceRange.layerCount = 1;
+    barrier.srcAccessMask = {};
+    barrier.dstAccessMask = vk::AccessFlagBits::eShaderWrite;
+
+    cb.pipelineBarrier(
+        vk::PipelineStageFlagBits::eTopOfPipe,
+        vk::PipelineStageFlagBits::eComputeShader,
+        {}, 0, nullptr, 0, nullptr, 1, &barrier,
+        ctx_->dispatcher);
+  }
+
+  // Tonemap descriptor set
+  {
+    auto& tmDsLayout = tonemap_comp_shader_->layout(0);
+    vk::DescriptorSet tmDs;
+    ctx_->acquireSet(tmDsLayout, tmDs);
+
+    // Binding 0: HDR input (combined image sampler)
+    vk::DescriptorImageInfo tmHdrInfo;
+    tmHdrInfo.sampler = *linearSampler;
+    tmHdrInfo.imageView = hdrImage.view();
+    tmHdrInfo.imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal;
+    ctx_->writeDescriptorSet(tmHdrInfo, tmDs, vk::DescriptorType::eCombinedImageSampler, 0);
+
+    // Binding 1: bloom input (combined image sampler, half-res with bilinear)
+    vk::DescriptorImageInfo tmBloomInfo;
+    tmBloomInfo.sampler = *linearSampler;
+    tmBloomInfo.imageView = bloomImageA.view();
+    tmBloomInfo.imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal;
+    ctx_->writeDescriptorSet(tmBloomInfo, tmDs, vk::DescriptorType::eCombinedImageSampler, 1);
+
+    // Binding 2: LDR output (storage image)
+    vk::DescriptorImageInfo tmOutInfo;
+    tmOutInfo.imageView = ldrImage.view();
+    tmOutInfo.imageLayout = vk::ImageLayout::eGeneral;
+    ctx_->writeDescriptorSet(tmOutInfo, tmDs, vk::DescriptorType::eStorageImage, 2);
+
+    SingleUseCommandBuffer cmd(*ctx_, vk_queue_e::graphics);
+    vk::CommandBuffer cb = *cmd;
+
+    cb.bindPipeline(vk::PipelineBindPoint::eCompute, **tonemap_pipeline_, ctx_->dispatcher);
+    cb.bindDescriptorSets(vk::PipelineBindPoint::eCompute,
+                          static_cast<vk::PipelineLayout>(*tonemap_pipeline_),
+                          0, 1, &tmDs, 0, nullptr, ctx_->dispatcher);
+
+    TonemapPushConstants tmPc{};
+    tmPc.width = width;
+    tmPc.height = height;
+    tmPc.exposure = 1.0f;
+    tmPc.bloomStrength = 0.04f;
+
+    cb.pushConstants(
+        static_cast<vk::PipelineLayout>(*tonemap_pipeline_),
+        vk::ShaderStageFlagBits::eCompute,
+        0, static_cast<uint32_t>(sizeof(TonemapPushConstants)),
+        &tmPc, ctx_->dispatcher);
+
+    uint32_t tg_x = (width + 15) / 16;
+    uint32_t tg_y = (height + 15) / 16;
+    cb.dispatch(tg_x, tg_y, 1, ctx_->dispatcher);
+
+    // Barrier: LDR write -> read for FXAA
+    vk::ImageMemoryBarrier ldrBarrier;
+    ldrBarrier.oldLayout = vk::ImageLayout::eGeneral;
+    ldrBarrier.newLayout = vk::ImageLayout::eShaderReadOnlyOptimal;
+    ldrBarrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    ldrBarrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    ldrBarrier.image = static_cast<vk::Image>(ldrImage);
+    ldrBarrier.subresourceRange.aspectMask = vk::ImageAspectFlagBits::eColor;
+    ldrBarrier.subresourceRange.baseMipLevel = 0;
+    ldrBarrier.subresourceRange.levelCount = 1;
+    ldrBarrier.subresourceRange.baseArrayLayer = 0;
+    ldrBarrier.subresourceRange.layerCount = 1;
+    ldrBarrier.srcAccessMask = vk::AccessFlagBits::eShaderWrite;
+    ldrBarrier.dstAccessMask = vk::AccessFlagBits::eShaderRead;
+
+    cb.pipelineBarrier(
+        vk::PipelineStageFlagBits::eComputeShader,
+        vk::PipelineStageFlagBits::eComputeShader,
+        {}, 0, nullptr, 0, nullptr, 1, &ldrBarrier,
+        ctx_->dispatcher);
+  }
+
+  // =================================================================
+  // Pass 7: FXAA (compute) — luminance-based anti-aliasing
+  // =================================================================
+
+  // Final output image (FXAA result — storage + transfer src for readback)
+  auto fxaaImage = ctx_->create2DImage(
+      extent, vk::Format::eR8G8B8A8Unorm,
+      vk::ImageUsageFlagBits::eStorage | vk::ImageUsageFlagBits::eTransferSrc,
+      vk::MemoryPropertyFlagBits::eDeviceLocal,
+      /*mipmaps=*/false, /*createView=*/true, /*enableTransfer=*/true);
+
+  // Transition FXAA image to eGeneral
+  {
+    SingleUseCommandBuffer cmd(*ctx_, vk_queue_e::graphics);
+    vk::CommandBuffer cb = *cmd;
+
+    vk::ImageMemoryBarrier barrier;
+    barrier.oldLayout = vk::ImageLayout::eUndefined;
+    barrier.newLayout = vk::ImageLayout::eGeneral;
+    barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    barrier.image = static_cast<vk::Image>(fxaaImage);
+    barrier.subresourceRange.aspectMask = vk::ImageAspectFlagBits::eColor;
+    barrier.subresourceRange.baseMipLevel = 0;
+    barrier.subresourceRange.levelCount = 1;
+    barrier.subresourceRange.baseArrayLayer = 0;
+    barrier.subresourceRange.layerCount = 1;
+    barrier.srcAccessMask = {};
+    barrier.dstAccessMask = vk::AccessFlagBits::eShaderWrite;
+
+    cb.pipelineBarrier(
+        vk::PipelineStageFlagBits::eTopOfPipe,
+        vk::PipelineStageFlagBits::eComputeShader,
+        {}, 0, nullptr, 0, nullptr, 1, &barrier,
+        ctx_->dispatcher);
+  }
+
+  // FXAA descriptor set
+  {
+    auto& fxaaDsLayout = fxaa_comp_shader_->layout(0);
+    vk::DescriptorSet fxaaDs;
+    ctx_->acquireSet(fxaaDsLayout, fxaaDs);
+
+    // Binding 0: LDR input (combined image sampler)
+    vk::DescriptorImageInfo fxaaInInfo;
+    fxaaInInfo.sampler = *linearSampler;
+    fxaaInInfo.imageView = ldrImage.view();
+    fxaaInInfo.imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal;
+    ctx_->writeDescriptorSet(fxaaInInfo, fxaaDs, vk::DescriptorType::eCombinedImageSampler, 0);
+
+    // Binding 1: FXAA output (storage image)
+    vk::DescriptorImageInfo fxaaOutInfo;
+    fxaaOutInfo.imageView = fxaaImage.view();
+    fxaaOutInfo.imageLayout = vk::ImageLayout::eGeneral;
+    ctx_->writeDescriptorSet(fxaaOutInfo, fxaaDs, vk::DescriptorType::eStorageImage, 1);
+
+    SingleUseCommandBuffer cmd(*ctx_, vk_queue_e::graphics);
+    vk::CommandBuffer cb = *cmd;
+
+    cb.bindPipeline(vk::PipelineBindPoint::eCompute, **fxaa_pipeline_, ctx_->dispatcher);
+    cb.bindDescriptorSets(vk::PipelineBindPoint::eCompute,
+                          static_cast<vk::PipelineLayout>(*fxaa_pipeline_),
+                          0, 1, &fxaaDs, 0, nullptr, ctx_->dispatcher);
+
+    FXAAPushConstants fxaaPc{};
+    fxaaPc.width = width;
+    fxaaPc.height = height;
+    fxaaPc.edgeThresholdMin = 0.0312f;
+    fxaaPc.edgeThreshold = 0.125f;
+
+    cb.pushConstants(
+        static_cast<vk::PipelineLayout>(*fxaa_pipeline_),
+        vk::ShaderStageFlagBits::eCompute,
+        0, static_cast<uint32_t>(sizeof(FXAAPushConstants)),
+        &fxaaPc, ctx_->dispatcher);
+
+    uint32_t fg_x = (width + 15) / 16;
+    uint32_t fg_y = (height + 15) / 16;
+    cb.dispatch(fg_x, fg_y, 1, ctx_->dispatcher);
+
+    // Barrier: FXAA write -> transfer read for readback
+    vk::ImageMemoryBarrier fxaaBarrier;
+    fxaaBarrier.oldLayout = vk::ImageLayout::eGeneral;
+    fxaaBarrier.newLayout = vk::ImageLayout::eTransferSrcOptimal;
+    fxaaBarrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    fxaaBarrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    fxaaBarrier.image = static_cast<vk::Image>(fxaaImage);
+    fxaaBarrier.subresourceRange.aspectMask = vk::ImageAspectFlagBits::eColor;
+    fxaaBarrier.subresourceRange.baseMipLevel = 0;
+    fxaaBarrier.subresourceRange.levelCount = 1;
+    fxaaBarrier.subresourceRange.baseArrayLayer = 0;
+    fxaaBarrier.subresourceRange.layerCount = 1;
+    fxaaBarrier.srcAccessMask = vk::AccessFlagBits::eShaderWrite;
+    fxaaBarrier.dstAccessMask = vk::AccessFlagBits::eTransferRead;
+
+    cb.pipelineBarrier(
+        vk::PipelineStageFlagBits::eComputeShader,
+        vk::PipelineStageFlagBits::eTransfer,
+        {}, 0, nullptr, 0, nullptr, 1, &fxaaBarrier,
+        ctx_->dispatcher);
+  }
+
+  // =================================================================
+  // Readback pixels to CPU (from FXAA output)
   // =================================================================
 
   const vk::DeviceSize pixelBytes = static_cast<vk::DeviceSize>(width) * height * 4;
@@ -1844,7 +2768,7 @@ RasterResult VulkanDeferredRenderer::render(const RenderFrameRequest& request,
     region.imageExtent = vk::Extent3D{width, height, 1};
 
     cb.copyImageToBuffer(
-        static_cast<vk::Image>(outImage),
+        static_cast<vk::Image>(fxaaImage),
         vk::ImageLayout::eTransferSrcOptimal,
         *staging, 1, &region, ctx_->dispatcher);
   }
@@ -1874,6 +2798,14 @@ void VulkanDeferredRenderer::shutdown() {
   if (!initialised_) return;
   if (ctx_) ctx_->sync();
 
+  fxaa_pipeline_.reset();
+  fxaa_comp_shader_.reset();
+  tonemap_pipeline_.reset();
+  tonemap_comp_shader_.reset();
+  bloom_blur_pipeline_.reset();
+  bloom_blur_comp_shader_.reset();
+  bloom_threshold_pipeline_.reset();
+  bloom_threshold_comp_shader_.reset();
   lighting_pipeline_.reset();
   lighting_comp_shader_.reset();
   ssao_blur_pipeline_.reset();

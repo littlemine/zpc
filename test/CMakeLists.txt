@@ -264,3 +264,11 @@ target_compile_features(renderssao PRIVATE cxx_std_17)
 
 add_test(ZsRenderSSAO renderssao)
 add_dependencies(zensim renderssao)
+
+# render post-processing (requires Vulkan GPU at runtime)
+add_executable(renderpostprocess render/render_postprocess.cpp)
+target_link_libraries(renderpostprocess PRIVATE zpc_render_capture)
+target_compile_features(renderpostprocess PRIVATE cxx_std_17)
+
+add_test(ZsRenderPostProcess renderpostprocess)
+add_dependencies(zensim renderpostprocess)
