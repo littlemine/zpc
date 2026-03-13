@@ -333,6 +333,7 @@ set(ZENSIM_LIBRARY_GAMEPLAY_CORE_INCLUDE_FILES
   gameplay/GameplayProgression.hpp
   gameplay/GameplayAIInterface.hpp
   gameplay/GameplaySaveLoad.hpp
+  gameplay/GameplayTelemetry.hpp
 )
 set(ZENSIM_LIBRARY_IO_INCLUDE_FILES
   io/IO.h
