@@ -336,6 +336,9 @@ set(ZENSIM_LIBRARY_3C_CAMERA_INCLUDE_FILES
   3c/camera/Frustum.hpp
   3c/camera/CameraMode.hpp
 )
+set(ZENSIM_LIBRARY_3C_CHARACTER_INCLUDE_FILES
+  3c/character/CharacterState.hpp
+)
 set(ZENSIM_LIBRARY_IO_INCLUDE_FILES
   io/IO.h
   io/MeshIO.hpp
@@ -583,6 +586,13 @@ target_sources(zpc_3c_camera
   ${ZENSIM_LIBRARY_3C_CAMERA_INCLUDE_FILES}
 )
 target_link_libraries(zpc_3c_camera INTERFACE zpc_3c_core)
+
+add_library(zpc_3c_character INTERFACE)
+target_sources(zpc_3c_character
+  INTERFACE
+  ${ZENSIM_LIBRARY_3C_CHARACTER_INCLUDE_FILES}
+)
+target_link_libraries(zpc_3c_character INTERFACE zpc_3c_core zpc_3c_input)
 
 add_library(zpc_process INTERFACE)
 target_sources(zpc_process

@@ -185,6 +185,13 @@ target_link_libraries(3ccamera PRIVATE zpc_3c_camera)
 add_test(Zs3CCamera 3ccamera)
 add_dependencies(zensim 3ccamera)
 
+# 3C character (CharacterStateMachine, GroundInfo, MovementIntent)
+add_executable(3ccharacter 3c_character.cpp)
+target_link_libraries(3ccharacter PRIVATE zpc_3c_character)
+
+add_test(Zs3CCharacter 3ccharacter)
+add_dependencies(zensim 3ccharacter)
+
 # sycl backend
 if(ZS_ENABLE_SYCL_ONEAPI OR ZS_ENABLE_SYCL_ACPP)
     #
