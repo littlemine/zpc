@@ -180,6 +180,14 @@ target_compile_features(gameplaycombat PRIVATE cxx_std_17)
 add_test(ZsGameplayCombat gameplaycombat)
 add_dependencies(zensim gameplaycombat)
 
+# gameplay inventory and equipment
+add_executable(gameplayinventory gameplay_inventory.cpp)
+target_link_libraries(gameplayinventory PRIVATE zpc_gameplay_core)
+target_compile_features(gameplayinventory PRIVATE cxx_std_17)
+
+add_test(ZsGameplayInventory gameplayinventory)
+add_dependencies(zensim gameplayinventory)
+
 # binary search
 add_executable(binarysearchtest binary_search.cpp)
 target_link_libraries(binarysearchtest PRIVATE zpc)

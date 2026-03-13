@@ -329,6 +329,7 @@ set(ZENSIM_LIBRARY_GAMEPLAY_CORE_INCLUDE_FILES
   gameplay/GameplayAbility.hpp
   gameplay/GameplayEffect.hpp
   gameplay/GameplayCombat.hpp
+  gameplay/GameplayInventory.hpp
 )
 set(ZENSIM_LIBRARY_IO_INCLUDE_FILES
   io/IO.h
