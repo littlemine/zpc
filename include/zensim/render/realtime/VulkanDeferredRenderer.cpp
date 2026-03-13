@@ -139,7 +139,7 @@ layout(set = 0, binding = 3, rgba8) uniform writeonly image2D outImage;
 
 // Light SSBO
 struct GPULight {
-  vec4 position_type;     // xyz = position/direction, w = type (0=dir, 1=point)
+  vec4 position_type;     // xyz = position/direction, w = type (0=dir, 1=point, 2=area)
   vec4 color_intensity;   // rgb = color, w = intensity
 };
 layout(std430, set = 0, binding = 4) readonly buffer Lights {
@@ -222,9 +222,22 @@ void main() {
   // Shadow factor (1.0 = fully lit, 0.0 = fully shadowed)
   float shadowFactor = mix(1.0, sampleShadow(position), pc.shadow_intensity);
 
-  // Accumulate lighting (Blinn-Phong)
-  vec3 totalLight = vec3(pc.ambient);
+  // Hemisphere ambient: surfaces facing up get more indirect light
+  // (simulates diffuse interreflection from floor/ceiling).
+  // In a closed box like Cornell, surfaces get significant indirect
+  // illumination from all directions — use a generous base.
+  float hemiBlend = normal.y * 0.5 + 0.5;  // remap [-1,1] -> [0,1]
+  float hemiAmbient = mix(pc.ambient * 0.6, pc.ambient * 1.4, hemiBlend);
+
+  // Accumulate lighting (Blinn-Phong with wrap lighting)
+  vec3 totalLight = vec3(hemiAmbient);
   uint numLights = uint(pc.camera_pos_numLights.w);
+
+  // Wrap factor: allows light to "wrap" around surfaces, providing
+  // soft illumination even when NdotL would normally be zero.
+  // A moderate wrap factor approximates the broad illumination from an
+  // area light source (like the Cornell Box ceiling panel).
+  const float wrapFactor = 0.35;
 
   for (uint i = 0u; i < numLights; i++) {
     GPULight light = lightBuf.lights[i];
@@ -239,23 +252,29 @@ void main() {
       // Directional light
       lightDir = normalize(-light.position_type.xyz);
     } else {
-      // Point light
+      // Point or area light — treat as point source from position
       vec3 toLight = light.position_type.xyz - position;
       float dist = length(toLight);
       lightDir = toLight / max(dist, 0.001);
-      attenuation = 1.0 / (1.0 + dist * dist * 0.01);
+      // Inverse-square attenuation with minimum distance clamp
+      // to prevent singularity at the light source.
+      float clampDist = max(dist, 0.5);
+      attenuation = 1.0 / (clampDist * clampDist);
     }
 
-    // Diffuse (Lambert)
-    float NdotL = max(dot(normal, lightDir), 0.0);
+    // Wrap lighting: (NdotL + wrap) / (1 + wrap)
+    // Provides soft illumination even for surfaces nearly perpendicular
+    // to the light direction (e.g., vertical walls under a ceiling light).
+    float rawNdotL = dot(normal, lightDir);
+    float wrappedNdotL = max((rawNdotL + wrapFactor) / (1.0 + wrapFactor), 0.0);
 
-    // Specular (Blinn-Phong)
+    // Specular (Blinn-Phong) — use unwrapped NdotL for specular gate
     vec3 halfVec = normalize(lightDir + viewDir);
     float NdotH = max(dot(normal, halfVec), 0.0);
-    float specular = pow(NdotH, 32.0) * 0.3;
+    float specular = (rawNdotL > 0.0) ? pow(NdotH, 32.0) * 0.3 : 0.0;
 
     // Apply shadow to diffuse + specular (not ambient)
-    totalLight += (NdotL + specular) * lightColor * intensity * attenuation * shadowFactor;
+    totalLight += (wrappedNdotL + specular) * lightColor * intensity * attenuation * shadowFactor;
   }
 
   vec3 color = albedo * totalLight;
@@ -414,11 +433,20 @@ static mat4 buildLightVP(const Light& light,
     lightDir(0) /= len; lightDir(1) /= len; lightDir(2) /= len;
   }
 
-  // Light position: pull back along -lightDir from scene center
+  // Light position: for area lights, use the actual light position.
+  // For directional lights, pull back along -lightDir from scene center.
+  // For point lights, use the actual light position.
   vec3 lightPos;
-  lightPos(0) = center(0) - lightDir(0) * radius * 2.f;
-  lightPos(1) = center(1) - lightDir(1) * radius * 2.f;
-  lightPos(2) = center(2) - lightDir(2) * radius * 2.f;
+  if (light.type == LightType::Area || light.type == LightType::Point) {
+    lightPos(0) = light.position(0);
+    lightPos(1) = light.position(1);
+    lightPos(2) = light.position(2);
+  } else {
+    // Directional light — synthesise position outside scene
+    lightPos(0) = center(0) - lightDir(0) * radius * 2.f;
+    lightPos(1) = center(1) - lightDir(1) * radius * 2.f;
+    lightPos(2) = center(2) - lightDir(2) * radius * 2.f;
+  }
 
   // Build light view matrix (look-at)
   vec3 f; // forward = lightDir
@@ -630,7 +658,7 @@ bool VulkanDeferredRenderer::init() {
             .setBindingDescriptions(bindings)
             .setAttributeDescriptions(attributes)
             .setTopology(vk::PrimitiveTopology::eTriangleList)
-            .setCullMode(vk::CullModeFlagBits::eFront)  // Front-face culling reduces self-shadowing
+            .setCullMode(vk::CullModeFlagBits::eNone)  // No culling — works for enclosed scenes
             .setFrontFace(vk::FrontFace::eCounterClockwise)
             .setDepthTestEnable(true)
             .setDepthWriteEnable(true)
@@ -694,7 +722,7 @@ bool VulkanDeferredRenderer::init() {
             .setBindingDescriptions(bindings)
             .setAttributeDescriptions(attributes)
             .setTopology(vk::PrimitiveTopology::eTriangleList)
-            .setCullMode(vk::CullModeFlagBits::eBack)
+            .setCullMode(vk::CullModeFlagBits::eNone)  // No culling — needed for enclosed scenes (e.g. Cornell Box walls)
             .setFrontFace(vk::FrontFace::eCounterClockwise)
             .setDepthTestEnable(true)
             .setDepthWriteEnable(true)
@@ -817,6 +845,7 @@ RasterResult VulkanDeferredRenderer::render(const RenderFrameRequest& request,
     mat4    mvp;
     mat4    model_mat;
     MaterialId material_id;
+    bool    cast_shadow;
   };
   std::vector<DrawItem> draws;
 
@@ -831,6 +860,7 @@ RasterResult VulkanDeferredRenderer::render(const RenderFrameRequest& request,
     item.mvp = P * V * M;
     item.model_mat = M;
     item.material_id = inst.material;
+    item.cast_shadow = inst.cast_shadow;
     item.model = VkModel(*ctx_, *meshData);
     draws.push_back(std::move(item));
   }
@@ -917,6 +947,11 @@ RasterResult VulkanDeferredRenderer::render(const RenderFrameRequest& request,
     cb.setScissor(0, 1, &scissor, ctx_->dispatcher);
 
     for (auto& item : draws) {
+      // Skip instances that shouldn't cast shadows (room enclosure, lights).
+      if (!item.cast_shadow) continue;
+      const Material* mat = scene.findMaterial(item.material_id);
+      if (mat && mat->surface_type == SurfaceType::Emissive) continue;
+
       ShadowPushConstants spc{};
 
       // Compute light MVP for this instance

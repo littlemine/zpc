@@ -256,6 +256,7 @@ namespace render {
     MaterialId material{MaterialId::Null};
     Transform transform;
     bool visible{true};
+    bool cast_shadow{true};  ///< Whether this instance casts shadows.
   };
 
   // ---------------------------------------------------------------

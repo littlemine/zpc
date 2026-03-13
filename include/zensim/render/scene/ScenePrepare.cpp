@@ -354,6 +354,9 @@ RenderScene createCornellBoxScene() {
     inst.mesh = meshId;
     inst.material = grp.material_id;
     inst.visible = true;
+    // Only boxes (group 4) cast shadows — room enclosure and light panel
+    // should not occlude scene interior from the shadow map camera.
+    inst.cast_shadow = (i == 4);
 
     builder.addInstance(inst);
   }
