@@ -204,6 +204,14 @@ target_compile_features(gameplayaiinterface PRIVATE cxx_std_17)
 add_test(ZsGameplayAIInterface gameplayaiinterface)
 add_dependencies(zensim gameplayaiinterface)
 
+# gameplay save/load
+add_executable(gameplaysaveload gameplay_saveload.cpp)
+target_link_libraries(gameplaysaveload PRIVATE zpc_gameplay_core)
+target_compile_features(gameplaysaveload PRIVATE cxx_std_17)
+
+add_test(ZsGameplaySaveLoad gameplaysaveload)
+add_dependencies(zensim gameplaysaveload)
+
 # binary search
 add_executable(binarysearchtest binary_search.cpp)
 target_link_libraries(binarysearchtest PRIVATE zpc)
