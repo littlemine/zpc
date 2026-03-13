@@ -240,3 +240,11 @@ target_compile_features(rendersharedscene PRIVATE cxx_std_17)
 
 add_test(ZsRenderSharedScene rendersharedscene)
 add_dependencies(zensim rendersharedscene)
+
+# render deferred (requires Vulkan GPU at runtime)
+add_executable(renderdeferred render/render_deferred.cpp)
+target_link_libraries(renderdeferred PRIVATE zpc_render_capture)
+target_compile_features(renderdeferred PRIVATE cxx_std_17)
+
+add_test(ZsRenderDeferred renderdeferred)
+add_dependencies(zensim renderdeferred)

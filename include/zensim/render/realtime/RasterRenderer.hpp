@@ -53,5 +53,9 @@ namespace render {
   /// Returns nullptr if Vulkan is not available.
   std::unique_ptr<IRasterRenderer> createVulkanRasterRenderer();
 
+  /// Factory: create a Vulkan-based deferred renderer.
+  /// Returns nullptr if Vulkan is not available.
+  std::unique_ptr<IRasterRenderer> createVulkanDeferredRenderer();
+
 }  // namespace render
 }  // namespace zs
