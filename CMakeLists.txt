@@ -186,6 +186,9 @@ if(WIN32)
   target_compile_definitions(zpc_cxx_deps
     INTERFACE -DWIN32_LEAN_AND_MEAN
   )
+  target_compile_options(zpc_cxx_deps
+    INTERFACE $<$<CXX_COMPILER_ID:MSVC>:/utf-8>
+  )
 endif(WIN32)
 
 # out of boundary check

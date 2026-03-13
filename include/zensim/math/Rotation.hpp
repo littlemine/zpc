@@ -332,6 +332,92 @@ namespace zs {
       rot(2, 2) = T(1) - (txx + tyy);
       return rot;
     }
+
+    /// Convert a 3x3 rotation matrix to a unit quaternion (x, y, z, w).
+    /// Uses the Shepperd method for numerical robustness.
+    template <int d = dim, enable_if_t<d == 3> = 0>
+    static constexpr vec<T, 4> matrix2quaternion(const TM &m) noexcept {
+      vec<T, 4> q{};
+      const T tr = m(0, 0) + m(1, 1) + m(2, 2);
+      if (tr > T(0)) {
+        const T s = T(2) * zs::sqrt(tr + T(1));
+        q(3) = T(0.25) * s;                     // w
+        q(0) = (m(2, 1) - m(1, 2)) / s;         // x
+        q(1) = (m(0, 2) - m(2, 0)) / s;         // y
+        q(2) = (m(1, 0) - m(0, 1)) / s;         // z
+      } else if (m(0, 0) > m(1, 1) && m(0, 0) > m(2, 2)) {
+        const T s = T(2) * zs::sqrt(T(1) + m(0, 0) - m(1, 1) - m(2, 2));
+        q(3) = (m(2, 1) - m(1, 2)) / s;         // w
+        q(0) = T(0.25) * s;                     // x
+        q(1) = (m(0, 1) + m(1, 0)) / s;         // y
+        q(2) = (m(0, 2) + m(2, 0)) / s;         // z
+      } else if (m(1, 1) > m(2, 2)) {
+        const T s = T(2) * zs::sqrt(T(1) + m(1, 1) - m(0, 0) - m(2, 2));
+        q(3) = (m(0, 2) - m(2, 0)) / s;         // w
+        q(0) = (m(0, 1) + m(1, 0)) / s;         // x
+        q(1) = T(0.25) * s;                     // y
+        q(2) = (m(1, 2) + m(2, 1)) / s;         // z
+      } else {
+        const T s = T(2) * zs::sqrt(T(1) + m(2, 2) - m(0, 0) - m(1, 1));
+        q(3) = (m(1, 0) - m(0, 1)) / s;         // w
+        q(0) = (m(0, 2) + m(2, 0)) / s;         // x
+        q(1) = (m(1, 2) + m(2, 1)) / s;         // y
+        q(2) = T(0.25) * s;                     // z
+      }
+      return q.normalized();
+    }
+
+    /// Normalized linear interpolation (nlerp) between two unit quaternions.
+    /// Faster than slerp but non-constant angular velocity.
+    /// Always takes the shortest path (flips q1 if dot < 0).
+    template <typename VecTA, typename VecTB, int d = dim,
+              enable_if_all<d == 3, std::is_convertible_v<typename VecTA::value_type, T>,
+                            std::is_convertible_v<typename VecTB::value_type, T>, VecTA::dim == 1,
+                            VecTB::dim == 1, VecTA::template range_t<0>::value == 4,
+                            VecTB::template range_t<0>::value == 4>
+              = 0>
+    static constexpr vec<T, 4> quaternionNlerp(const VecInterface<VecTA> &q0,
+                                               const VecInterface<VecTB> &q1, T t) noexcept {
+      const T d01 = q0(0) * q1(0) + q0(1) * q1(1) + q0(2) * q1(2) + q0(3) * q1(3);
+      const T sign = d01 < T(0) ? T(-1) : T(1);
+      vec<T, 4> result{};
+      result(0) = (T(1) - t) * q0(0) + t * sign * q1(0);
+      result(1) = (T(1) - t) * q0(1) + t * sign * q1(1);
+      result(2) = (T(1) - t) * q0(2) + t * sign * q1(2);
+      result(3) = (T(1) - t) * q0(3) + t * sign * q1(3);
+      return result.normalized();
+    }
+
+    /// Spherical linear interpolation (slerp) between two unit quaternions.
+    /// Constant angular velocity. Always takes the shortest path.
+    /// Falls back to nlerp for nearly-parallel quaternions (dot > 0.9995).
+    template <typename VecTA, typename VecTB, int d = dim,
+              enable_if_all<d == 3, std::is_convertible_v<typename VecTA::value_type, T>,
+                            std::is_convertible_v<typename VecTB::value_type, T>, VecTA::dim == 1,
+                            VecTB::dim == 1, VecTA::template range_t<0>::value == 4,
+                            VecTB::template range_t<0>::value == 4>
+              = 0>
+    static constexpr vec<T, 4> quaternionSlerp(const VecInterface<VecTA> &q0,
+                                               const VecInterface<VecTB> &q1, T t) noexcept {
+      T d01 = q0(0) * q1(0) + q0(1) * q1(1) + q0(2) * q1(2) + q0(3) * q1(3);
+      T sign = T(1);
+      if (d01 < T(0)) {
+        sign = T(-1);
+        d01 = -d01;
+      }
+      // For nearly-parallel quaternions, fall back to nlerp to avoid division by ~0
+      if (d01 > T(0.9995)) return quaternionNlerp(q0, q1, t);
+      const T theta = zs::acos(d01);
+      const T sinTheta = zs::sin(theta);
+      const T w0 = zs::sin((T(1) - t) * theta) / sinTheta;
+      const T w1 = zs::sin(t * theta) / sinTheta * sign;
+      vec<T, 4> result{};
+      result(0) = w0 * q0(0) + w1 * q1(0);
+      result(1) = w0 * q0(1) + w1 * q1(1);
+      result(2) = w0 * q0(2) + w1 * q1(2);
+      result(3) = w0 * q0(3) + w1 * q1(3);
+      return result;
+    }
   };
 
   template <class T, int dim> struct AngularVelocity;

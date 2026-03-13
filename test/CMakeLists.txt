@@ -155,6 +155,29 @@ target_compile_features(asyncconcurrencyusecases PRIVATE cxx_std_20)
 add_test(ZsAsyncConcurrencyUsecases asyncconcurrencyusecases)
 add_dependencies(zensim asyncconcurrencyusecases)
 
+# ── 3C system tests ──────────────────────────────────────────────────────
+
+# 3C math extensions (matrix2quaternion, slerp, nlerp, damp, spring, remap, lerp)
+add_executable(3cmathextensions 3c_math_extensions.cpp)
+target_link_libraries(3cmathextensions PRIVATE zpc_3c_core)
+
+add_test(Zs3CMathExtensions 3cmathextensions)
+add_dependencies(zensim 3cmathextensions)
+
+# 3C core types (FrameContext, quaternion helpers, telemetry)
+add_executable(3ccoretypes 3c_core_types.cpp)
+target_link_libraries(3ccoretypes PRIVATE zpc_3c_core)
+
+add_test(Zs3CCoreTypes 3ccoretypes)
+add_dependencies(zensim 3ccoretypes)
+
+# 3C input (ActionMap, AxisProcessor, InputBuffer)
+add_executable(3cinput 3c_input.cpp)
+target_link_libraries(3cinput PRIVATE zpc_3c_input)
+
+add_test(Zs3CInput 3cinput)
+add_dependencies(zensim 3cinput)
+
 # sycl backend
 if(ZS_ENABLE_SYCL_ONEAPI OR ZS_ENABLE_SYCL_ACPP)
     #

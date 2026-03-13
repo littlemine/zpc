@@ -319,6 +319,23 @@ set(ZENSIM_LIBRARY_CANARY_CORE_INCLUDE_FILES
   interface/CanaryScenario.hpp
   interface/LocalCanaryService.hpp
 )
+set(ZENSIM_LIBRARY_3C_CORE_INCLUDE_FILES
+  3c/Core.hpp
+  3c/MathExtensions.hpp
+  3c/Telemetry.hpp
+)
+set(ZENSIM_LIBRARY_3C_INPUT_INCLUDE_FILES
+  3c/input/InputTypes.hpp
+  3c/input/AxisProcessor.hpp
+  3c/input/ActionMap.hpp
+  3c/input/InputBuffer.hpp
+)
+set(ZENSIM_LIBRARY_3C_CAMERA_INCLUDE_FILES
+  3c/camera/Camera.hpp
+  3c/camera/MatrixBuilders.hpp
+  3c/camera/Frustum.hpp
+  3c/camera/CameraMode.hpp
+)
 set(ZENSIM_LIBRARY_IO_INCLUDE_FILES
   io/IO.h
   io/MeshIO.hpp
@@ -545,6 +562,27 @@ target_sources(zpc_canary_core
   ${ZENSIM_LIBRARY_CANARY_CORE_INCLUDE_FILES}
 )
 target_link_libraries(zpc_canary_core INTERFACE zpc_interface_services)
+
+add_library(zpc_3c_core INTERFACE)
+target_sources(zpc_3c_core
+  INTERFACE
+  ${ZENSIM_LIBRARY_3C_CORE_INCLUDE_FILES}
+)
+target_link_libraries(zpc_3c_core INTERFACE zpcbase)
+
+add_library(zpc_3c_input INTERFACE)
+target_sources(zpc_3c_input
+  INTERFACE
+  ${ZENSIM_LIBRARY_3C_INPUT_INCLUDE_FILES}
+)
+target_link_libraries(zpc_3c_input INTERFACE zpc_3c_core)
+
+add_library(zpc_3c_camera INTERFACE)
+target_sources(zpc_3c_camera
+  INTERFACE
+  ${ZENSIM_LIBRARY_3C_CAMERA_INCLUDE_FILES}
+)
+target_link_libraries(zpc_3c_camera INTERFACE zpc_3c_core)
 
 add_library(zpc_process INTERFACE)
 target_sources(zpc_process
