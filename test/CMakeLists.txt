@@ -140,6 +140,14 @@ target_link_libraries(interfaceservices PRIVATE zpc zpc_canary_core)
 add_test(ZsInterfaceServices interfaceservices)
 add_dependencies(zensim interfaceservices)
 
+# gameplay core
+add_executable(gameplaycore gameplay_core.cpp)
+target_link_libraries(gameplaycore PRIVATE zpc_gameplay_core)
+target_compile_features(gameplaycore PRIVATE cxx_std_17)
+
+add_test(ZsGameplayCore gameplaycore)
+add_dependencies(zensim gameplaycore)
+
 # binary search
 add_executable(binarysearchtest binary_search.cpp)
 target_link_libraries(binarysearchtest PRIVATE zpc)

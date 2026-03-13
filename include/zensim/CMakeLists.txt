@@ -319,6 +319,11 @@ set(ZENSIM_LIBRARY_CANARY_CORE_INCLUDE_FILES
   interface/CanaryScenario.hpp
   interface/LocalCanaryService.hpp
 )
+set(ZENSIM_LIBRARY_GAMEPLAY_CORE_INCLUDE_FILES
+  gameplay/GameplayTag.hpp
+  gameplay/GameplayEntity.hpp
+  gameplay/GameplayEvent.hpp
+)
 set(ZENSIM_LIBRARY_IO_INCLUDE_FILES
   io/IO.h
   io/MeshIO.hpp
@@ -545,6 +550,13 @@ target_sources(zpc_canary_core
   ${ZENSIM_LIBRARY_CANARY_CORE_INCLUDE_FILES}
 )
 target_link_libraries(zpc_canary_core INTERFACE zpc_interface_services)
+
+add_library(zpc_gameplay_core INTERFACE)
+target_sources(zpc_gameplay_core
+  INTERFACE
+  ${ZENSIM_LIBRARY_GAMEPLAY_CORE_INCLUDE_FILES}
+)
+target_link_libraries(zpc_gameplay_core INTERFACE zpcbase)
 
 add_library(zpc_process INTERFACE)
 target_sources(zpc_process
