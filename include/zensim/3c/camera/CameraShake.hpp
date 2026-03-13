@@ -127,8 +127,8 @@ namespace zs::threeC {
       x = ((x >> 16u) ^ x) * 0x45d9f3bu;
       x = ((x >> 16u) ^ x) * 0x45d9f3bu;
       x = (x >> 16u) ^ x;
-      // Map to [-1, 1]
-      return static_cast<f32>(x) / static_cast<f32>(0x7FFFFFFFu) * 2.0f - 1.0f;
+      // Map to [-1, 1].  Divide by max u32 to get [0, 1], then remap.
+      return static_cast<f32>(x) / static_cast<f32>(0xFFFFFFFFu) * 2.0f - 1.0f;
     }
   };
 

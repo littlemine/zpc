@@ -199,6 +199,13 @@ target_link_libraries(3cintegration PRIVATE zpc_3c_integration)
 add_test(Zs3CIntegration 3cintegration)
 add_dependencies(zensim 3cintegration)
 
+# 3C performance profiling (frame budget, shake bounds, latency)
+add_executable(3cperf 3c_perf.cpp)
+target_link_libraries(3cperf PRIVATE zpc_3c_integration)
+
+add_test(Zs3CPerf 3cperf)
+add_dependencies(zensim 3cperf)
+
 # sycl backend
 if(ZS_ENABLE_SYCL_ONEAPI OR ZS_ENABLE_SYCL_ACPP)
     #
