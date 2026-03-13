@@ -439,6 +439,7 @@ set(ZENSIM_LIBRARY_RENDER_CORE_SOURCE_FILES
   render/scene/ScenePrepare.cpp
   render/realtime/VulkanRasterRenderer.cpp
   render/realtime/VulkanDeferredRenderer.cpp
+  render/realtime/VulkanHybridRenderer.cpp
   render/offline/BVHBuilder.cpp
   render/offline/VulkanPathTracer.cpp
 )

@@ -57,5 +57,10 @@ namespace render {
   /// Returns nullptr if Vulkan is not available.
   std::unique_ptr<IRasterRenderer> createVulkanDeferredRenderer();
 
+  /// Factory: create a Vulkan-based hybrid raster + ray-tracing renderer.
+  /// Uses rasterization for G-buffer, ray tracing for shadows and reflections.
+  /// Falls back to deferred renderer if ray tracing is not supported.
+  std::unique_ptr<IRasterRenderer> createVulkanHybridRenderer();
+
 }  // namespace render
 }  // namespace zs

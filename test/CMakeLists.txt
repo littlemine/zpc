@@ -272,3 +272,11 @@ target_compile_features(renderpostprocess PRIVATE cxx_std_17)
 
 add_test(ZsRenderPostProcess renderpostprocess)
 add_dependencies(zensim renderpostprocess)
+
+# render hybrid RT (requires Vulkan GPU with RT support at runtime)
+add_executable(renderhybrid render/render_hybrid.cpp)
+target_link_libraries(renderhybrid PRIVATE zpc_render_capture)
+target_compile_features(renderhybrid PRIVATE cxx_std_17)
+
+add_test(ZsRenderHybrid renderhybrid)
+add_dependencies(zensim renderhybrid)

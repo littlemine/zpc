@@ -265,7 +265,11 @@ namespace zs {
     // query properties 2
     vk::PhysicalDeviceDescriptorIndexingProperties descriptorIndexingProperties;
     vk::PhysicalDeviceDepthStencilResolveProperties dsResolveProperties{};
+    vk::PhysicalDeviceRayTracingPipelinePropertiesKHR rtPipeProps{};
+    vk::PhysicalDeviceAccelerationStructurePropertiesKHR asProps{};
     dsResolveProperties.pNext = &descriptorIndexingProperties;
+    descriptorIndexingProperties.pNext = &rtPipeProps;
+    rtPipeProps.pNext = &asProps;
     vk::PhysicalDeviceProperties2 devProperties{};
     devProperties.pNext = &dsResolveProperties;
     physicalDevice.getProperties2(&devProperties);
@@ -273,6 +277,8 @@ namespace zs {
     this->descriptorIndexingProperties = descriptorIndexingProperties;
     this->depthStencilResolveProperties = dsResolveProperties;
     this->deviceProperties = devProperties;
+    this->rtPipelineProperties_ = rtPipeProps;
+    this->asProperties_ = asProps;
 
     /// @note Create device configuration using VkDeviceConfig builder
     auto configBuilder = VkDeviceConfig::createBuilder(
@@ -376,6 +382,9 @@ namespace zs {
     device = physicalDevice.createDevice(devCI, nullptr, dispatcher);
     dispatcher.init(device);
     ZS_ERROR_IF(!device, fmt::format("Vulkan device [{}] failed initialization!\n", devid));
+
+    // Mark ray tracing as supported if all 5 RT extensions were enabled
+    rtSupported_ = (rtPreds == rtRequiredPreds);
 
     VkPhysicalDeviceMemoryProperties tmp;
     dispatcher.vkGetPhysicalDeviceMemoryProperties(physicalDevice, &tmp);
@@ -529,6 +538,12 @@ namespace zs {
     defaultPoolSizes.push_back(vk::DescriptorPoolSize()
         .setDescriptorCount(sampledImagePoolSize)
         .setType(vk::DescriptorType::eSampledImage));
+    // Acceleration structure descriptors for ray tracing
+    if (rtSupported_) {
+      defaultPoolSizes.push_back(vk::DescriptorPoolSize()
+          .setDescriptorCount(16)
+          .setType(vk::DescriptorType::eAccelerationStructureKHR));
+    }
 
     const u32 defaultMaxSets = uniformPoolSize + sampledImagePoolSize + storagePoolSize 
                                + storageImagePoolSize + inputAttachmentPoolSize;

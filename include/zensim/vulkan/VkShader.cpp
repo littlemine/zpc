@@ -348,7 +348,8 @@ namespace zs {
     std::string tmp{glslCode};
     shaderc::CompileOptions options;
     options.SetTargetEnvironment(shaderc_target_env_vulkan, shaderc_env_version_vulkan_1_3);
-    options.SetTargetSpirv(shaderc_spirv_version_1_3);
+    // SPIR-V 1.4 required for GL_EXT_ray_tracing and related extensions
+    options.SetTargetSpirv(shaderc_spirv_version_1_4);
     auto compiled = shaderc::Compiler().CompileGlslToSpv(tmp.data(), tmp.size(), shaderKind,
                                                          moduleName.data(), options);
     if (compiled.GetNumErrors()) {

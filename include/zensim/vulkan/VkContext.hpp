@@ -238,6 +238,12 @@ namespace zs {
              && supportedVk12Features.shaderSampledImageArrayNonUniformIndexing;
     }
     bool supportGraphics() const { return queueFamilyIndices[vk_queue_e::graphics] != -1; }
+    bool supportRayTracing() const noexcept { return rtSupported_; }
+    u32 shaderGroupHandleSize() const noexcept { return rtPipelineProperties_.shaderGroupHandleSize; }
+    u32 shaderGroupBaseAlignment() const noexcept { return rtPipelineProperties_.shaderGroupBaseAlignment; }
+    u32 shaderGroupHandleAlignment() const noexcept { return rtPipelineProperties_.shaderGroupHandleAlignment; }
+    u32 maxRayRecursionDepth() const noexcept { return rtPipelineProperties_.maxRayRecursionDepth; }
+    u64 minAccelerationStructureScratchOffsetAlignment() const noexcept { return asProperties_.minAccelerationStructureScratchOffsetAlignment; }
     /// @note usually called right before swapchain creation for assurance
     bool supportSurface(vk::SurfaceKHR surface) const;
 
@@ -463,6 +469,10 @@ namespace zs {
     vk::PhysicalDeviceDepthStencilResolveProperties depthStencilResolveProperties;
     vk::PhysicalDeviceDescriptorIndexingProperties descriptorIndexingProperties;
     vk::PhysicalDeviceProperties2 deviceProperties;
+    // Ray tracing properties (valid only when rtSupported_ == true)
+    vk::PhysicalDeviceRayTracingPipelinePropertiesKHR rtPipelineProperties_{};
+    vk::PhysicalDeviceAccelerationStructurePropertiesKHR asProperties_{};
+    bool rtSupported_{false};
 
     VkPhysicalDeviceVulkan12Features supportedVk12Features, enabledVk12Features;
     VkPhysicalDeviceVulkan13Features supportedVk13Features, enabledVk13Features;
