@@ -321,6 +321,12 @@ namespace zs {
     }
 
     vk::PipelineColorBlendAttachmentState& refColorBlendAttachment(u32 i = 0) {
+      if (i >= _desc.colorBlend.attachments.size())
+        _desc.colorBlend.attachments.resize(i + 1, _desc.colorBlend.attachments.empty()
+            ? vk::PipelineColorBlendAttachmentState{}.setColorWriteMask(
+                  vk::ColorComponentFlagBits::eR | vk::ColorComponentFlagBits::eG
+                  | vk::ColorComponentFlagBits::eB | vk::ColorComponentFlagBits::eA)
+            : _desc.colorBlend.attachments.back());
       return _desc.colorBlend.attachments[i];
     }
 
