@@ -1,16 +1,25 @@
 /// @file VulkanDeferredRenderer.cpp
-/// @brief Headless Vulkan deferred renderer with shadow mapping.
+/// @brief Headless Vulkan deferred renderer with shadow mapping and SSAO.
 ///
-/// Three-pass deferred rendering:
+/// Five-pass deferred rendering:
 ///   1. Shadow map pass (depth-only render from light POV)
 ///   2. G-buffer pass (rasterization with MRT) — writes position, normal, albedo
-///   3. Lighting pass (compute shader) — reads G-buffer + shadow map, writes lit RGBA8
+///   3. SSAO pass (compute) — generates raw ambient occlusion from G-buffer
+///   4. SSAO blur pass (compute) — bilateral blur for edge-preserving AO smoothing
+///   5. Lighting pass (compute) — reads G-buffer + shadow map + AO, writes lit RGBA8
 ///
 /// Shadow mapping features:
 ///   - Orthographic projection for directional lights
 ///   - Depth bias (constant + slope-scaled) in the shadow pipeline
 ///   - 5x5 PCF (Percentage-Closer Filtering) for soft shadow edges
 ///   - Normal offset bias to reduce shadow acne
+///
+/// SSAO features:
+///   - 32-sample hemisphere kernel oriented along surface normal
+///   - Per-pixel random rotation (tiled hash noise) to break banding
+///   - View-space depth comparison with range check
+///   - Edge-aware bilateral blur (5x5) that respects depth discontinuities
+///   - AO factor modulates ambient lighting in the final pass
 ///
 /// Conditionally compiled — requires ZS_ENABLE_VULKAN=1.
 
@@ -36,6 +45,7 @@
 #include "zensim/render/RenderView.hpp"
 #include "zensim/render/capture/RenderReadback.hpp"
 
+#include <algorithm>
 #include <chrono>
 #include <cmath>
 #include <cstdio>
@@ -123,7 +133,243 @@ void main() {
 }
 )";
 
-// -- Lighting compute shader (with shadow mapping + PCF) --
+// -- SSAO compute shader --
+// Generates a screen-space ambient occlusion factor for each pixel.
+// Uses a hemisphere of random samples oriented along the surface normal.
+// Samples are checked against the depth buffer (via position G-buffer)
+// in view space.  A 4x4 random rotation is tiled across the screen
+// to break banding, and the output is a single-channel R8 texture.
+static const char* k_ssao_comp_glsl = R"(
+#version 450
+
+layout(local_size_x = 16, local_size_y = 16, local_size_z = 1) in;
+
+// G-buffer inputs
+layout(set = 0, binding = 0) uniform sampler2D gPosition;  // world-space position
+layout(set = 0, binding = 1) uniform sampler2D gNormal;    // world-space normal
+
+// Output AO texture (single channel)
+layout(set = 0, binding = 2, r8) uniform writeonly image2D aoImage;
+
+// Push constants
+layout(push_constant) uniform PushConstants {
+  mat4 view;          // camera view matrix (world -> view)
+  mat4 projection;    // camera projection matrix (view -> clip)
+  uint width;
+  uint height;
+  float radius;       // sample hemisphere radius (world space)
+  float bias;         // depth bias to prevent self-occlusion
+  float intensity;    // AO intensity multiplier
+  float _pad0;
+} pc;
+
+// Pseudo-random hash for sample generation and noise.
+// We embed a fixed set of hemisphere samples and use a tiled noise
+// pattern derived from pixel coordinates to rotate them.
+
+// 32 hemisphere sample offsets (pre-computed, distributed on unit hemisphere)
+// These are encoded as constants rather than using a buffer.
+const int NUM_SAMPLES = 32;
+
+vec3 hemisphereKernel[NUM_SAMPLES] = vec3[](
+  vec3( 0.045,  0.024,  0.034),
+  vec3(-0.025,  0.060,  0.010),
+  vec3( 0.080, -0.012,  0.065),
+  vec3(-0.035,  0.082,  0.025),
+  vec3( 0.002,  0.011,  0.098),
+  vec3( 0.110, -0.030,  0.080),
+  vec3(-0.065,  0.045,  0.120),
+  vec3( 0.028, -0.095,  0.055),
+  vec3( 0.150,  0.060,  0.020),
+  vec3(-0.048,  0.130,  0.095),
+  vec3( 0.085, -0.110,  0.065),
+  vec3(-0.180,  0.035,  0.100),
+  vec3( 0.030,  0.200,  0.040),
+  vec3( 0.140, -0.060,  0.180),
+  vec3(-0.095,  0.015,  0.220),
+  vec3( 0.060, -0.170,  0.160),
+  vec3( 0.250,  0.080,  0.100),
+  vec3(-0.120,  0.210,  0.120),
+  vec3( 0.065, -0.230,  0.190),
+  vec3(-0.280,  0.060,  0.050),
+  vec3( 0.180,  0.200,  0.220),
+  vec3(-0.050,  0.320,  0.130),
+  vec3( 0.300, -0.100,  0.060),
+  vec3(-0.150,  0.050,  0.350),
+  vec3( 0.100,  0.400,  0.090),
+  vec3( 0.350, -0.150,  0.250),
+  vec3(-0.200,  0.300,  0.200),
+  vec3( 0.050, -0.380,  0.300),
+  vec3( 0.420,  0.100,  0.150),
+  vec3(-0.350,  0.250,  0.100),
+  vec3( 0.150, -0.100,  0.480),
+  vec3(-0.100,  0.450,  0.250)
+);
+
+// Hash function for per-pixel random rotation
+float hash(vec2 p) {
+  return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453);
+}
+
+void main() {
+  ivec2 pixel = ivec2(gl_GlobalInvocationID.xy);
+  if (pixel.x >= int(pc.width) || pixel.y >= int(pc.height)) return;
+
+  vec2 uv = (vec2(pixel) + 0.5) / vec2(pc.width, pc.height);
+
+  // Read world-space position and normal from G-buffer
+  vec3 worldPos = texture(gPosition, uv).xyz;
+  vec3 worldNormal = texture(gNormal, uv).xyz;
+
+  // Check for background (no geometry)
+  if (length(worldNormal) < 0.01) {
+    imageStore(aoImage, pixel, vec4(1.0));  // no occlusion for background
+    return;
+  }
+  worldNormal = normalize(worldNormal);
+
+  // Transform to view space for depth comparison
+  vec3 viewPos = (pc.view * vec4(worldPos, 1.0)).xyz;
+  vec3 viewNormal = normalize((pc.view * vec4(worldNormal, 0.0)).xyz);
+
+  // Per-pixel random rotation angle (tiled 4x4 noise pattern)
+  float noiseAngle = hash(vec2(pixel) * 0.25) * 6.2831853;
+  float cosA = cos(noiseAngle);
+  float sinA = sin(noiseAngle);
+
+  // Build TBN matrix from view-space normal with random rotation
+  // Create tangent from any non-parallel vector
+  vec3 tangent;
+  if (abs(viewNormal.y) < 0.999) {
+    tangent = normalize(cross(viewNormal, vec3(0.0, 1.0, 0.0)));
+  } else {
+    tangent = normalize(cross(viewNormal, vec3(1.0, 0.0, 0.0)));
+  }
+  vec3 bitangent = cross(viewNormal, tangent);
+
+  // Apply random rotation around normal
+  vec3 rotTangent = tangent * cosA + bitangent * sinA;
+  vec3 rotBitangent = -tangent * sinA + bitangent * cosA;
+
+  mat3 TBN = mat3(rotTangent, rotBitangent, viewNormal);
+
+  // Sample hemisphere and check occlusion
+  float occlusion = 0.0;
+
+  for (int i = 0; i < NUM_SAMPLES; i++) {
+    // Orient sample in view space via TBN
+    vec3 sampleOffset = TBN * hemisphereKernel[i];
+    vec3 samplePos = viewPos + sampleOffset * pc.radius;
+
+    // Project sample to screen space
+    vec4 clipPos = pc.projection * vec4(samplePos, 1.0);
+    vec2 sampleUV = (clipPos.xy / clipPos.w) * 0.5 + 0.5;
+
+    // Bounds check
+    if (sampleUV.x < 0.0 || sampleUV.x > 1.0 ||
+        sampleUV.y < 0.0 || sampleUV.y > 1.0) {
+      continue;
+    }
+
+    // Read the actual position at the sample's screen location
+    vec3 actualWorldPos = texture(gPosition, sampleUV).xyz;
+    vec3 actualViewPos = (pc.view * vec4(actualWorldPos, 1.0)).xyz;
+
+    // Range check: only count occlusion from nearby geometry
+    float rangeCheck = smoothstep(0.0, 1.0,
+        pc.radius / max(abs(viewPos.z - actualViewPos.z), 0.001));
+
+    // Occlusion test: is the actual surface closer to camera than sample?
+    // (In view space with RH convention, more negative z = further away)
+    occlusion += (actualViewPos.z >= samplePos.z + pc.bias ? 1.0 : 0.0) * rangeCheck;
+  }
+
+  float ao = 1.0 - (occlusion / float(NUM_SAMPLES)) * pc.intensity;
+  ao = clamp(ao, 0.0, 1.0);
+
+  imageStore(aoImage, pixel, vec4(ao, ao, ao, 1.0));
+}
+)";
+
+// -- SSAO blur compute shader --
+// Edge-preserving bilateral blur (4x4 kernel) that respects depth
+// discontinuities to keep AO sharp at object boundaries.
+static const char* k_ssao_blur_comp_glsl = R"(
+#version 450
+
+layout(local_size_x = 16, local_size_y = 16, local_size_z = 1) in;
+
+// Input raw AO
+layout(set = 0, binding = 0) uniform sampler2D aoInput;
+
+// Input position G-buffer (for edge-aware filtering)
+layout(set = 0, binding = 1) uniform sampler2D gPosition;
+
+// Output blurred AO
+layout(set = 0, binding = 2, r8) uniform writeonly image2D aoBlurred;
+
+layout(push_constant) uniform PushConstants {
+  uint width;
+  uint height;
+  float _pad0;
+  float _pad1;
+} pc;
+
+void main() {
+  ivec2 pixel = ivec2(gl_GlobalInvocationID.xy);
+  if (pixel.x >= int(pc.width) || pixel.y >= int(pc.height)) return;
+
+  vec2 uv = (vec2(pixel) + 0.5) / vec2(pc.width, pc.height);
+  vec2 texelSize = 1.0 / vec2(pc.width, pc.height);
+
+  float centerAO = texture(aoInput, uv).r;
+  vec3 centerPos = texture(gPosition, uv).xyz;
+
+  // If background, pass through
+  if (length(texture(gPosition, uv).xyz) < 0.001 &&
+      abs(centerAO - 1.0) < 0.01) {
+    imageStore(aoBlurred, pixel, vec4(1.0));
+    return;
+  }
+
+  float totalAO = 0.0;
+  float totalWeight = 0.0;
+
+  const int blurRadius = 2;  // 5x5 bilateral blur
+
+  for (int x = -blurRadius; x <= blurRadius; x++) {
+    for (int y = -blurRadius; y <= blurRadius; y++) {
+      vec2 offsetUV = uv + vec2(float(x), float(y)) * texelSize;
+
+      // Bounds check
+      if (offsetUV.x < 0.0 || offsetUV.x > 1.0 ||
+          offsetUV.y < 0.0 || offsetUV.y > 1.0) {
+        continue;
+      }
+
+      float sampleAO = texture(aoInput, offsetUV).r;
+      vec3 samplePos = texture(gPosition, offsetUV).xyz;
+
+      // Bilateral weight: reduce weight for samples across depth edges
+      float posDiff = length(samplePos - centerPos);
+      float depthWeight = exp(-posDiff * posDiff * 10.0);
+
+      // Spatial weight (Gaussian-like)
+      float spatialDist = float(x * x + y * y);
+      float spatialWeight = exp(-spatialDist * 0.2);
+
+      float weight = depthWeight * spatialWeight;
+      totalAO += sampleAO * weight;
+      totalWeight += weight;
+    }
+  }
+
+  float blurredAO = (totalWeight > 0.001) ? totalAO / totalWeight : centerAO;
+  imageStore(aoBlurred, pixel, vec4(blurredAO, blurredAO, blurredAO, 1.0));
+}
+)";
+
+// -- Lighting compute shader (with shadow mapping + PCF + SSAO) --
 static const char* k_lighting_comp_glsl = R"(
 #version 450
 
@@ -148,6 +394,9 @@ layout(std430, set = 0, binding = 4) readonly buffer Lights {
 
 // Shadow map (depth texture, comparison sampler)
 layout(set = 0, binding = 5) uniform sampler2D shadowMap;
+
+// SSAO occlusion texture (single channel, blurred)
+layout(set = 0, binding = 6) uniform sampler2D aoMap;
 
 // Push constants
 layout(push_constant) uniform PushConstants {
@@ -222,12 +471,18 @@ void main() {
   // Shadow factor (1.0 = fully lit, 0.0 = fully shadowed)
   float shadowFactor = mix(1.0, sampleShadow(position), pc.shadow_intensity);
 
+  // SSAO factor (1.0 = no occlusion, 0.0 = fully occluded)
+  float aoFactor = texture(aoMap, uv).r;
+
   // Hemisphere ambient: surfaces facing up get more indirect light
   // (simulates diffuse interreflection from floor/ceiling).
   // In a closed box like Cornell, surfaces get significant indirect
   // illumination from all directions — use a generous base.
   float hemiBlend = normal.y * 0.5 + 0.5;  // remap [-1,1] -> [0,1]
   float hemiAmbient = mix(pc.ambient * 0.6, pc.ambient * 1.4, hemiBlend);
+
+  // Apply SSAO to ambient — darkens crevices and corners
+  hemiAmbient *= aoFactor;
 
   // Accumulate lighting (Blinn-Phong with wrap lighting)
   vec3 totalLight = vec3(hemiAmbient);
@@ -303,6 +558,30 @@ struct ShadowPushConstants {
 };
 static_assert(sizeof(ShadowPushConstants) == 64,
               "ShadowPushConstants must be 64 bytes");
+
+/// SSAO push constants: view (64) + projection (64) + width/height/radius/bias/intensity/pad (24) = 152 bytes.
+struct SSAOPushConstants {
+  float view[16];         // camera view matrix (column-major for GLSL)
+  float projection[16];   // camera projection matrix (column-major for GLSL)
+  uint32_t width;
+  uint32_t height;
+  float radius;           // sample hemisphere radius
+  float bias;             // depth comparison bias
+  float intensity;        // AO intensity multiplier
+  float _pad0;
+};
+static_assert(sizeof(SSAOPushConstants) == 152,
+              "SSAOPushConstants must be 152 bytes");
+
+/// SSAO blur push constants: width/height + padding = 16 bytes.
+struct SSAOBlurPushConstants {
+  uint32_t width;
+  uint32_t height;
+  float _pad0;
+  float _pad1;
+};
+static_assert(sizeof(SSAOBlurPushConstants) == 16,
+              "SSAOBlurPushConstants must be 16 bytes");
 
 /// G-buffer push constants: MVP (64) + model (64) + material_color (16) = 144 bytes.
 struct GBufferPushConstants {
@@ -568,6 +847,12 @@ private:
   // Lighting pass objects
   std::unique_ptr<ShaderModule> lighting_comp_shader_;
   std::unique_ptr<Pipeline> lighting_pipeline_;
+
+  // SSAO pass objects
+  std::unique_ptr<ShaderModule> ssao_comp_shader_;
+  std::unique_ptr<Pipeline> ssao_pipeline_;
+  std::unique_ptr<ShaderModule> ssao_blur_comp_shader_;
+  std::unique_ptr<Pipeline> ssao_blur_pipeline_;
 };
 
 // ---------------------------------------------------------------
@@ -586,10 +871,13 @@ bool VulkanDeferredRenderer::init() {
 
   // Check push constant size limit.
   auto devProps = ctx_->getPhysicalDevice().getProperties(ctx_->dispatcher);
-  if (devProps.limits.maxPushConstantsSize < sizeof(GBufferPushConstants)) {
-    std::fprintf(stderr, "[VulkanDeferredRenderer] device only supports %u bytes push constants, need %zu\n",
-                 devProps.limits.maxPushConstantsSize,
-                 sizeof(GBufferPushConstants));
+  uint32_t maxPcSize = devProps.limits.maxPushConstantsSize;
+  uint32_t neededPcSize = static_cast<uint32_t>(
+      std::max({sizeof(GBufferPushConstants), sizeof(SSAOPushConstants),
+                sizeof(LightingPushConstants)}));
+  if (maxPcSize < neededPcSize) {
+    std::fprintf(stderr, "[VulkanDeferredRenderer] device only supports %u bytes push constants, need %u\n",
+                 maxPcSize, neededPcSize);
     return false;
   }
 
@@ -618,6 +906,16 @@ bool VulkanDeferredRenderer::init() {
         ctx_->createShaderModuleFromGlsl(k_lighting_comp_glsl,
                                           vk::ShaderStageFlagBits::eCompute,
                                           "deferred_lighting_comp"));
+    // SSAO compute shader
+    ssao_comp_shader_ = std::make_unique<ShaderModule>(
+        ctx_->createShaderModuleFromGlsl(k_ssao_comp_glsl,
+                                          vk::ShaderStageFlagBits::eCompute,
+                                          "ssao_comp"));
+    // SSAO blur compute shader
+    ssao_blur_comp_shader_ = std::make_unique<ShaderModule>(
+        ctx_->createShaderModuleFromGlsl(k_ssao_blur_comp_glsl,
+                                          vk::ShaderStageFlagBits::eCompute,
+                                          "ssao_blur_comp"));
   } catch (const std::exception& e) {
     std::fprintf(stderr, "[VulkanDeferredRenderer] shader compilation failed: %s\n", e.what());
     return false;
@@ -744,6 +1042,26 @@ bool VulkanDeferredRenderer::init() {
     return false;
   }
 
+  // -- Build SSAO compute pipeline --
+  try {
+    ssao_pipeline_ = std::make_unique<Pipeline>(
+        *ssao_comp_shader_,
+        static_cast<u32>(sizeof(SSAOPushConstants)));
+  } catch (const std::exception& e) {
+    std::fprintf(stderr, "[VulkanDeferredRenderer] SSAO pipeline creation failed: %s\n", e.what());
+    return false;
+  }
+
+  // -- Build SSAO blur compute pipeline --
+  try {
+    ssao_blur_pipeline_ = std::make_unique<Pipeline>(
+        *ssao_blur_comp_shader_,
+        static_cast<u32>(sizeof(SSAOBlurPushConstants)));
+  } catch (const std::exception& e) {
+    std::fprintf(stderr, "[VulkanDeferredRenderer] SSAO blur pipeline creation failed: %s\n", e.what());
+    return false;
+  }
+
   initialised_ = true;
   std::printf("[VulkanDeferredRenderer] initialised on %s\n",
               devProps.deviceName.data());
@@ -816,6 +1134,20 @@ RasterResult VulkanDeferredRenderer::render(const RenderFrameRequest& request,
       vk::ImageUsageFlagBits::eStorage | vk::ImageUsageFlagBits::eTransferSrc,
       vk::MemoryPropertyFlagBits::eDeviceLocal,
       /*mipmaps=*/false, /*createView=*/true, /*enableTransfer=*/true);
+
+  // SSAO raw output (R8Unorm — single channel AO factor)
+  auto ssaoRawImage = ctx_->create2DImage(
+      extent, vk::Format::eR8Unorm,
+      vk::ImageUsageFlagBits::eStorage | vk::ImageUsageFlagBits::eSampled,
+      vk::MemoryPropertyFlagBits::eDeviceLocal,
+      /*mipmaps=*/false, /*createView=*/true, /*enableTransfer=*/false);
+
+  // SSAO blurred output (R8Unorm — single channel AO factor, blurred)
+  auto ssaoBlurImage = ctx_->create2DImage(
+      extent, vk::Format::eR8Unorm,
+      vk::ImageUsageFlagBits::eStorage | vk::ImageUsageFlagBits::eSampled,
+      vk::MemoryPropertyFlagBits::eDeviceLocal,
+      /*mipmaps=*/false, /*createView=*/true, /*enableTransfer=*/false);
 
   // =================================================================
   // Create framebuffer for G-buffer pass
@@ -1053,6 +1385,231 @@ RasterResult VulkanDeferredRenderer::render(const RenderFrameRequest& request,
   }
 
   // =================================================================
+  // Pass 2: SSAO (compute) — generate raw AO texture
+  // =================================================================
+
+  // Transition SSAO raw image to eGeneral for compute writes
+  {
+    SingleUseCommandBuffer cmd(*ctx_, vk_queue_e::graphics);
+    vk::CommandBuffer cb = *cmd;
+
+    vk::ImageMemoryBarrier barrier;
+    barrier.oldLayout = vk::ImageLayout::eUndefined;
+    barrier.newLayout = vk::ImageLayout::eGeneral;
+    barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    barrier.image = static_cast<vk::Image>(ssaoRawImage);
+    barrier.subresourceRange.aspectMask = vk::ImageAspectFlagBits::eColor;
+    barrier.subresourceRange.baseMipLevel = 0;
+    barrier.subresourceRange.levelCount = 1;
+    barrier.subresourceRange.baseArrayLayer = 0;
+    barrier.subresourceRange.layerCount = 1;
+    barrier.srcAccessMask = {};
+    barrier.dstAccessMask = vk::AccessFlagBits::eShaderWrite;
+
+    cb.pipelineBarrier(
+        vk::PipelineStageFlagBits::eTopOfPipe,
+        vk::PipelineStageFlagBits::eComputeShader,
+        {}, 0, nullptr, 0, nullptr, 1, &barrier,
+        ctx_->dispatcher);
+  }
+
+  // Create nearest-neighbor sampler for SSAO G-buffer reads
+  vk::SamplerCreateInfo ssaoSamplerInfo{};
+  ssaoSamplerInfo.magFilter = vk::Filter::eNearest;
+  ssaoSamplerInfo.minFilter = vk::Filter::eNearest;
+  ssaoSamplerInfo.addressModeU = vk::SamplerAddressMode::eClampToEdge;
+  ssaoSamplerInfo.addressModeV = vk::SamplerAddressMode::eClampToEdge;
+  ssaoSamplerInfo.addressModeW = vk::SamplerAddressMode::eClampToEdge;
+  auto ssaoSampler = ctx_->createSampler(ssaoSamplerInfo);
+
+  // SSAO descriptor set
+  {
+    auto& ssaoDsLayout = ssao_comp_shader_->layout(0);
+    vk::DescriptorSet ssaoDs;
+    ctx_->acquireSet(ssaoDsLayout, ssaoDs);
+
+    // Binding 0: gPosition (combined image sampler)
+    vk::DescriptorImageInfo ssaoPosInfo;
+    ssaoPosInfo.sampler = *ssaoSampler;
+    ssaoPosInfo.imageView = gPosImage.view();
+    ssaoPosInfo.imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal;
+    ctx_->writeDescriptorSet(ssaoPosInfo, ssaoDs, vk::DescriptorType::eCombinedImageSampler, 0);
+
+    // Binding 1: gNormal (combined image sampler)
+    vk::DescriptorImageInfo ssaoNormInfo;
+    ssaoNormInfo.sampler = *ssaoSampler;
+    ssaoNormInfo.imageView = gNormImage.view();
+    ssaoNormInfo.imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal;
+    ctx_->writeDescriptorSet(ssaoNormInfo, ssaoDs, vk::DescriptorType::eCombinedImageSampler, 1);
+
+    // Binding 2: AO output (storage image)
+    vk::DescriptorImageInfo ssaoOutInfo;
+    ssaoOutInfo.imageView = ssaoRawImage.view();
+    ssaoOutInfo.imageLayout = vk::ImageLayout::eGeneral;
+    ctx_->writeDescriptorSet(ssaoOutInfo, ssaoDs, vk::DescriptorType::eStorageImage, 2);
+
+    // Dispatch SSAO compute
+    SingleUseCommandBuffer cmd(*ctx_, vk_queue_e::graphics);
+    vk::CommandBuffer cb = *cmd;
+
+    cb.bindPipeline(vk::PipelineBindPoint::eCompute, **ssao_pipeline_, ctx_->dispatcher);
+    cb.bindDescriptorSets(vk::PipelineBindPoint::eCompute,
+                          static_cast<vk::PipelineLayout>(*ssao_pipeline_),
+                          0, 1, &ssaoDs, 0, nullptr, ctx_->dispatcher);
+
+    SSAOPushConstants ssaoPc{};
+    // View matrix (transpose to column-major for GLSL)
+    for (int i = 0; i < 4; ++i)
+      for (int j = 0; j < 4; ++j)
+        ssaoPc.view[j * 4 + i] = V(i, j);
+    // Projection matrix (transpose to column-major for GLSL)
+    for (int i = 0; i < 4; ++i)
+      for (int j = 0; j < 4; ++j)
+        ssaoPc.projection[j * 4 + i] = P(i, j);
+    ssaoPc.width = width;
+    ssaoPc.height = height;
+    ssaoPc.radius = 0.5f;      // world-space hemisphere radius
+    ssaoPc.bias = 0.025f;       // depth comparison bias
+    ssaoPc.intensity = 1.5f;    // AO intensity multiplier
+    ssaoPc._pad0 = 0.f;
+
+    cb.pushConstants(
+        static_cast<vk::PipelineLayout>(*ssao_pipeline_),
+        vk::ShaderStageFlagBits::eCompute,
+        0, static_cast<uint32_t>(sizeof(SSAOPushConstants)),
+        &ssaoPc, ctx_->dispatcher);
+
+    uint32_t groups_x = (width + 15) / 16;
+    uint32_t groups_y = (height + 15) / 16;
+    cb.dispatch(groups_x, groups_y, 1, ctx_->dispatcher);
+
+    // Barrier: compute write -> shader read for blur pass
+    vk::ImageMemoryBarrier aoBarrier;
+    aoBarrier.oldLayout = vk::ImageLayout::eGeneral;
+    aoBarrier.newLayout = vk::ImageLayout::eShaderReadOnlyOptimal;
+    aoBarrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    aoBarrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    aoBarrier.image = static_cast<vk::Image>(ssaoRawImage);
+    aoBarrier.subresourceRange.aspectMask = vk::ImageAspectFlagBits::eColor;
+    aoBarrier.subresourceRange.baseMipLevel = 0;
+    aoBarrier.subresourceRange.levelCount = 1;
+    aoBarrier.subresourceRange.baseArrayLayer = 0;
+    aoBarrier.subresourceRange.layerCount = 1;
+    aoBarrier.srcAccessMask = vk::AccessFlagBits::eShaderWrite;
+    aoBarrier.dstAccessMask = vk::AccessFlagBits::eShaderRead;
+
+    cb.pipelineBarrier(
+        vk::PipelineStageFlagBits::eComputeShader,
+        vk::PipelineStageFlagBits::eComputeShader,
+        {}, 0, nullptr, 0, nullptr, 1, &aoBarrier,
+        ctx_->dispatcher);
+  }
+
+  // =================================================================
+  // Pass 3: SSAO Blur (compute) — bilateral blur the raw AO
+  // =================================================================
+
+  // Transition SSAO blur image to eGeneral for compute writes
+  {
+    SingleUseCommandBuffer cmd(*ctx_, vk_queue_e::graphics);
+    vk::CommandBuffer cb = *cmd;
+
+    vk::ImageMemoryBarrier barrier;
+    barrier.oldLayout = vk::ImageLayout::eUndefined;
+    barrier.newLayout = vk::ImageLayout::eGeneral;
+    barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    barrier.image = static_cast<vk::Image>(ssaoBlurImage);
+    barrier.subresourceRange.aspectMask = vk::ImageAspectFlagBits::eColor;
+    barrier.subresourceRange.baseMipLevel = 0;
+    barrier.subresourceRange.levelCount = 1;
+    barrier.subresourceRange.baseArrayLayer = 0;
+    barrier.subresourceRange.layerCount = 1;
+    barrier.srcAccessMask = {};
+    barrier.dstAccessMask = vk::AccessFlagBits::eShaderWrite;
+
+    cb.pipelineBarrier(
+        vk::PipelineStageFlagBits::eTopOfPipe,
+        vk::PipelineStageFlagBits::eComputeShader,
+        {}, 0, nullptr, 0, nullptr, 1, &barrier,
+        ctx_->dispatcher);
+  }
+
+  // SSAO blur descriptor set
+  {
+    auto& blurDsLayout = ssao_blur_comp_shader_->layout(0);
+    vk::DescriptorSet blurDs;
+    ctx_->acquireSet(blurDsLayout, blurDs);
+
+    // Binding 0: raw AO (combined image sampler)
+    vk::DescriptorImageInfo aoRawInfo;
+    aoRawInfo.sampler = *ssaoSampler;
+    aoRawInfo.imageView = ssaoRawImage.view();
+    aoRawInfo.imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal;
+    ctx_->writeDescriptorSet(aoRawInfo, blurDs, vk::DescriptorType::eCombinedImageSampler, 0);
+
+    // Binding 1: gPosition for edge-aware filtering (combined image sampler)
+    vk::DescriptorImageInfo blurPosInfo;
+    blurPosInfo.sampler = *ssaoSampler;
+    blurPosInfo.imageView = gPosImage.view();
+    blurPosInfo.imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal;
+    ctx_->writeDescriptorSet(blurPosInfo, blurDs, vk::DescriptorType::eCombinedImageSampler, 1);
+
+    // Binding 2: blurred AO output (storage image)
+    vk::DescriptorImageInfo blurOutInfo;
+    blurOutInfo.imageView = ssaoBlurImage.view();
+    blurOutInfo.imageLayout = vk::ImageLayout::eGeneral;
+    ctx_->writeDescriptorSet(blurOutInfo, blurDs, vk::DescriptorType::eStorageImage, 2);
+
+    // Dispatch blur compute
+    SingleUseCommandBuffer cmd(*ctx_, vk_queue_e::graphics);
+    vk::CommandBuffer cb = *cmd;
+
+    cb.bindPipeline(vk::PipelineBindPoint::eCompute, **ssao_blur_pipeline_, ctx_->dispatcher);
+    cb.bindDescriptorSets(vk::PipelineBindPoint::eCompute,
+                          static_cast<vk::PipelineLayout>(*ssao_blur_pipeline_),
+                          0, 1, &blurDs, 0, nullptr, ctx_->dispatcher);
+
+    SSAOBlurPushConstants blurPc{};
+    blurPc.width = width;
+    blurPc.height = height;
+    blurPc._pad0 = 0.f;
+    blurPc._pad1 = 0.f;
+
+    cb.pushConstants(
+        static_cast<vk::PipelineLayout>(*ssao_blur_pipeline_),
+        vk::ShaderStageFlagBits::eCompute,
+        0, static_cast<uint32_t>(sizeof(SSAOBlurPushConstants)),
+        &blurPc, ctx_->dispatcher);
+
+    uint32_t groups_x = (width + 15) / 16;
+    uint32_t groups_y = (height + 15) / 16;
+    cb.dispatch(groups_x, groups_y, 1, ctx_->dispatcher);
+
+    // Barrier: blur write -> shader read for lighting pass
+    vk::ImageMemoryBarrier blurBarrier;
+    blurBarrier.oldLayout = vk::ImageLayout::eGeneral;
+    blurBarrier.newLayout = vk::ImageLayout::eShaderReadOnlyOptimal;
+    blurBarrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    blurBarrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    blurBarrier.image = static_cast<vk::Image>(ssaoBlurImage);
+    blurBarrier.subresourceRange.aspectMask = vk::ImageAspectFlagBits::eColor;
+    blurBarrier.subresourceRange.baseMipLevel = 0;
+    blurBarrier.subresourceRange.levelCount = 1;
+    blurBarrier.subresourceRange.baseArrayLayer = 0;
+    blurBarrier.subresourceRange.layerCount = 1;
+    blurBarrier.srcAccessMask = vk::AccessFlagBits::eShaderWrite;
+    blurBarrier.dstAccessMask = vk::AccessFlagBits::eShaderRead;
+
+    cb.pipelineBarrier(
+        vk::PipelineStageFlagBits::eComputeShader,
+        vk::PipelineStageFlagBits::eComputeShader,
+        {}, 0, nullptr, 0, nullptr, 1, &blurBarrier,
+        ctx_->dispatcher);
+  }
+
+  // =================================================================
   // Upload lights to SSBO
   // =================================================================
 
@@ -1201,6 +1758,13 @@ RasterResult VulkanDeferredRenderer::render(const RenderFrameRequest& request,
   shadowMapInfo.imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal;
   ctx_->writeDescriptorSet(shadowMapInfo, ds, vk::DescriptorType::eCombinedImageSampler, 5);
 
+  // SSAO blurred AO texture (combined image sampler at binding 6)
+  vk::DescriptorImageInfo aoMapInfo;
+  aoMapInfo.sampler = *sampler;  // use same nearest-neighbor sampler as G-buffer
+  aoMapInfo.imageView = ssaoBlurImage.view();
+  aoMapInfo.imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal;
+  ctx_->writeDescriptorSet(aoMapInfo, ds, vk::DescriptorType::eCombinedImageSampler, 6);
+
   // Dispatch compute
   {
     SingleUseCommandBuffer cmd(*ctx_, vk_queue_e::graphics);
@@ -1312,6 +1876,10 @@ void VulkanDeferredRenderer::shutdown() {
 
   lighting_pipeline_.reset();
   lighting_comp_shader_.reset();
+  ssao_blur_pipeline_.reset();
+  ssao_blur_comp_shader_.reset();
+  ssao_pipeline_.reset();
+  ssao_comp_shader_.reset();
   gbuffer_pipeline_.reset();
   gbuffer_vert_shader_.reset();
   gbuffer_frag_shader_.reset();

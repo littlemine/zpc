@@ -256,3 +256,11 @@ target_compile_features(rendershadow PRIVATE cxx_std_17)
 
 add_test(ZsRenderShadow rendershadow)
 add_dependencies(zensim rendershadow)
+
+# render SSAO (requires Vulkan GPU at runtime)
+add_executable(renderssao render/render_ssao.cpp)
+target_link_libraries(renderssao PRIVATE zpc_render_capture)
+target_compile_features(renderssao PRIVATE cxx_std_17)
+
+add_test(ZsRenderSSAO renderssao)
+add_dependencies(zensim renderssao)
