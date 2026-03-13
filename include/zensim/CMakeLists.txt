@@ -296,6 +296,15 @@ set(ZENSIM_LIBRARY_VALIDATION_CORE_INCLUDE_FILES
   execution/ValidationPersistence.hpp
   execution/ValidationSchema.hpp
 )
+set(ZENSIM_LIBRARY_AUDIO_FOUNDATION_INCLUDE_FILES
+  audio/AudioFoundation.hpp
+)
+set(ZENSIM_LIBRARY_AUDIO_RUNTIME_CORE_INCLUDE_FILES
+  audio/AudioRuntimeModel.hpp
+)
+set(ZENSIM_LIBRARY_AUDIO_VALIDATION_INCLUDE_FILES
+  audio/AudioValidation.hpp
+)
 set(ZENSIM_LIBRARY_ASYNC_RUNTIME_CORE_INCLUDE_FILES
   execution/AsyncAwaitables.hpp
   execution/AsyncBackendProfile.hpp
@@ -522,6 +531,27 @@ target_sources(zpc_validation_core
   ${ZENSIM_LIBRARY_VALIDATION_CORE_INCLUDE_FILES}
 )
 target_link_libraries(zpc_validation_core INTERFACE zpcbase)
+
+add_library(zpc_audio_foundation INTERFACE)
+target_sources(zpc_audio_foundation
+  INTERFACE
+  ${ZENSIM_LIBRARY_AUDIO_FOUNDATION_INCLUDE_FILES}
+)
+target_link_libraries(zpc_audio_foundation INTERFACE zpcbase)
+
+add_library(zpc_audio_runtime_core INTERFACE)
+target_sources(zpc_audio_runtime_core
+  INTERFACE
+  ${ZENSIM_LIBRARY_AUDIO_RUNTIME_CORE_INCLUDE_FILES}
+)
+target_link_libraries(zpc_audio_runtime_core INTERFACE zpc_audio_foundation)
+
+add_library(zpc_audio_validation_core INTERFACE)
+target_sources(zpc_audio_validation_core
+  INTERFACE
+  ${ZENSIM_LIBRARY_AUDIO_VALIDATION_INCLUDE_FILES}
+)
+target_link_libraries(zpc_audio_validation_core INTERFACE zpc_audio_runtime_core zpc_validation_core)
 
 add_library(zpc_async_runtime_core INTERFACE)
 target_sources(zpc_async_runtime_core

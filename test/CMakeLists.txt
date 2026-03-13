@@ -133,6 +133,20 @@ target_link_libraries(validationpersistence PRIVATE zpc_validation_core)
 add_test(ZsValidationPersistence validationpersistence)
 add_dependencies(zensim validationpersistence)
 
+# audio foundation
+add_executable(audiofoundation audio_foundation.cpp)
+target_link_libraries(audiofoundation PRIVATE zpc_audio_runtime_core)
+
+add_test(ZsAudioFoundation audiofoundation)
+add_dependencies(zensim audiofoundation)
+
+# audio validation
+add_executable(audiovalidation audio_validation.cpp)
+target_link_libraries(audiovalidation PRIVATE zpc_audio_validation_core)
+
+add_test(ZsAudioValidation audiovalidation)
+add_dependencies(zensim audiovalidation)
+
 # interface services
 add_executable(interfaceservices interface_services.cpp)
 target_link_libraries(interfaceservices PRIVATE zpc zpc_canary_core)
