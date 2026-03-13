@@ -155,56 +155,56 @@ target_compile_features(asyncconcurrencyusecases PRIVATE cxx_std_20)
 add_test(ZsAsyncConcurrencyUsecases asyncconcurrencyusecases)
 add_dependencies(zensim asyncconcurrencyusecases)
 
-# ── 3C system tests ──────────────────────────────────────────────────────
+# ── Gameplay system tests ──────────────────────────────────────────────────────
 
-# 3C math extensions (matrix2quaternion, slerp, nlerp, damp, spring, remap, lerp)
-add_executable(3cmathextensions 3c_math_extensions.cpp)
-target_link_libraries(3cmathextensions PRIVATE zpc_3c_core)
+# Gameplay math extensions (matrix2quaternion, slerp, nlerp, damp, spring, remap, lerp)
+add_executable(gameplaymathextensions gameplay_math_extensions.cpp)
+target_link_libraries(gameplaymathextensions PRIVATE zpc_gameplay_core)
 
-add_test(Zs3CMathExtensions 3cmathextensions)
-add_dependencies(zensim 3cmathextensions)
+add_test(ZsGameplayMathExtensions gameplaymathextensions)
+add_dependencies(zensim gameplaymathextensions)
 
-# 3C core types (FrameContext, quaternion helpers, telemetry)
-add_executable(3ccoretypes 3c_core_types.cpp)
-target_link_libraries(3ccoretypes PRIVATE zpc_3c_core)
+# Gameplay core types (FrameContext, quaternion helpers, telemetry)
+add_executable(gameplaycoretypes gameplay_core_types.cpp)
+target_link_libraries(gameplaycoretypes PRIVATE zpc_gameplay_core)
 
-add_test(Zs3CCoreTypes 3ccoretypes)
-add_dependencies(zensim 3ccoretypes)
+add_test(ZsGameplayCoreTypes gameplaycoretypes)
+add_dependencies(zensim gameplaycoretypes)
 
-# 3C input (ActionMap, AxisProcessor, InputBuffer)
-add_executable(3cinput 3c_input.cpp)
-target_link_libraries(3cinput PRIVATE zpc_3c_input)
+# Gameplay input (ActionMap, AxisProcessor, InputBuffer)
+add_executable(gameplayinput gameplay_input.cpp)
+target_link_libraries(gameplayinput PRIVATE zpc_gameplay_input)
 
-add_test(Zs3CInput 3cinput)
-add_dependencies(zensim 3cinput)
+add_test(ZsGameplayInput gameplayinput)
+add_dependencies(zensim gameplayinput)
 
-# 3C camera (Camera, MatrixBuilders, Frustum, OrbitMode, FollowMode)
-add_executable(3ccamera 3c_camera.cpp)
-target_link_libraries(3ccamera PRIVATE zpc_3c_camera)
+# Gameplay camera (Camera, MatrixBuilders, Frustum, OrbitMode, FollowMode)
+add_executable(gameplaycamera gameplay_camera.cpp)
+target_link_libraries(gameplaycamera PRIVATE zpc_gameplay_camera)
 
-add_test(Zs3CCamera 3ccamera)
-add_dependencies(zensim 3ccamera)
+add_test(ZsGameplayCamera gameplaycamera)
+add_dependencies(zensim gameplaycamera)
 
-# 3C character (CharacterStateMachine, GroundInfo, MovementIntent)
-add_executable(3ccharacter 3c_character.cpp)
-target_link_libraries(3ccharacter PRIVATE zpc_3c_character)
+# Gameplay character (CharacterStateMachine, GroundInfo, MovementIntent)
+add_executable(gameplaycharacter gameplay_character.cpp)
+target_link_libraries(gameplaycharacter PRIVATE zpc_gameplay_character)
 
-add_test(Zs3CCharacter 3ccharacter)
-add_dependencies(zensim 3ccharacter)
+add_test(ZsGameplayCharacter gameplaycharacter)
+add_dependencies(zensim gameplaycharacter)
 
-# 3C integration (FpsMode, CameraShake, CameraRig, ThreeCPipeline)
-add_executable(3cintegration 3c_integration.cpp)
-target_link_libraries(3cintegration PRIVATE zpc_3c_integration)
+# Gameplay integration (FpsMode, CameraShake, CameraRig, GameplayPipeline)
+add_executable(gameplayintegration gameplay_integration.cpp)
+target_link_libraries(gameplayintegration PRIVATE zpc_gameplay_integration)
 
-add_test(Zs3CIntegration 3cintegration)
-add_dependencies(zensim 3cintegration)
+add_test(ZsGameplayIntegration gameplayintegration)
+add_dependencies(zensim gameplayintegration)
 
-# 3C performance profiling (frame budget, shake bounds, latency)
-add_executable(3cperf 3c_perf.cpp)
-target_link_libraries(3cperf PRIVATE zpc_3c_integration)
+# Gameplay performance profiling (frame budget, shake bounds, latency)
+add_executable(gameplayperf gameplay_perf.cpp)
+target_link_libraries(gameplayperf PRIVATE zpc_gameplay_integration)
 
-add_test(Zs3CPerf 3cperf)
-add_dependencies(zensim 3cperf)
+add_test(ZsGameplayPerf gameplayperf)
+add_dependencies(zensim gameplayperf)
 
 # sycl backend
 if(ZS_ENABLE_SYCL_ONEAPI OR ZS_ENABLE_SYCL_ACPP)

@@ -319,30 +319,30 @@ set(ZENSIM_LIBRARY_CANARY_CORE_INCLUDE_FILES
   interface/CanaryScenario.hpp
   interface/LocalCanaryService.hpp
 )
-set(ZENSIM_LIBRARY_3C_CORE_INCLUDE_FILES
-  3c/Core.hpp
-  3c/MathExtensions.hpp
-  3c/Telemetry.hpp
+set(ZENSIM_LIBRARY_GAMEPLAY_CORE_INCLUDE_FILES
+  gameplay/Core.hpp
+  gameplay/MathExtensions.hpp
+  gameplay/Telemetry.hpp
 )
-set(ZENSIM_LIBRARY_3C_INPUT_INCLUDE_FILES
-  3c/input/InputTypes.hpp
-  3c/input/AxisProcessor.hpp
-  3c/input/ActionMap.hpp
-  3c/input/InputBuffer.hpp
+set(ZENSIM_LIBRARY_GAMEPLAY_INPUT_INCLUDE_FILES
+  gameplay/input/InputTypes.hpp
+  gameplay/input/AxisProcessor.hpp
+  gameplay/input/ActionMap.hpp
+  gameplay/input/InputBuffer.hpp
 )
-set(ZENSIM_LIBRARY_3C_CAMERA_INCLUDE_FILES
-  3c/camera/Camera.hpp
-  3c/camera/MatrixBuilders.hpp
-  3c/camera/Frustum.hpp
-  3c/camera/CameraMode.hpp
-  3c/camera/CameraShake.hpp
-  3c/camera/CameraRig.hpp
+set(ZENSIM_LIBRARY_GAMEPLAY_CAMERA_INCLUDE_FILES
+  gameplay/camera/Camera.hpp
+  gameplay/camera/MatrixBuilders.hpp
+  gameplay/camera/Frustum.hpp
+  gameplay/camera/CameraMode.hpp
+  gameplay/camera/CameraShake.hpp
+  gameplay/camera/CameraRig.hpp
 )
-set(ZENSIM_LIBRARY_3C_CHARACTER_INCLUDE_FILES
-  3c/character/CharacterState.hpp
+set(ZENSIM_LIBRARY_GAMEPLAY_CHARACTER_INCLUDE_FILES
+  gameplay/character/CharacterState.hpp
 )
-set(ZENSIM_LIBRARY_3C_INTEGRATION_INCLUDE_FILES
-  3c/ThreeCPipeline.hpp
+set(ZENSIM_LIBRARY_GAMEPLAY_INTEGRATION_INCLUDE_FILES
+  gameplay/GameplayPipeline.hpp
 )
 set(ZENSIM_LIBRARY_IO_INCLUDE_FILES
   io/IO.h
@@ -571,40 +571,40 @@ target_sources(zpc_canary_core
 )
 target_link_libraries(zpc_canary_core INTERFACE zpc_interface_services)
 
-add_library(zpc_3c_core INTERFACE)
-target_sources(zpc_3c_core
+add_library(zpc_gameplay_core INTERFACE)
+target_sources(zpc_gameplay_core
   INTERFACE
-  ${ZENSIM_LIBRARY_3C_CORE_INCLUDE_FILES}
+  ${ZENSIM_LIBRARY_GAMEPLAY_CORE_INCLUDE_FILES}
 )
-target_link_libraries(zpc_3c_core INTERFACE zpcbase)
+target_link_libraries(zpc_gameplay_core INTERFACE zpcbase)
 
-add_library(zpc_3c_input INTERFACE)
-target_sources(zpc_3c_input
+add_library(zpc_gameplay_input INTERFACE)
+target_sources(zpc_gameplay_input
   INTERFACE
-  ${ZENSIM_LIBRARY_3C_INPUT_INCLUDE_FILES}
+  ${ZENSIM_LIBRARY_GAMEPLAY_INPUT_INCLUDE_FILES}
 )
-target_link_libraries(zpc_3c_input INTERFACE zpc_3c_core)
+target_link_libraries(zpc_gameplay_input INTERFACE zpc_gameplay_core)
 
-add_library(zpc_3c_camera INTERFACE)
-target_sources(zpc_3c_camera
+add_library(zpc_gameplay_camera INTERFACE)
+target_sources(zpc_gameplay_camera
   INTERFACE
-  ${ZENSIM_LIBRARY_3C_CAMERA_INCLUDE_FILES}
+  ${ZENSIM_LIBRARY_GAMEPLAY_CAMERA_INCLUDE_FILES}
 )
-target_link_libraries(zpc_3c_camera INTERFACE zpc_3c_core)
+target_link_libraries(zpc_gameplay_camera INTERFACE zpc_gameplay_core)
 
-add_library(zpc_3c_character INTERFACE)
-target_sources(zpc_3c_character
+add_library(zpc_gameplay_character INTERFACE)
+target_sources(zpc_gameplay_character
   INTERFACE
-  ${ZENSIM_LIBRARY_3C_CHARACTER_INCLUDE_FILES}
+  ${ZENSIM_LIBRARY_GAMEPLAY_CHARACTER_INCLUDE_FILES}
 )
-target_link_libraries(zpc_3c_character INTERFACE zpc_3c_core zpc_3c_input)
+target_link_libraries(zpc_gameplay_character INTERFACE zpc_gameplay_core zpc_gameplay_input)
 
-add_library(zpc_3c_integration INTERFACE)
-target_sources(zpc_3c_integration
+add_library(zpc_gameplay_integration INTERFACE)
+target_sources(zpc_gameplay_integration
   INTERFACE
-  ${ZENSIM_LIBRARY_3C_INTEGRATION_INCLUDE_FILES}
+  ${ZENSIM_LIBRARY_GAMEPLAY_INTEGRATION_INCLUDE_FILES}
 )
-target_link_libraries(zpc_3c_integration INTERFACE zpc_3c_camera zpc_3c_character zpc_3c_input)
+target_link_libraries(zpc_gameplay_integration INTERFACE zpc_gameplay_camera zpc_gameplay_character zpc_gameplay_input)
 
 add_library(zpc_process INTERFACE)
 target_sources(zpc_process
