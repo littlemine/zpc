@@ -141,6 +141,50 @@ namespace zs {
 
     size_t subscriber_count() const noexcept { return _subscribers.size(); }
 
+    // ---- Deferred delivery ----
+
+    /// Enqueue an event for deferred delivery. The event is stored internally
+    /// and will be dispatched when flush_deferred() is called. This is the
+    /// recommended pattern for frame-based gameplay loops where events should
+    /// be collected during a phase and delivered at a synchronization point.
+    ///
+    /// Compatible with ZPC async runtime: call flush_deferred() from within
+    /// an AsyncSubmission step to integrate with the async pipeline.
+    void enqueue(const GameplayEvent &event) { _deferredQueue.push_back(event); }
+
+    /// Build and enqueue a simple event for deferred delivery.
+    void enqueue(GameplayEventTypeId typeId, const SmallString &typeName,
+                 GameplayEntityId source, GameplayEntityId target = {},
+                 double numericValue = 0.0) {
+      GameplayEvent event{};
+      event.typeId = typeId;
+      event.typeName = typeName;
+      event.source = source;
+      event.target = target;
+      event.timestamp = _eventCounter++;
+      event.numericValue = numericValue;
+      _deferredQueue.push_back(event);
+    }
+
+    /// Dispatch all enqueued deferred events in order. Returns the number of
+    /// events dispatched.
+    size_t flush_deferred() {
+      // Swap to a local copy so that handlers that enqueue new deferred events
+      // during dispatch don't cause infinite loops.
+      std::vector<GameplayEvent> pending{};
+      pending.swap(_deferredQueue);
+      for (const auto &event : pending) {
+        dispatch(event);
+      }
+      return pending.size();
+    }
+
+    /// Return the number of events waiting in the deferred queue.
+    size_t deferred_count() const noexcept { return _deferredQueue.size(); }
+
+    /// Discard all deferred events without dispatching them.
+    void clear_deferred() { _deferredQueue.clear(); }
+
   private:
     struct Subscriber {
       GameplayEventSubscription subscription{};
@@ -169,6 +213,7 @@ namespace zs {
 
     std::vector<Subscriber> _subscribers{};
     std::vector<GameplayEvent> _history{};
+    std::vector<GameplayEvent> _deferredQueue{};
     size_t _historyCapacity{256};
     u64 _nextSubId{0};
     u64 _eventCounter{0};

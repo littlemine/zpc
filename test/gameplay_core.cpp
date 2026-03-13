@@ -347,6 +347,75 @@ int main() {
     fprintf(stderr, "[PASS] GameplayEvent & Dispatcher\n");
   }
 
+  // ====== Deferred event delivery tests ======
+  {
+    GameplayEventDispatcher dispatcher{};
+    GameplayEventTypeId damageType{10};
+    GameplayEventTypeId healType{20};
+
+    int damageCount = 0;
+    int healCount = 0;
+    dispatcher.subscribe(damageType,
+                         [&](const GameplayEvent &) { ++damageCount; });
+    dispatcher.subscribe(healType,
+                         [&](const GameplayEvent &) { ++healCount; });
+
+    // Enqueue events — nothing delivered yet
+    dispatcher.enqueue(damageType, SmallString{"damage"}, GameplayEntityId{1},
+                       GameplayEntityId{2}, 30.0);
+    dispatcher.enqueue(healType, SmallString{"heal"}, GameplayEntityId{3},
+                       GameplayEntityId{2}, 15.0);
+    assert(dispatcher.deferred_count() == 2);
+    assert(damageCount == 0);
+    assert(healCount == 0);
+
+    // Flush — all deferred events delivered
+    size_t flushed = dispatcher.flush_deferred();
+    assert(flushed == 2);
+    assert(damageCount == 1);
+    assert(healCount == 1);
+    assert(dispatcher.deferred_count() == 0);
+
+    // History should record the flushed events
+    assert(dispatcher.history().size() == 2);
+
+    // Enqueue via event struct
+    GameplayEvent manualEvent{};
+    manualEvent.typeId = damageType;
+    manualEvent.typeName = SmallString{"damage"};
+    manualEvent.source = GameplayEntityId{5};
+    manualEvent.numericValue = 99.0;
+    dispatcher.enqueue(manualEvent);
+    assert(dispatcher.deferred_count() == 1);
+
+    // Clear deferred without dispatching
+    dispatcher.clear_deferred();
+    assert(dispatcher.deferred_count() == 0);
+    assert(damageCount == 1); // unchanged — event was discarded
+
+    // Flush on empty queue
+    flushed = dispatcher.flush_deferred();
+    assert(flushed == 0);
+
+    // Test that handlers enqueuing new deferred events during flush
+    // don't cause infinite recursion (they go into a fresh queue)
+    dispatcher.subscribe(damageType, [&](const GameplayEvent &) {
+      dispatcher.enqueue(healType, SmallString{"heal-from-handler"},
+                         GameplayEntityId{1});
+    });
+    dispatcher.enqueue(damageType, SmallString{"damage"}, GameplayEntityId{1});
+    flushed = dispatcher.flush_deferred();
+    assert(flushed == 1);
+    // The handler enqueued a new deferred event during flush
+    assert(dispatcher.deferred_count() == 1);
+    // Flush the second wave
+    flushed = dispatcher.flush_deferred();
+    assert(flushed == 1);
+    assert(dispatcher.deferred_count() == 0);
+
+    fprintf(stderr, "[PASS] Deferred event delivery\n");
+  }
+
   fprintf(stderr, "[ALL PASS] gameplay_core\n");
   return 0;
 }
