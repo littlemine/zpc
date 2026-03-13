@@ -178,6 +178,13 @@ target_link_libraries(3cinput PRIVATE zpc_3c_input)
 add_test(Zs3CInput 3cinput)
 add_dependencies(zensim 3cinput)
 
+# 3C camera (Camera, MatrixBuilders, Frustum, OrbitMode, FollowMode)
+add_executable(3ccamera 3c_camera.cpp)
+target_link_libraries(3ccamera PRIVATE zpc_3c_camera)
+
+add_test(Zs3CCamera 3ccamera)
+add_dependencies(zensim 3ccamera)
+
 # sycl backend
 if(ZS_ENABLE_SYCL_ONEAPI OR ZS_ENABLE_SYCL_ACPP)
     #
