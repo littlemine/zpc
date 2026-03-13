@@ -188,6 +188,14 @@ target_compile_features(gameplayinventory PRIVATE cxx_std_17)
 add_test(ZsGameplayInventory gameplayinventory)
 add_dependencies(zensim gameplayinventory)
 
+# gameplay progression hooks
+add_executable(gameplayprogression gameplay_progression.cpp)
+target_link_libraries(gameplayprogression PRIVATE zpc_gameplay_core)
+target_compile_features(gameplayprogression PRIVATE cxx_std_17)
+
+add_test(ZsGameplayProgression gameplayprogression)
+add_dependencies(zensim gameplayprogression)
+
 # binary search
 add_executable(binarysearchtest binary_search.cpp)
 target_link_libraries(binarysearchtest PRIVATE zpc)
