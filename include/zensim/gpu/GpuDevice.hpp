@@ -72,6 +72,134 @@ namespace zs::gpu {
   using ComputePipelineHandle = Handle<ComputePipelineTag>;
   using CommandBufferHandle   = Handle<CommandBufferTag>;
 
+  // Forward declaration
+  class Device;
+
+  // =========================================================================
+  // ScopedHandle - RAII wrapper for gpu:: handles
+  // =========================================================================
+  // Automatically calls the correct Device::destroy*() on destruction.
+  // Move-only (like std::unique_ptr). 16 bytes: handle (8) + device* (8).
+  //
+  // Usage:
+  //   ScopedBuffer buf = dev.createBuffer(desc);   // implicit conversion
+  //   buf.get();          // retrieve the raw handle
+  //   buf.release();      // detach without destroying
+  //   // destroyed automatically when buf goes out of scope
+
+  namespace detail {
+    // Tag-dispatch trait: maps Handle tag -> Device::destroy* method
+    template <typename Tag> struct DestroyDispatch;
+
+    template<> struct DestroyDispatch<BufferTag> {
+      static void destroy(Device& dev, Handle<BufferTag> h);
+    };
+    template<> struct DestroyDispatch<TextureTag> {
+      static void destroy(Device& dev, Handle<TextureTag> h);
+    };
+    template<> struct DestroyDispatch<TextureViewTag> {
+      static void destroy(Device& dev, Handle<TextureViewTag> h);
+    };
+    template<> struct DestroyDispatch<SamplerTag> {
+      static void destroy(Device& dev, Handle<SamplerTag> h);
+    };
+    template<> struct DestroyDispatch<ShaderModuleTag> {
+      static void destroy(Device& dev, Handle<ShaderModuleTag> h);
+    };
+    template<> struct DestroyDispatch<BindGroupLayoutTag> {
+      static void destroy(Device& dev, Handle<BindGroupLayoutTag> h);
+    };
+    template<> struct DestroyDispatch<BindGroupTag> {
+      static void destroy(Device& dev, Handle<BindGroupTag> h);
+    };
+    template<> struct DestroyDispatch<RenderPipelineTag> {
+      static void destroy(Device& dev, Handle<RenderPipelineTag> h);
+    };
+    template<> struct DestroyDispatch<ComputePipelineTag> {
+      static void destroy(Device& dev, Handle<ComputePipelineTag> h);
+    };
+  }  // namespace detail
+
+  template <typename Tag>
+  class ScopedHandle {
+  public:
+    ScopedHandle() = default;
+    ScopedHandle(std::nullptr_t) {}
+
+    /// Construct from a handle + device (typical: after createX)
+    ScopedHandle(Handle<Tag> handle, Device& device)
+        : handle_(handle), device_(&device) {}
+
+    ~ScopedHandle() { reset(); }
+
+    // Move-only
+    ScopedHandle(ScopedHandle&& o) noexcept
+        : handle_(o.handle_), device_(o.device_) {
+      o.handle_ = {};
+      o.device_ = nullptr;
+    }
+    ScopedHandle& operator=(ScopedHandle&& o) noexcept {
+      if (this != &o) {
+        reset();
+        handle_  = o.handle_;
+        device_  = o.device_;
+        o.handle_ = {};
+        o.device_ = nullptr;
+      }
+      return *this;
+    }
+    ScopedHandle(const ScopedHandle&) = delete;
+    ScopedHandle& operator=(const ScopedHandle&) = delete;
+
+    /// Get the raw handle (non-owning).
+    Handle<Tag> get() const { return handle_; }
+
+    /// Implicit conversion to raw handle for passing to gpu:: APIs.
+    operator Handle<Tag>() const { return handle_; }
+
+    /// Check if this holds a valid resource.
+    explicit operator bool() const { return static_cast<bool>(handle_); }
+
+    /// Release ownership without destroying. Returns the raw handle.
+    Handle<Tag> release() {
+      auto h = handle_;
+      handle_ = {};
+      device_ = nullptr;
+      return h;
+    }
+
+    /// Destroy the current resource (if any) and reset to empty.
+    void reset() {
+      if (handle_ && device_) {
+        detail::DestroyDispatch<Tag>::destroy(*device_, handle_);
+      }
+      handle_ = {};
+      device_ = nullptr;
+    }
+
+    /// Replace with a new handle (destroys the old one first).
+    void reset(Handle<Tag> newHandle, Device& newDevice) {
+      reset();
+      handle_ = newHandle;
+      device_ = &newDevice;
+    }
+
+  private:
+    Handle<Tag> handle_{};
+    Device*     device_ = nullptr;
+  };
+
+  // Convenient type aliases
+  using ScopedBuffer          = ScopedHandle<BufferTag>;
+  using ScopedTexture         = ScopedHandle<TextureTag>;
+  using ScopedTextureView     = ScopedHandle<TextureViewTag>;
+  using ScopedSampler         = ScopedHandle<SamplerTag>;
+  using ScopedShaderModule    = ScopedHandle<ShaderModuleTag>;
+  using ScopedBindGroupLayout = ScopedHandle<BindGroupLayoutTag>;
+  using ScopedBindGroup       = ScopedHandle<BindGroupTag>;
+  using ScopedRenderPipeline  = ScopedHandle<RenderPipelineTag>;
+  using ScopedComputePipeline = ScopedHandle<ComputePipelineTag>;
+
   // =========================================================================
   // Bind group entries (for creating bind groups with concrete resources)
   // =========================================================================
@@ -338,5 +466,38 @@ namespace zs::gpu {
       return createBuffer({size, usage | BufferUsage::CopyDst | BufferUsage::MapWrite});
     }
   };
+
+  // =========================================================================
+  // DestroyDispatch implementations (must be after Device is fully defined)
+  // =========================================================================
+  namespace detail {
+    inline void DestroyDispatch<BufferTag>::destroy(Device& d, Handle<BufferTag> h) {
+      d.destroyBuffer(h);
+    }
+    inline void DestroyDispatch<TextureTag>::destroy(Device& d, Handle<TextureTag> h) {
+      d.destroyTexture(h);
+    }
+    inline void DestroyDispatch<TextureViewTag>::destroy(Device& d, Handle<TextureViewTag> h) {
+      d.destroyTextureView(h);
+    }
+    inline void DestroyDispatch<SamplerTag>::destroy(Device& d, Handle<SamplerTag> h) {
+      d.destroySampler(h);
+    }
+    inline void DestroyDispatch<ShaderModuleTag>::destroy(Device& d, Handle<ShaderModuleTag> h) {
+      d.destroyShaderModule(h);
+    }
+    inline void DestroyDispatch<BindGroupLayoutTag>::destroy(Device& d, Handle<BindGroupLayoutTag> h) {
+      d.destroyBindGroupLayout(h);
+    }
+    inline void DestroyDispatch<BindGroupTag>::destroy(Device& d, Handle<BindGroupTag> h) {
+      d.destroyBindGroup(h);
+    }
+    inline void DestroyDispatch<RenderPipelineTag>::destroy(Device& d, Handle<RenderPipelineTag> h) {
+      d.destroyRenderPipeline(h);
+    }
+    inline void DestroyDispatch<ComputePipelineTag>::destroy(Device& d, Handle<ComputePipelineTag> h) {
+      d.destroyComputePipeline(h);
+    }
+  }  // namespace detail
 
 }  // namespace zs::gpu
