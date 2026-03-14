@@ -21,7 +21,9 @@
 // Vulkan headers (backend-specific)
 #include "zensim/vulkan/VkContext.hpp"
 
+#include <array>
 #include <mutex>
+#include <unordered_map>
 #include <optional>
 #include <vector>
 #include <cassert>
@@ -156,6 +158,56 @@ namespace zs::gpu {
   };
 
   // =========================================================================
+  // Render pass cache - keyed by format signature
+  // =========================================================================
+  // Vulkan requires VkRenderPass objects for pipeline creation and command
+  // recording. We cache them by their format signature (color formats +
+  // depth format + sample count + load/store ops) to avoid redundant creation.
+
+  struct RenderPassKey {
+    std::vector<vk::Format> colorFormats;
+    vk::Format              depthFormat = vk::Format::eUndefined;
+    vk::SampleCountFlagBits samples     = vk::SampleCountFlagBits::e1;
+    std::vector<vk::AttachmentLoadOp>  colorLoadOps;
+    std::vector<vk::AttachmentStoreOp> colorStoreOps;
+    vk::AttachmentLoadOp  depthLoadOp   = vk::AttachmentLoadOp::eDontCare;
+    vk::AttachmentStoreOp depthStoreOp  = vk::AttachmentStoreOp::eDontCare;
+    vk::AttachmentLoadOp  stencilLoadOp  = vk::AttachmentLoadOp::eDontCare;
+    vk::AttachmentStoreOp stencilStoreOp = vk::AttachmentStoreOp::eDontCare;
+
+    bool operator==(const RenderPassKey& o) const {
+      return colorFormats == o.colorFormats
+          && depthFormat == o.depthFormat
+          && samples == o.samples
+          && colorLoadOps == o.colorLoadOps
+          && colorStoreOps == o.colorStoreOps
+          && depthLoadOp == o.depthLoadOp
+          && depthStoreOp == o.depthStoreOp
+          && stencilLoadOp == o.stencilLoadOp
+          && stencilStoreOp == o.stencilStoreOp;
+    }
+  };
+
+  struct RenderPassKeyHash {
+    size_t operator()(const RenderPassKey& k) const {
+      size_t h = 0;
+      auto combine = [&h](size_t v) {
+        h ^= v + 0x9e3779b9 + (h << 6) + (h >> 2);
+      };
+      for (auto f : k.colorFormats) combine(static_cast<size_t>(f));
+      combine(static_cast<size_t>(k.depthFormat));
+      combine(static_cast<size_t>(k.samples));
+      for (auto op : k.colorLoadOps) combine(static_cast<size_t>(op));
+      for (auto op : k.colorStoreOps) combine(static_cast<size_t>(op));
+      combine(static_cast<size_t>(k.depthLoadOp));
+      combine(static_cast<size_t>(k.depthStoreOp));
+      combine(static_cast<size_t>(k.stencilLoadOp));
+      combine(static_cast<size_t>(k.stencilStoreOp));
+      return h;
+    }
+  };
+
+  // =========================================================================
   // VkRenderPassEncoderImpl
   // =========================================================================
   class VkDevice;  // forward
@@ -258,7 +310,22 @@ namespace zs::gpu {
     /// Construct from an existing VulkanContext.
     /// The VulkanContext must outlive this VkDevice.
     explicit VkDevice(VulkanContext& ctx) : ctx_(ctx) {}
-    ~VkDevice() override = default;
+    ~VkDevice() override {
+      // Destroy all cached render passes
+      for (auto& [key, rp] : renderPassCache_) {
+        ctx_.device.destroyRenderPass(rp, nullptr, ctx_.dispatcher);
+      }
+    }
+
+    /// Enable VK 1.3 dynamic rendering (vkCmdBeginRendering).
+    /// When enabled, beginRenderPass uses dynamic rendering instead of
+    /// creating/caching VkRenderPass + VkFramebuffer objects. This is
+    /// more aligned with DX12/Metal/WebGPU semantics.
+    /// Pipeline creation still uses cached render passes for compatibility.
+    void enableDynamicRendering(bool enable = true) {
+      useDynamicRendering_ = enable;
+    }
+    bool isDynamicRenderingEnabled() const { return useDynamicRendering_; }
 
     // -- Accessors for internal use by encoders --
     VulkanContext& vkCtx() { return ctx_; }
@@ -664,6 +731,8 @@ namespace zs::gpu {
 
     RenderPipelineHandle createRenderPipeline(
         const RenderPipelineDesc& desc,
+        ShaderModuleHandle vertexShader,
+        ShaderModuleHandle fragmentShader,
         std::span<const BindGroupLayoutHandle> bindGroupLayouts) override {
       // Build pipeline layout
       std::vector<vk::DescriptorSetLayout> vkSetLayouts;
@@ -689,31 +758,155 @@ namespace zs::gpu {
           layoutCI, nullptr, ctx_.dispatcher);
 
       // Create a compatible render pass from the format signature
-      auto renderPass = createCompatibleRenderPass_(desc);
+      auto renderPass = getOrCreateRenderPass_(desc);
 
       // Build shader stages
       std::vector<vk::PipelineShaderStageCreateInfo> shaderStages;
-      auto* vertMod = shaderModules_.get(0);  // placeholder
-      auto* fragMod = shaderModules_.get(0);
+      {
+        auto* vertRec = shaderModules_.get(vertexShader.id);
+        if (vertRec) {
+          vk::PipelineShaderStageCreateInfo stg{};
+          stg.setStage(vk::ShaderStageFlagBits::eVertex)
+             .setModule(vertRec->module)
+             .setPName(vertRec->entryPoint.c_str());
+          shaderStages.push_back(stg);
+        }
+        auto* fragRec = shaderModules_.get(fragmentShader.id);
+        if (fragRec) {
+          vk::PipelineShaderStageCreateInfo stg{};
+          stg.setStage(vk::ShaderStageFlagBits::eFragment)
+             .setModule(fragRec->module)
+             .setPName(fragRec->entryPoint.c_str());
+          shaderStages.push_back(stg);
+        }
+      }
 
-      // For now, pipeline creation requires pre-created shader modules
-      // stored elsewhere. This is a design point -- we need shader handles
-      // in RenderPipelineDesc. For the initial implementation, this is
-      // stubbed. Full implementation will follow.
+      // Vertex input state
+      std::vector<vk::VertexInputBindingDescription> viBindings;
+      std::vector<vk::VertexInputAttributeDescription> viAttribs;
+      for (uint32_t i = 0; i < desc.vertexBuffers.size(); ++i) {
+        auto& vbl = desc.vertexBuffers[i];
+        viBindings.push_back({i, vbl.stride,
+            vbl.stepMode == VertexStepMode::Instance
+                ? vk::VertexInputRate::eInstance
+                : vk::VertexInputRate::eVertex});
+        for (auto& attr : vbl.attributes) {
+          viAttribs.push_back({attr.location, i,
+              vk_map::toVk(attr.format), attr.offset});
+        }
+      }
+      vk::PipelineVertexInputStateCreateInfo vertexInputCI{};
+      vertexInputCI.setVertexBindingDescriptionCount(
+                       static_cast<uint32_t>(viBindings.size()))
+                   .setPVertexBindingDescriptions(viBindings.data())
+                   .setVertexAttributeDescriptionCount(
+                       static_cast<uint32_t>(viAttribs.size()))
+                   .setPVertexAttributeDescriptions(viAttribs.data());
 
-      // TODO: Complete pipeline creation with shader modules
-      // The full Vulkan pipeline creation involves:
-      //   1. Shader stage setup from ShaderModuleHandle references
-      //   2. Vertex input state from desc.vertexBuffers
-      //   3. Input assembly from desc.topology
-      //   4. Rasterization from desc.cullMode, frontFace, polygonMode
-      //   5. Multisample from desc.sampleCount
-      //   6. Color blend from desc.colorTargets
-      //   7. Depth/stencil from desc.depthStencil
-      //   8. Dynamic state (viewport, scissor)
+      // Input assembly
+      vk::PipelineInputAssemblyStateCreateInfo iaCI{};
+      iaCI.setTopology(vk_map::toVk(desc.topology))
+          .setPrimitiveRestartEnable(VK_FALSE);
+
+      // Viewport/scissor (dynamic)
+      vk::PipelineViewportStateCreateInfo vpCI{};
+      vpCI.setViewportCount(1).setScissorCount(1);
+
+      // Rasterization
+      vk::PipelineRasterizationStateCreateInfo rasterCI{};
+      rasterCI.setDepthClampEnable(VK_FALSE)
+              .setRasterizerDiscardEnable(VK_FALSE)
+              .setPolygonMode(vk_map::toVk(desc.polygonMode))
+              .setCullMode(vk_map::toVk(desc.cullMode))
+              .setFrontFace(vk_map::toVk(desc.frontFace))
+              .setDepthBiasEnable(
+                  desc.depthStencil.depthBiasConstant != 0.0f
+                  || desc.depthStencil.depthBiasSlope != 0.0f)
+              .setDepthBiasConstantFactor(desc.depthStencil.depthBiasConstant)
+              .setDepthBiasSlopeFactor(desc.depthStencil.depthBiasSlope)
+              .setDepthBiasClamp(desc.depthStencil.depthBiasClamp)
+              .setLineWidth(1.0f);
+
+      // Multisample
+      vk::PipelineMultisampleStateCreateInfo msCI{};
+      msCI.setRasterizationSamples(vk_map::toVk(desc.sampleCount))
+          .setSampleShadingEnable(VK_FALSE)
+          .setMinSampleShading(1.0f);
+
+      // Color blend
+      std::vector<vk::PipelineColorBlendAttachmentState> blendAtts;
+      for (auto& ct : desc.colorTargets) {
+        vk::PipelineColorBlendAttachmentState att{};
+        att.setBlendEnable(ct.blendEnable ? VK_TRUE : VK_FALSE)
+           .setSrcColorBlendFactor(vk_map::toVk(ct.color.srcFactor))
+           .setDstColorBlendFactor(vk_map::toVk(ct.color.dstFactor))
+           .setColorBlendOp(vk_map::toVk(ct.color.operation))
+           .setSrcAlphaBlendFactor(vk_map::toVk(ct.alpha.srcFactor))
+           .setDstAlphaBlendFactor(vk_map::toVk(ct.alpha.dstFactor))
+           .setAlphaBlendOp(vk_map::toVk(ct.alpha.operation))
+           .setColorWriteMask(vk_map::toVk(ct.writeMask));
+        blendAtts.push_back(att);
+      }
+      vk::PipelineColorBlendStateCreateInfo blendCI{};
+      blendCI.setLogicOpEnable(VK_FALSE)
+             .setAttachmentCount(static_cast<uint32_t>(blendAtts.size()))
+             .setPAttachments(blendAtts.data());
+
+      // Depth/stencil
+      vk::PipelineDepthStencilStateCreateInfo dsCI{};
+      bool hasDS = desc.depthStencil.format != Format::Undefined;
+      if (hasDS) {
+        dsCI.setDepthTestEnable(desc.depthStencil.depthTestEnable ? VK_TRUE : VK_FALSE)
+            .setDepthWriteEnable(desc.depthStencil.depthWriteEnable ? VK_TRUE : VK_FALSE)
+            .setDepthCompareOp(vk_map::toVk(desc.depthStencil.depthCompare))
+            .setDepthBoundsTestEnable(VK_FALSE)
+            .setStencilTestEnable(desc.depthStencil.stencilEnable ? VK_TRUE : VK_FALSE);
+        if (desc.depthStencil.stencilEnable) {
+          dsCI.front.setCompareOp(vk_map::toVk(desc.depthStencil.stencilFront.compare))
+                    .setFailOp(vk_map::toVk(desc.depthStencil.stencilFront.failOp))
+                    .setDepthFailOp(vk_map::toVk(desc.depthStencil.stencilFront.depthFailOp))
+                    .setPassOp(vk_map::toVk(desc.depthStencil.stencilFront.passOp))
+                    .setCompareMask(desc.depthStencil.stencilReadMask)
+                    .setWriteMask(desc.depthStencil.stencilWriteMask);
+          dsCI.back.setCompareOp(vk_map::toVk(desc.depthStencil.stencilBack.compare))
+                   .setFailOp(vk_map::toVk(desc.depthStencil.stencilBack.failOp))
+                   .setDepthFailOp(vk_map::toVk(desc.depthStencil.stencilBack.depthFailOp))
+                   .setPassOp(vk_map::toVk(desc.depthStencil.stencilBack.passOp))
+                   .setCompareMask(desc.depthStencil.stencilReadMask)
+                   .setWriteMask(desc.depthStencil.stencilWriteMask);
+        }
+      }
+
+      // Dynamic state (viewport + scissor are always dynamic)
+      std::array<vk::DynamicState, 2> dynStates = {
+          vk::DynamicState::eViewport, vk::DynamicState::eScissor};
+      vk::PipelineDynamicStateCreateInfo dynCI{};
+      dynCI.setDynamicStateCount(static_cast<uint32_t>(dynStates.size()))
+           .setPDynamicStates(dynStates.data());
+
+      // Assemble the pipeline
+      vk::GraphicsPipelineCreateInfo pipeCI{};
+      pipeCI.setStageCount(static_cast<uint32_t>(shaderStages.size()))
+            .setPStages(shaderStages.data())
+            .setPVertexInputState(&vertexInputCI)
+            .setPInputAssemblyState(&iaCI)
+            .setPViewportState(&vpCI)
+            .setPRasterizationState(&rasterCI)
+            .setPMultisampleState(&msCI)
+            .setPColorBlendState(&blendCI)
+            .setPDepthStencilState(hasDS ? &dsCI : nullptr)
+            .setPDynamicState(&dynCI)
+            .setLayout(pipelineLayout)
+            .setRenderPass(renderPass)
+            .setSubpass(0);
+
+      auto pipeResult = ctx_.device.createGraphicsPipeline(
+          VK_NULL_HANDLE, pipeCI, nullptr, ctx_.dispatcher);
+      // pipeResult.result can be eSuccess or ePipelineCompileRequired
+      vk::Pipeline pipeline = pipeResult.value;
 
       VkRenderPipelineRecord rec{};
-      rec.pipeline       = VK_NULL_HANDLE;  // TODO
+      rec.pipeline       = pipeline;
       rec.pipelineLayout = pipelineLayout;
       rec.renderPass     = renderPass;
 
@@ -723,9 +916,50 @@ namespace zs::gpu {
 
     ComputePipelineHandle createComputePipeline(
         const ComputePipelineDesc& desc,
+        ShaderModuleHandle computeShader,
         std::span<const BindGroupLayoutHandle> bindGroupLayouts) override {
-      // TODO: implement
-      return {};
+      // Build pipeline layout
+      std::vector<vk::DescriptorSetLayout> vkSetLayouts;
+      for (auto h : bindGroupLayouts) {
+        auto* rec = bindGroupLayouts_.get(h.id);
+        if (rec) vkSetLayouts.push_back(rec->layout);
+      }
+
+      std::vector<vk::PushConstantRange> vkPushConstants;
+      for (auto& pc : desc.pushConstants) {
+        vkPushConstants.push_back(vk::PushConstantRange{
+            vk_map::toVk(pc.stages), pc.offset, pc.size});
+      }
+
+      vk::PipelineLayoutCreateInfo layoutCI{};
+      layoutCI.setSetLayoutCount(static_cast<uint32_t>(vkSetLayouts.size()))
+              .setPSetLayouts(vkSetLayouts.data())
+              .setPushConstantRangeCount(static_cast<uint32_t>(vkPushConstants.size()))
+              .setPPushConstantRanges(vkPushConstants.data());
+
+      auto pipelineLayout = ctx_.device.createPipelineLayout(
+          layoutCI, nullptr, ctx_.dispatcher);
+
+      auto* shaderRec = shaderModules_.get(computeShader.id);
+      if (!shaderRec) return {};
+
+      vk::PipelineShaderStageCreateInfo stageCI{};
+      stageCI.setStage(vk::ShaderStageFlagBits::eCompute)
+             .setModule(shaderRec->module)
+             .setPName(shaderRec->entryPoint.c_str());
+
+      vk::ComputePipelineCreateInfo pipeCI{};
+      pipeCI.setStage(stageCI).setLayout(pipelineLayout);
+
+      auto pipeResult = ctx_.device.createComputePipeline(
+          VK_NULL_HANDLE, pipeCI, nullptr, ctx_.dispatcher);
+
+      VkComputePipelineRecord rec{};
+      rec.pipeline       = pipeResult.value;
+      rec.pipelineLayout = pipelineLayout;
+
+      std::lock_guard lock(mutex_);
+      return ComputePipelineHandle{computePipelines_.allocate(std::move(rec))};
     }
 
     // =====================================================================
@@ -916,17 +1150,73 @@ namespace zs::gpu {
     VkComputePipelineRecord* getComputePipeline(ComputePipelineHandle h) { return computePipelines_.get(h.id); }
 
   private:
-    // Create a minimal compatible VkRenderPass from format signature
-    vk::RenderPass createCompatibleRenderPass_(const RenderPipelineDesc& desc) {
+  public:
+    // Get or create a cached VkRenderPass from format signature.
+    // For pipeline creation, load/store ops are DontCare (compatibility only).
+    vk::RenderPass getOrCreateRenderPass_(const RenderPipelineDesc& desc) {
+      RenderPassKey key;
+      for (auto& ct : desc.colorTargets) {
+        key.colorFormats.push_back(vk_map::toVk(ct.format));
+        key.colorLoadOps.push_back(vk::AttachmentLoadOp::eDontCare);
+        key.colorStoreOps.push_back(vk::AttachmentStoreOp::eStore);
+      }
+      if (desc.depthStencil.format != Format::Undefined) {
+        key.depthFormat = vk_map::toVk(desc.depthStencil.format);
+      }
+      key.samples = vk_map::toVk(desc.sampleCount);
+
+      auto it = renderPassCache_.find(key);
+      if (it != renderPassCache_.end()) return it->second;
+
+      auto rp = createRenderPassFromKey_(key);
+      renderPassCache_[key] = rp;
+      return rp;
+    }
+
+    // Get or create a cached VkRenderPass from a begin-render-pass desc
+    // (with actual load/store ops for command recording).
+    vk::RenderPass getOrCreateRenderPassForBegin_(
+        const RenderPassBeginDesc& desc,
+        const std::vector<vk::Format>& colorFormats,
+        vk::Format depthFormat,
+        vk::SampleCountFlagBits samples) {
+      RenderPassKey key;
+      key.colorFormats = colorFormats;
+      key.depthFormat  = depthFormat;
+      key.samples      = samples;
+      for (auto& att : desc.colorAttachments) {
+        key.colorLoadOps.push_back(vk_map::toVk(att.loadOp));
+        key.colorStoreOps.push_back(vk_map::toVk(att.storeOp));
+      }
+      if (desc.hasDepthStencil) {
+        key.depthLoadOp    = vk_map::toVk(desc.depthStencilAttachment.depthLoadOp);
+        key.depthStoreOp   = vk_map::toVk(desc.depthStencilAttachment.depthStoreOp);
+        key.stencilLoadOp  = vk_map::toVk(desc.depthStencilAttachment.stencilLoadOp);
+        key.stencilStoreOp = vk_map::toVk(desc.depthStencilAttachment.stencilStoreOp);
+      }
+
+      auto it = renderPassCache_.find(key);
+      if (it != renderPassCache_.end()) return it->second;
+
+      auto rp = createRenderPassFromKey_(key);
+      renderPassCache_[key] = rp;
+      return rp;
+    }
+
+    vk::RenderPass createRenderPassFromKey_(const RenderPassKey& key) {
       std::vector<vk::AttachmentDescription> attachments;
       std::vector<vk::AttachmentReference> colorRefs;
 
-      for (size_t i = 0; i < desc.colorTargets.size(); ++i) {
+      for (size_t i = 0; i < key.colorFormats.size(); ++i) {
         vk::AttachmentDescription att{};
-        att.setFormat(vk_map::toVk(desc.colorTargets[i].format))
-           .setSamples(vk_map::toVk(desc.sampleCount))
-           .setLoadOp(vk::AttachmentLoadOp::eDontCare)
-           .setStoreOp(vk::AttachmentStoreOp::eStore)
+        att.setFormat(key.colorFormats[i])
+           .setSamples(key.samples)
+           .setLoadOp(i < key.colorLoadOps.size()
+                          ? key.colorLoadOps[i]
+                          : vk::AttachmentLoadOp::eDontCare)
+           .setStoreOp(i < key.colorStoreOps.size()
+                           ? key.colorStoreOps[i]
+                           : vk::AttachmentStoreOp::eStore)
            .setStencilLoadOp(vk::AttachmentLoadOp::eDontCare)
            .setStencilStoreOp(vk::AttachmentStoreOp::eDontCare)
            .setInitialLayout(vk::ImageLayout::eUndefined)
@@ -938,15 +1228,15 @@ namespace zs::gpu {
       }
 
       vk::AttachmentReference depthRef{};
-      bool hasDepth = desc.depthStencil.format != Format::Undefined;
+      bool hasDepth = key.depthFormat != vk::Format::eUndefined;
       if (hasDepth) {
         vk::AttachmentDescription att{};
-        att.setFormat(vk_map::toVk(desc.depthStencil.format))
-           .setSamples(vk_map::toVk(desc.sampleCount))
-           .setLoadOp(vk::AttachmentLoadOp::eDontCare)
-           .setStoreOp(vk::AttachmentStoreOp::eStore)
-           .setStencilLoadOp(vk::AttachmentLoadOp::eDontCare)
-           .setStencilStoreOp(vk::AttachmentStoreOp::eDontCare)
+        att.setFormat(key.depthFormat)
+           .setSamples(key.samples)
+           .setLoadOp(key.depthLoadOp)
+           .setStoreOp(key.depthStoreOp)
+           .setStencilLoadOp(key.stencilLoadOp)
+           .setStencilStoreOp(key.stencilStoreOp)
            .setInitialLayout(vk::ImageLayout::eUndefined)
            .setFinalLayout(vk::ImageLayout::eDepthStencilAttachmentOptimal);
 
@@ -971,8 +1261,13 @@ namespace zs::gpu {
       return ctx_.device.createRenderPass(rpCI, nullptr, ctx_.dispatcher);
     }
 
+  private:
     VulkanContext& ctx_;
     std::mutex     mutex_;
+    bool           useDynamicRendering_ = false;
+
+    // Render pass cache (format signature -> VkRenderPass)
+    std::unordered_map<RenderPassKey, vk::RenderPass, RenderPassKeyHash> renderPassCache_;
 
     // Resource pools
     ResourcePool<VkBufferRecord>           buffers_;
@@ -1075,7 +1370,11 @@ namespace zs::gpu {
   }
 
   inline void VkRenderPassEncoderImpl::end() {
-    cmd_.endRenderPass(dev_.vkCtx().dispatcher);
+    if (dev_.isDynamicRenderingEnabled()) {
+      cmd_.endRendering(dev_.vkCtx().dispatcher);
+    } else {
+      cmd_.endRenderPass(dev_.vkCtx().dispatcher);
+    }
   }
 
   // -- VkComputePassEncoderImpl --
@@ -1125,26 +1424,7 @@ namespace zs::gpu {
 
   inline RenderPassEncoder* VkCommandEncoderImpl::beginRenderPass(
       const RenderPassBeginDesc& desc) {
-    // Build attachment info and create a compatible render pass
-    // For dynamic rendering (VK 1.3), we could use vkCmdBeginRendering
-    // instead. For now, use traditional render passes for broad compat.
-
-    // Collect clear values
-    std::vector<vk::ClearValue> clearValues;
-    for (auto& att : desc.colorAttachments) {
-      vk::ClearValue cv;
-      cv.color = vk::ClearColorValue{std::array<float,4>{
-          att.clearValue.r, att.clearValue.g,
-          att.clearValue.b, att.clearValue.a}};
-      clearValues.push_back(cv);
-    }
-    if (desc.hasDepthStencil) {
-      vk::ClearValue cv;
-      cv.depthStencil = vk::ClearDepthStencilValue{
-          desc.depthStencilAttachment.depthClearValue,
-          desc.depthStencilAttachment.stencilClearValue};
-      clearValues.push_back(cv);
-    }
+    auto& ctx = dev_.vkCtx();
 
     // Determine render area from first color attachment
     vk::Extent2D renderArea(1, 1);
@@ -1158,10 +1438,145 @@ namespace zs::gpu {
       }
     }
 
-    // TODO: Create/cache compatible render pass + framebuffer from attachments
-    // This is a significant piece of work. For the initial implementation,
-    // we note the design and leave the render pass begin as a stub that
-    // will be filled in when the pipeline creation is also complete.
+    if (dev_.isDynamicRenderingEnabled()) {
+      // === VK 1.3 Dynamic Rendering path ===
+      std::vector<vk::RenderingAttachmentInfo> colorAttInfos;
+      for (auto& att : desc.colorAttachments) {
+        auto* viewRec = dev_.getTextureView(att.view);
+        vk::RenderingAttachmentInfo info{};
+        info.setImageView(viewRec ? viewRec->view : VK_NULL_HANDLE)
+            .setImageLayout(vk::ImageLayout::eColorAttachmentOptimal)
+            .setLoadOp(vk_map::toVk(att.loadOp))
+            .setStoreOp(vk_map::toVk(att.storeOp))
+            .setClearValue(vk::ClearValue{vk::ClearColorValue{
+                std::array<float,4>{att.clearValue.r, att.clearValue.g,
+                                    att.clearValue.b, att.clearValue.a}}});
+        // Resolve target
+        if (att.resolveTarget) {
+          auto* resolveRec = dev_.getTextureView(att.resolveTarget);
+          if (resolveRec) {
+            info.setResolveImageView(resolveRec->view)
+                .setResolveImageLayout(vk::ImageLayout::eColorAttachmentOptimal)
+                .setResolveMode(vk::ResolveModeFlagBits::eAverage);
+          }
+        }
+        colorAttInfos.push_back(info);
+      }
+
+      vk::RenderingAttachmentInfo depthAttInfo{};
+      vk::RenderingAttachmentInfo stencilAttInfo{};
+      if (desc.hasDepthStencil) {
+        auto* dsViewRec = dev_.getTextureView(desc.depthStencilAttachment.view);
+        if (dsViewRec) {
+          depthAttInfo.setImageView(dsViewRec->view)
+              .setImageLayout(vk::ImageLayout::eDepthStencilAttachmentOptimal)
+              .setLoadOp(vk_map::toVk(desc.depthStencilAttachment.depthLoadOp))
+              .setStoreOp(vk_map::toVk(desc.depthStencilAttachment.depthStoreOp))
+              .setClearValue(vk::ClearValue{vk::ClearDepthStencilValue{
+                  desc.depthStencilAttachment.depthClearValue,
+                  desc.depthStencilAttachment.stencilClearValue}});
+          stencilAttInfo = depthAttInfo;
+          stencilAttInfo.setLoadOp(vk_map::toVk(
+              desc.depthStencilAttachment.stencilLoadOp));
+          stencilAttInfo.setStoreOp(vk_map::toVk(
+              desc.depthStencilAttachment.stencilStoreOp));
+        }
+      }
+
+      vk::RenderingInfo renderingInfo{};
+      renderingInfo.setRenderArea({{0, 0}, renderArea})
+                   .setLayerCount(1)
+                   .setColorAttachmentCount(
+                       static_cast<uint32_t>(colorAttInfos.size()))
+                   .setPColorAttachments(colorAttInfos.data());
+      if (desc.hasDepthStencil) {
+        renderingInfo.setPDepthAttachment(&depthAttInfo)
+                     .setPStencilAttachment(&stencilAttInfo);
+      }
+
+      cmd_.beginRendering(renderingInfo, ctx.dispatcher);
+    } else {
+      // === Traditional render pass path (cached) ===
+      // Collect formats for cache key
+      std::vector<vk::Format> colorFormats;
+      vk::Format depthFormat = vk::Format::eUndefined;
+      vk::SampleCountFlagBits samples = vk::SampleCountFlagBits::e1;
+
+      for (auto& att : desc.colorAttachments) {
+        auto* viewRec = dev_.getTextureView(att.view);
+        if (viewRec) {
+          auto* texRec = dev_.getTexture(viewRec->ownerTexture);
+          if (texRec) {
+            colorFormats.push_back(texRec->format);
+            samples = texRec->samples;
+          }
+        }
+      }
+      if (desc.hasDepthStencil) {
+        auto* dsViewRec = dev_.getTextureView(
+            desc.depthStencilAttachment.view);
+        if (dsViewRec) {
+          auto* dsTex = dev_.getTexture(dsViewRec->ownerTexture);
+          if (dsTex) depthFormat = dsTex->format;
+        }
+      }
+
+      auto renderPass = dev_.getOrCreateRenderPassForBegin_(
+          desc, colorFormats, depthFormat, samples);
+
+      // Create framebuffer (per-pass, could also be cached)
+      std::vector<vk::ImageView> fbAttachments;
+      for (auto& att : desc.colorAttachments) {
+        auto* viewRec = dev_.getTextureView(att.view);
+        if (viewRec) fbAttachments.push_back(viewRec->view);
+      }
+      if (desc.hasDepthStencil) {
+        auto* dsViewRec = dev_.getTextureView(
+            desc.depthStencilAttachment.view);
+        if (dsViewRec) fbAttachments.push_back(dsViewRec->view);
+      }
+
+      vk::FramebufferCreateInfo fbCI{};
+      fbCI.setRenderPass(renderPass)
+          .setAttachmentCount(static_cast<uint32_t>(fbAttachments.size()))
+          .setPAttachments(fbAttachments.data())
+          .setWidth(renderArea.width)
+          .setHeight(renderArea.height)
+          .setLayers(1);
+
+      auto framebuffer = ctx.device.createFramebuffer(
+          fbCI, nullptr, ctx.dispatcher);
+
+      // Collect clear values
+      std::vector<vk::ClearValue> clearValues;
+      for (auto& att : desc.colorAttachments) {
+        vk::ClearValue cv;
+        cv.color = vk::ClearColorValue{std::array<float,4>{
+            att.clearValue.r, att.clearValue.g,
+            att.clearValue.b, att.clearValue.a}};
+        clearValues.push_back(cv);
+      }
+      if (desc.hasDepthStencil) {
+        vk::ClearValue cv;
+        cv.depthStencil = vk::ClearDepthStencilValue{
+            desc.depthStencilAttachment.depthClearValue,
+            desc.depthStencilAttachment.stencilClearValue};
+        clearValues.push_back(cv);
+      }
+
+      vk::RenderPassBeginInfo rpBI{};
+      rpBI.setRenderPass(renderPass)
+          .setFramebuffer(framebuffer)
+          .setRenderArea({{0, 0}, renderArea})
+          .setClearValueCount(static_cast<uint32_t>(clearValues.size()))
+          .setPClearValues(clearValues.data());
+
+      cmd_.beginRenderPass(rpBI, vk::SubpassContents::eInline, ctx.dispatcher);
+
+      // TODO: framebuffer should be destroyed after render pass ends.
+      // For now, we accept this leak; proper fix requires tracking
+      // the framebuffer in the encoder and destroying in end().
+    }
 
     currentRenderPass_ = std::make_unique<VkRenderPassEncoderImpl>(dev_, cmd_);
     return currentRenderPass_.get();

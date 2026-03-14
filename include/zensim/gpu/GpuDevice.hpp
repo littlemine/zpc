@@ -279,12 +279,17 @@ namespace zs::gpu {
     // -- Pipeline creation --
     // The pipeline layout is built from an ordered list of bind group layouts
     // plus push constant ranges, embedded in the pipeline desc.
+    // Shader modules are passed separately (not embedded in the desc) to keep
+    // the desc struct backend-agnostic while the handles are backend-specific.
     virtual RenderPipelineHandle createRenderPipeline(
         const RenderPipelineDesc& desc,
+        ShaderModuleHandle vertexShader,
+        ShaderModuleHandle fragmentShader,
         std::span<const BindGroupLayoutHandle> bindGroupLayouts) = 0;
 
     virtual ComputePipelineHandle createComputePipeline(
         const ComputePipelineDesc& desc,
+        ShaderModuleHandle computeShader,
         std::span<const BindGroupLayoutHandle> bindGroupLayouts) = 0;
 
     // -- Command encoding --
