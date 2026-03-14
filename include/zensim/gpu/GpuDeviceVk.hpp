@@ -1149,6 +1149,47 @@ namespace zs::gpu {
     VkRenderPipelineRecord* getRenderPipeline(RenderPipelineHandle h) { return renderPipelines_.get(h.id); }
     VkComputePipelineRecord* getComputePipeline(ComputePipelineHandle h) { return computePipelines_.get(h.id); }
 
+    // =====================================================================
+    // Convenience native-type accessors (for migration from Owner<T>)
+    // =====================================================================
+    // These return the raw Vulkan handle from a gpu:: handle, making it
+    // straightforward to replace Owner<T>.get() call sites one-by-one.
+
+    vk::Buffer nativeBuffer(BufferHandle h) {
+      auto* r = getBuffer(h); return r ? r->buffer : vk::Buffer{};
+    }
+    vk::DeviceSize bufferSize(BufferHandle h) {
+      auto* r = getBuffer(h); return r ? r->size : 0;
+    }
+    void* mappedPointer(BufferHandle h) {
+      auto* r = getBuffer(h); return r ? r->mapped : nullptr;
+    }
+    vk::Image nativeImage(TextureHandle h) {
+      auto* r = getTexture(h); return r ? r->image : vk::Image{};
+    }
+    vk::ImageView nativeImageView(TextureHandle h) {
+      auto* r = getTexture(h); return r ? r->defaultView : vk::ImageView{};
+    }
+    vk::ImageView nativeView(TextureViewHandle h) {
+      auto* r = getTextureView(h); return r ? r->view : vk::ImageView{};
+    }
+    vk::Sampler nativeSampler(SamplerHandle h) {
+      auto* r = getSampler(h); return r ? r->sampler : vk::Sampler{};
+    }
+    vk::Pipeline nativePipeline(RenderPipelineHandle h) {
+      auto* r = getRenderPipeline(h); return r ? r->pipeline : vk::Pipeline{};
+    }
+    vk::PipelineLayout nativePipelineLayout(RenderPipelineHandle h) {
+      auto* r = getRenderPipeline(h); return r ? r->pipelineLayout : vk::PipelineLayout{};
+    }
+    vk::Pipeline nativeComputePipeline(ComputePipelineHandle h) {
+      auto* r = getComputePipeline(h); return r ? r->pipeline : vk::Pipeline{};
+    }
+    vk::PipelineLayout nativeComputePipelineLayout(ComputePipelineHandle h) {
+      auto* r = getComputePipeline(h); return r ? r->pipelineLayout : vk::PipelineLayout{};
+    }
+
+
   private:
   public:
     // Get or create a cached VkRenderPass from format signature.
